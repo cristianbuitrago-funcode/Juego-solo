@@ -326,7 +326,12 @@ function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: 
     }
   };
   for (const b of v.keys) street(b.x + b.w / 2, b.y + b.h + 0.6, true);
-  for (const b of v.houses) street(b.x + b.w / 2, b.y + b.h + 0.6, false);
+  // Las casas solo tienen un sendero corto ante la puerta: el pueblo sigue siendo verde.
+  for (const b of v.houses)
+    for (let s = 0; s < 2; s++) {
+      const k = idx(Math.floor(b.x + b.w / 2), Math.floor(b.y + b.h + s));
+      if (!blocked[k] && (tiles[k] === T.Grass || tiles[k] === T.Meadow || tiles[k] === T.Clay)) tiles[k] = T.Road;
+    }
   // Plaza: fuente (o pozo), bancos y faroles.
   add(r.population > 450 || r.isHome ? 'fuente' : 'pozo', v.cx + 0.5, v.cy + 1.6, false);
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked[idx(v.cx + dx, v.cy + dy)] = 1;

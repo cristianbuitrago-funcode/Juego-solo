@@ -22,6 +22,7 @@ export function showGallery(root: HTMLElement): void {
   c.style.width = `${W / 2}px`;
   root.append(c);
   const g = c.getContext('2d')!;
+  g.imageSmoothingEnabled = false;
   g.fillStyle = '#9fb26e';
   g.fillRect(0, 0, W, H);
   g.font = '20px Georgia';
@@ -36,7 +37,7 @@ export function showGallery(root: HTMLElement): void {
     if (seen.has(key) || !roles.includes(f.role)) continue;
     seen.add(key);
     const ap = appearanceOf(w, f);
-    drawHuman(g, ap, { facing: 'front', flip: false, phase: 0, action: 'idle', t: 1, expr: 'neutral', lod: 0 }, x, y, 3);
+    drawHuman(g, ap, { facing: 'front', flip: false, phase: 0, action: 'idle', t: 1, expr: 'neutral', lod: 0 }, x, y, 4);
     g.fillText(f.role, x - 40, y + 26);
     g.font = '13px Georgia';
     g.fillText(regionalStyle(w, f.regionId), x - 40, y + 42);
@@ -46,15 +47,18 @@ export function showGallery(root: HTMLElement): void {
       x = 60;
       y += 230;
     }
-    if (y > 700) break;
+    if (y > 650) break;
   }
   // Acciones y vistas del jugador.
   const pa = playerAppearance(life.player);
   const acts: [Facing, Action, number][] = [['front', 'walk', 0.8], ['side', 'walk', 0.8], ['side', 'run', 1.4], ['back', 'walk', 0.5], ['front', 'talk', 0], ['front', 'wave', 0], ['side', 'work', 0], ['front', 'cross', 0], ['side', 'sit', 0], ['front', 'sit', 0]];
   x = 60;
-  y = 980;
+  y = 960;
+  // Expresiones en el mundo (a escala del juego ×4).
+  const ex2: Expr[] = ['neutral', 'feliz', 'preocupado', 'enfadado', 'miedo', 'triste', 'sorpresa', 'desconfianza', 'alivio', 'hostil'];
+  ex2.forEach((e, i) => drawHuman(g, appearanceOf(w, life.folk[(i * 5 + 3) % life.folk.length]), { facing: 'front', flip: false, phase: 0, action: 'idle', t: 0.2, expr: e, lod: 0 }, 60 + i * 110, 780, 4));
   for (const [facing, action, ph] of acts) {
-    drawHuman(g, pa, { facing, flip: false, phase: ph, action, t: 2.2, expr: 'neutral', lod: 0 }, x, y, 2.6);
+    drawHuman(g, pa, { facing, flip: false, phase: ph, action, t: 0.2, expr: 'neutral', lod: 0 }, x, y, 4);
     g.font = '13px Georgia';
     g.fillText(`${facing} ${action}`, x - 40, y + 22);
     x += 110;
@@ -65,8 +69,8 @@ export function showGallery(root: HTMLElement): void {
   const lap = appearanceOf(w, leader);
   exprs.forEach((e, i) => {
     const pc = document.createElement('canvas');
-    pc.width = 200;
-    pc.height = 220;
+    pc.width = 192;
+    pc.height = 192;
     drawPortrait(pc, i % 2 ? lap : appearanceOf(w, life.folk[i * 7 % life.folk.length]), e, 1);
     g.drawImage(pc, 40 + (i % 5) * 225, 1060 + Math.floor(i / 5) * 300);
     g.font = '16px Georgia';

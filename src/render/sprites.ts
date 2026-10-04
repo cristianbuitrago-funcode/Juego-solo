@@ -5,6 +5,8 @@
  * mide 48 px; una puerta, ~40 px; una casa, ~95 px de alto; un roble, ~95 px;
  * un caballo es más grande que una persona.
  */
+import { pixelize } from './pixel';
+
 export interface Sprite {
   canvas: HTMLCanvasElement;
   w: number;
@@ -13,28 +15,42 @@ export interface Sprite {
   ay: number;
 }
 
-const RES = 1.5;
 const cache = new Map<string, Sprite>();
+const M = 2; // margen para el contorno
 
-function make(key: string, w: number, h: number, ax: number, ay: number, draw: (g: CanvasRenderingContext2D) => void): Sprite {
+/**
+ * Cada sprite se dibuja una vez a resolución 1:1 (un píxel de arte por
+ * píxel de mundo) y se convierte en pixel art (`pixelize`): colores sólidos,
+ * alfa todo o nada y contorno oscuro.
+ */
+function make(key: string, w: number, h: number, ax: number, ay: number, draw: (g: CanvasRenderingContext2D) => void, outline = true): Sprite {
   const hit = cache.get(key);
   if (hit) return hit;
   const c = document.createElement('canvas');
-  c.width = Math.ceil(w * RES);
-  c.height = Math.ceil(h * RES);
-  const g = c.getContext('2d')!;
-  g.scale(RES, RES);
+  c.width = Math.ceil(w) + M * 2;
+  c.height = Math.ceil(h) + M * 2;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.translate(M, M);
   g.lineJoin = 'round';
   g.lineCap = 'round';
   draw(g);
-  const s = { canvas: c, w, h, ax, ay };
+  pixelize(c, outline);
+  const s = { canvas: c, w: c.width, h: c.height, ax: Math.round(ax) + M, ay: Math.round(ay) + M };
   cache.set(key, s);
   return s;
 }
 
+/** Igual que `make`, pero dibuja el diseño original reducido por `k` (escala coherente con las personas). */
+function makeK(key: string, w: number, h: number, ax: number, ay: number, k: number, draw: (g: CanvasRenderingContext2D) => void): Sprite {
+  return make(key, w * k, h * k, ax * k, ay * k, (g) => {
+    g.scale(k, k);
+    draw(g);
+  });
+}
+
 export function drawSprite(g: CanvasRenderingContext2D, s: Sprite, x: number, y: number, alpha = 1): void {
   if (alpha !== 1) g.globalAlpha = alpha;
-  g.drawImage(s.canvas, x - s.ax, y - s.ay, s.w, s.h);
+  g.drawImage(s.canvas, Math.round(x) - s.ax, Math.round(y) - s.ay);
   if (alpha !== 1) g.globalAlpha = 1;
 }
 
@@ -109,10 +125,27 @@ function canopy(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, 
   }
   E(cx - r * 0.1, cy - r * 0.08, r * 0.78, r * 0.68, cols[0], g);
   for (let i = 0; i < 4; i++) E(cx - r * 0.35 + i * r * 0.18, cy - r * 0.42 + (i % 2) * r * 0.12, r * 0.28, r * 0.22, cols[2], g);
-  g.fillStyle = 'rgba(0,0,0,0.08)';
-  for (let i = 0; i < 9; i++) {
-    const a = v * 3 + i * 1.7;
-    g.fillRect(cx + Math.cos(a) * r * 0.7, cy + Math.sin(a) * r * 0.55, 2, 1.4);
+  // Textura de hojas en racimos (pixel art): grumos claros arriba a la
+  // izquierda y oscuros abajo a la derecha, para que la copa no sea una mancha plana.
+  const n = Math.round(r * 2.2);
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.39996 + v;
+    const d = Math.sqrt((i + 0.5) / n) * r * 0.86;
+    const x = cx + Math.cos(a) * d;
+    const y = cy + Math.sin(a) * d * 0.86;
+    const lightSide = x - cx + (y - cy) < -r * 0.15;
+    const darkSide = x - cx + (y - cy) > r * 0.35;
+    const cr = Math.max(1.6, r * 0.13);
+    if (lightSide) {
+      E(x, y + 0.6, cr, cr * 0.8, shade(cols[0], 0.82), g);
+      E(x - 0.4, y - 0.3, cr * 0.8, cr * 0.62, cols[2], g);
+    } else if (darkSide) {
+      E(x, y, cr, cr * 0.8, shade(cols[1], 0.78), g);
+      E(x - 0.5, y - 0.5, cr * 0.7, cr * 0.5, cols[1], g);
+    } else if (i % 2) {
+      E(x, y + 0.5, cr, cr * 0.75, cols[1], g);
+      E(x - 0.3, y - 0.3, cr * 0.8, cr * 0.6, cols[0], g);
+    }
   }
 }
 
@@ -123,7 +156,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
   const winter = season === 'invierno';
   switch (kind) {
     case 'pino':
-      return make(key, 56, 104, 28, 100, (g) => {
+      return makeK(key, 56, 104, 28, 100, 0.74, (g) => {
         g0 = g;
         E(30, 100, 18, 5, 'rgba(0,0,0,0.22)');
         R(25, 80, 6, 21, '#5b3d25');
@@ -137,7 +170,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         }
       });
     case 'abedul':
-      return make(key, 50, 92, 25, 88, (g) => {
+      return makeK(key, 50, 92, 25, 88, 0.74, (g) => {
         g0 = g;
         E(26, 88, 14, 4, 'rgba(0,0,0,0.2)');
         R(23, 40, 5, 49, '#ede7da');
@@ -148,7 +181,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         else for (const [x, y] of [[12, 22], [38, 24], [25, 10], [18, 14], [32, 12]]) Ln(25, 45, x, y, 1.2, '#7a6d60');
       });
     case 'sauce':
-      return make(key, 84, 90, 42, 86, (g) => {
+      return makeK(key, 84, 90, 42, 86, 0.74, (g) => {
         g0 = g;
         E(44, 86, 26, 6, 'rgba(0,0,0,0.22)');
         R(38, 50, 8, 37, '#5a4430');
@@ -164,7 +197,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         }
       });
     case 'frutal':
-      return make(key, 60, 74, 30, 70, (g) => {
+      return makeK(key, 60, 74, 30, 70, 0.74, (g) => {
         g0 = g;
         E(31, 70, 18, 5, 'rgba(0,0,0,0.22)');
         R(27, 44, 6, 27, '#6b4a30');
@@ -175,7 +208,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         } else for (const [x, y] of [[10, 22], [50, 22], [30, 8]]) Ln(30, 48, x, y, 2, '#6b5a4a');
       });
     case 'muerto':
-      return make(key, 64, 88, 32, 84, (g) => {
+      return makeK(key, 64, 88, 32, 84, 0.74, (g) => {
         g0 = g;
         E(33, 84, 16, 4, 'rgba(0,0,0,0.2)');
         g.strokeStyle = '#5e5248';
@@ -188,14 +221,14 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         for (const [a, b, c, d] of [[31, 52, 14, 30], [31, 44, 50, 20], [31, 62, 46, 50], [31, 38, 24, 14], [14, 30, 8, 22]]) Ln(a, b, c, d, 3, '#5e5248');
       });
     case 'arbusto':
-      return make(key, 34, 26, 17, 23, (g) => {
+      return makeK(key, 34, 26, 17, 23, 0.8, (g) => {
         g0 = g;
         E(17, 23, 15, 4, 'rgba(0,0,0,0.2)');
         canopy(g, 17, 14, 11, cols, vv, 5);
         if (season === 'primavera' && vv) for (const [x, y] of [[10, 10], [22, 8], [17, 16]]) E(x, y, 1.6, 1.6, '#f3d9e4');
       });
     case 'junco':
-      return make(key, 22, 28, 11, 26, (g) => {
+      return makeK(key, 22, 28, 11, 26, 0.7, (g) => {
         g.strokeStyle = winter ? '#9a9478' : '#6f8a45';
         g.lineWidth = 1.5;
         for (let i = 0; i < 7; i++) {
@@ -232,7 +265,7 @@ export function tree(kind: TreeKind, season: SeasonLook, v: number): Sprite {
         }
       });
     case 'roble':
-      return make(key, 80, 100, 40, 96, (g) => {
+      return makeK(key, 80, 100, 40, 96, 0.74, (g) => {
         g0 = g;
         E(43, 96, 26, 7, 'rgba(0,0,0,0.24)');
         // Tronco con raíces.
@@ -266,7 +299,7 @@ export function rock(v: number, snow = false): Sprite {
 }
 
 export function peak(v: number): Sprite {
-  return make(`pk:${v % 3}`, 140, 126, 70, 120, (g) => {
+  return makeK(`pk:${v % 3}`, 140, 126, 70, 120, 0.62, (g) => {
     g0 = g;
     E(70, 120, 62, 9, 'rgba(0,0,0,0.25)');
     const h = 92 + (v % 3) * 12;
@@ -277,8 +310,8 @@ export function peak(v: number): Sprite {
     g.lineWidth = 1.2;
     for (let i = 1; i < 5; i++) Ln(70 - i * 9, 120 - h + i * 20, 70 + i * 6, 120 - h + i * 22, 1.2, 'rgba(0,0,0,0.15)');
     poly([70, 120 - h, 90, 120 - h + 34, 80, 120 - h + 28, 72, 120 - h + 38, 60, 120 - h + 26, 52, 120 - h + 32], '#eef2f4');
-    E(40, 112, 16, 6, '#6a8a52');
-    E(102, 114, 14, 5, '#5f7f4a');
+    poly([30, 120, 38, 110, 46, 120], '#8a857c');
+    poly([96, 120, 104, 112, 112, 120], '#6a655e');
   });
 }
 
@@ -701,7 +734,7 @@ export function keyBuilding(kind: string, st: Style, extra = ''): Sprite {
 // Mercado, campamentos, fronteras
 // ---------------------------------------------------------------------------
 export function stall(full: boolean, color: string, v = 0): Sprite {
-  return make(`st:${full}:${color}:${v % 3}`, 46, 46, 23, 43, (g) => {
+  return makeK(`st:${full}:${color}:${v % 3}`, 46, 46, 23, 43, 0.8, (g) => {
     g0 = g;
     E(23, 43, 20, 4, 'rgba(0,0,0,0.22)');
     R(4, 14, 3, 29, '#7a5532');
@@ -866,7 +899,7 @@ export function prop(kind: PropKind, v = 0): Sprite {
         R(27, 12, 3, 6, '#5b3d25');
       });
     case 'farol':
-      return make('pr:farol', 16, 60, 8, 58, (g) => {
+      return makeK('pr:farol', 16, 60, 8, 58, 0.72, (g) => {
         g0 = g;
         E(8, 58, 5, 1.6, 'rgba(0,0,0,0.22)');
         R(6.5, 10, 3, 48, '#3a3a3e');
@@ -1009,7 +1042,8 @@ export type AnimalKind = 'vaca' | 'oveja' | 'gallina' | 'ciervo' | 'caballo' | '
 export function animal(kind: AnimalKind, frame: number, flip: boolean, v = 0): Sprite {
   const dims: Record<AnimalKind, [number, number]> = { vaca: [64, 46], oveja: [36, 30], gallina: [16, 16], ciervo: [56, 56], caballo: [72, 60], perro: [30, 22], pato: [18, 12] };
   const [W, H] = dims[kind];
-  return make(`a:${kind}:${frame % 4}:${flip}:${v % 3}`, W, H, W / 2, H - 2, (g) => {
+  const K: Record<AnimalKind, number> = { vaca: 0.72, oveja: 0.72, gallina: 0.75, ciervo: 0.72, caballo: 0.68, perro: 0.62, pato: 0.8 };
+  return makeK(`a:${kind}:${frame % 4}:${flip}:${v % 3}`, W, H, W / 2, H - 2, K[kind], (g) => {
     g0 = g;
     if (flip) (g.translate(W, 0), g.scale(-1, 1));
     const ph = (frame % 4) * (Math.PI / 2);
@@ -1102,7 +1136,7 @@ export function animal(kind: AnimalKind, frame: number, flip: boolean, v = 0): S
 
 /** Carro tirado por un caballo (caravanas). */
 export function cart(frame: number, flip: boolean, cargo: string): Sprite {
-  return make(`c:${frame % 4}:${flip}:${cargo}`, 120, 64, 60, 60, (g) => {
+  return makeK(`c:${frame % 4}:${flip}:${cargo}`, 120, 64, 60, 60, 0.72, (g) => {
     g0 = g;
     if (flip) (g.translate(120, 0), g.scale(-1, 1));
     E(56, 60, 52, 4, 'rgba(0,0,0,0.22)');
