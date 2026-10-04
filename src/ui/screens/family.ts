@@ -2,6 +2,8 @@ import { DEFAULT_PLAYER_LOOK, playerAppearance, SKINS, type PlayerLook } from '.
 import { drawPortrait } from '../../render/human';
 import { KNOWS, MAX_LEVEL, questions, SKILLS, STANDING, TALENTS, tryFragment, whoAmI, type KnowId, type SkillId } from '../../world/identity';
 import { ensureLife, heirs } from '../../world/life';
+import { ROLE_TITLE } from '../../world/folk';
+import { emotionOf } from '../../world/society';
 import { showFragment } from '../world-dialogs';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
@@ -69,6 +71,7 @@ export function renderFamily(app: App): Node[] {
           ...id.items.map((it) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '🔱'), h('div', { class: 'txt' }, it === 'colgante' ? 'Un colgante con un símbolo' : it, h('div', null, h('button', { class: 'btn small', onclick: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(app, ev); } }, 'Mirarlo'))))),
         )
       : null,
+    metFolk.length ? section('Gente que conoces', ...people(app)) : null,
     memories.length ? section('Recuerdos', ...memories.map((e) => h('p', { class: 'quote' }, e.text))) : null,
     lookEditor(app),
     section('Familia',
@@ -116,4 +119,22 @@ function lookEditor(app: App): HTMLElement {
     look.fem ? null : chips(BEARDS, look.beard, (beard) => set({ beard })),
     h('div', { class: 'swatches' }, ...SKINS.slice(0, 7).map((c, i) => h('button', { class: `swatch ${i === look.skin ? 'on' : ''}`, style: `background:${c}`, 'aria-label': `piel ${i + 1}`, onclick: () => set({ skin: i }) }))),
   );
+}
+
+/** La gente con la que te has cruzado: cómo te trata y lo que sabes de su vida (por lo que te han contado). */
+function people(app: App): Node[] {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const facts = life.society?.facts ?? {};
+  const met = life.folk.filter((f) => f.lastMet >= 0).sort((a, b) => b.lastMet - a.lastMet).slice(0, 14);
+  return met.map((f) => {
+    const how = !f.alive ? 'ya no está' : f.resentment > 0.5 ? 'no te soporta' : f.gratitude > 0.45 || f.trust > 0.66 ? 'te aprecia' : f.trust < 0.3 ? 'no se fía de ti' : 'te conoce';
+    const where = f.regionId !== w.player.home ? ` · ${w.regions[f.regionId].name}` : '';
+    const mood = f.alive && f.p ? emotionOf(f) : 'calma';
+    const known = (facts[f.id] ?? []).slice(-3);
+    return h('div', { class: 'entry' },
+      h('div', { class: 'ico' }, !f.alive ? '🕯' : mood === 'felicidad' ? '🙂' : mood === 'tristeza' ? '😔' : mood === 'enojo' ? '😠' : mood === 'miedo' || mood === 'estres' ? '😟' : '·'),
+      h('div', { class: 'txt' }, h('b', null, f.name), ` · ${ROLE_TITLE[f.role]}${where} · ${how}`, ...known.map((k) => h('div', { class: 'tiny' }, k))),
+    );
+  });
 }

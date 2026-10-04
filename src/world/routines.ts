@@ -1,4 +1,5 @@
 import { prologueRoutine } from './prologue';
+import { routineMood, socialOverride } from './social';
 import type { WorldState } from '../core/types';
 import { hourOf, weatherOf } from './clock';
 import { doorOf, getLayout, type Village } from './layout';
@@ -55,6 +56,19 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
   const wet = weather === 'lluvia' || weather === 'tormenta';
   const shelter = (t: RoutineTarget): RoutineTarget => (wet && !t.inside && /plaza|juega|sol|charla|vaga|pasea|explora/.test(t.activity) ? atHome('se refugia de la lluvia') : t);
 
+  // La vida de cada uno cambia la rutina: planes de hoy, fiebre, luto, viajes, tormentas, guerra.
+  const so = socialOverride(w, f, clock);
+  if (so) {
+    if (so.kind === 'plan' && so.x !== undefined && so.y !== undefined) return { x: so.x, y: so.y, inside: false, activity: so.activity };
+    return atHome(so.activity);
+  }
+  const mood = routineMood(w, f);
+  // Los chavales ayudan a su padre o su madre por la mañana.
+  if (mood.teen && h >= 9 && h < 13 && !night) {
+    const t = routineOf(w, mood.teen, clock);
+    if (!t.inside) return { x: t.x + 0.9, y: t.y + 0.3, inside: false, activity: `ayuda a ${mood.teen.gender === 'f' ? 'su madre' : 'su padre'}` };
+  }
+
   if (f.role === 'guardia') {
     // Patrulla: un círculo alrededor del pueblo; con tensión, más amplio.
     const radius = (v.wallR || 12) * (r.militancy > 0.55 || war ? 1.05 : 0.7);
@@ -69,7 +83,10 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
     case 'pastor':
     case 'pescador': {
       if (h >= 12 && h < 14) return h < 12.5 || h > 13.5 ? at(home, 'vuelve a comer') : atHome('come en casa');
-      if (h >= 18) return at(plazaSpot(v, f, bucket), 'charla en la plaza');
+      // Con escasez se trabaja hasta tarde; quien es perezoso se escaquea a media tarde.
+      const late = h >= 18 && h < 18 + mood.extraHours;
+      if (h >= 18 && !late) return at(plazaSpot(v, f, bucket), 'charla en la plaza');
+      if (mood.lazy && h >= 15.5 && h < 18) return at({ x: home.x + 1.2, y: home.y + 1 }, 'descansa a la sombra');
       if (h < 7) return at(home, 'se prepara para el día');
       if (hungry && f.role === 'campesino') {
         if (h < 12) {
@@ -115,6 +132,22 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       return { ...keyDoor(v, 'salon'), inside: true, activity: 'trabaja en el salón' };
     case 'sanadora':
       if (h >= 8 && h < 19) return at(keyDoor(v, v.keys.some((k) => k.kind === 'templo') ? 'templo' : 'posada'), r.flags.fiebre ? 'atiende a enfermos' : 'prepara remedios');
+      return atHome();
+    case 'posadero':
+      if (h >= 7.5 && h < 23.5) return at({ x: keyDoor(v, 'posada').x + 0.6, y: keyDoor(v, 'posada').y + 0.8 }, h >= 19 ? 'sirve jarras en la posada' : 'atiende la posada');
+      return atHome('duerme');
+    case 'minero': {
+      if (h >= 7 && h < 17) {
+        const mine = l.places.find((p) => p.regionId === f.regionId && p.kind === 'mina');
+        const spot = mine && Math.hypot(mine.x - v.cx, mine.y - v.cy) < 45 ? { x: mine.x + 1 + hash(f.id, 4) * 2, y: mine.y + 1.5 } : { x: v.cx + 14 + hash(f.id, 4) * 3, y: v.cy - 10 };
+        return at(spot, 'pica piedra en la mina');
+      }
+      if (h >= 18 && h < 21) return at(keyDoor(v, 'posada'), 'bebe en la posada, cubierto de polvo');
+      return atHome();
+    }
+    case 'carpintero':
+      if (h >= 8 && h < 18) return at({ x: keyDoor(v, 'almacen').x + 2.5, y: keyDoor(v, 'almacen').y + 1.2 }, 'sierra madera en el taller');
+      if (h >= 18 && h < 20) return at(plazaSpot(v, f, bucket), 'charla en la plaza');
       return atHome();
     case 'exploradora':
       if (h >= 7 && h < 18) {

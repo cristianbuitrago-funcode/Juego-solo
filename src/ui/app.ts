@@ -21,12 +21,14 @@ import { renderChronicle } from './screens/chronicle';
 import { renderDecisions } from './screens/decisions';
 import { showEnd } from './screens/dawn';
 import { renderHypotheses } from './screens/hypotheses';
+import { approachNear, catchUp, liveNotices } from '../world/social';
+import type { Approach } from '../world/gossip';
 import { prologueDawn, prologueOf, prologueQuiet, prologueTick, recap } from '../world/prologue';
 import { renderMenu, objectivesDialog, renderSettingsInline, savesDialog } from './screens/menu';
 import { openRegionSheet } from './screens/region';
 import { renderResearch } from './screens/research';
 import { renderFamily } from './screens/family';
-import { arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
+import { approachDialog, arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
 
 export type View = 'mapa' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
@@ -347,6 +349,12 @@ export class App {
         this.scene.waypoint = null;
       } else this.scene.waypoint = { x: v.cx + 0.5, y: v.cy + 0.5, label: w.intel[this.waypoint].level ? w.regions[this.waypoint].name : '¿?' };
     } else this.scene.waypoint = null;
+    // La gente vive: lo que empieza a pasar cerca (gritos, campanas, música)…
+    const hNow = hourOf(life.clock);
+    if (region >= 0 && this.lastSocialHour !== undefined && hNow !== this.lastSocialHour) for (const m of liveNotices(w, region, hNow, this.lastSocialHour < hNow ? this.lastSocialHour : hNow - 0.01)) this.whisper(m, true);
+    this.lastSocialHour = hNow;
+    // …y quien quiere hablar contigo viene a buscarte.
+    this.approachTick();
     const pt = prologueTick(w, me.x, me.y, life.clock);
     if (pt.banner) (audio.sfx('descubrimiento'), this.banner(pt.banner[0], pt.banner[1]));
     for (const m of pt.whispers) this.whisper(m, true);
@@ -371,6 +379,38 @@ export class App {
     }
   }
 
+  private lastSocialHour?: number;
+  private approachCooldown = 0;
+  private approaching: Approach | null = null;
+
+  private approachTick(): void {
+    const w = this.w!;
+    const scene = this.scene!;
+    const busy = !!this.stage?.querySelector('.overlay') || this.sleeping;
+    if (this.approaching) {
+      const d = scene.distanceTo(this.approaching.folk);
+      if (d === Infinity || busy) {
+        if (d === Infinity) (scene.summon(null), (this.approaching = null));
+        return;
+      }
+      if (d < 1.9) {
+        const ap = this.approaching;
+        this.approaching = null;
+        scene.summon(null);
+        this.approachCooldown = 40;
+        approachDialog(this, ap);
+      }
+      return;
+    }
+    if (busy || --this.approachCooldown > 0) return;
+    const ap = approachNear(w, scene.folkNear(10));
+    if (!ap) return;
+    this.approaching = ap;
+    scene.summon(ap.folk);
+    const f = ensureLife(w).folk.find((x) => x.id === ap.folk);
+    if (f) this.whisper(`${f.name} viene hacia ti.`);
+  }
+
   private enterRegion(id: number, prev: number): void {
     const w = this.w!;
     const r = w.regions[id];
@@ -391,6 +431,8 @@ export class App {
     }
     const memory = tryFragment(w, { kind: 'region', regionId: id });
     if (memory) window.setTimeout(() => showFragment(this, memory), 1200);
+    // El pueblo no se detuvo mientras estabas fuera.
+    for (const n of catchUp(w, id)) this.whispers.unshift(n);
     for (const n of presenceTick(w, id, false)) this.whisper(n);
   }
 

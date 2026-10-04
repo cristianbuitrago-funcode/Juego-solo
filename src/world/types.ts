@@ -39,7 +39,10 @@ export type FolkRole =
   | 'anciano'
   | 'lider'
   | 'sanadora'
-  | 'exploradora';
+  | 'exploradora'
+  | 'posadero'
+  | 'minero'
+  | 'carpintero';
 
 export interface FolkMemory {
   day: number;
@@ -68,6 +71,9 @@ export interface Folk {
   lastMet: number; // último día que habló con el jugador (-1 nunca)
   origin?: number; // región de la que emigró
   parentId?: string;
+  gender?: 'f' | 'm';
+  /** La persona: carácter, necesidades, emociones, objetivos, recuerdos propios (Fase 2). */
+  p?: import('./society').Persona;
 }
 
 export interface Kin {
@@ -159,6 +165,8 @@ export interface Life {
   identity?: import('./identity').Identity;
   /** Los primeros días: el prólogo jugable (solo en partidas nuevas). */
   prologue?: import('./prologue').Prologue;
+  /** La sociedad: lazos entre vecinos, rumores, conflictos, mercado, acontecimientos. */
+  society?: import('./society').Society;
 }
 
 export const DAY_MINUTES = 1440;

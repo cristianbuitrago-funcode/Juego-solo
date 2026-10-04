@@ -17,6 +17,7 @@ const ROLE_OF_CHARACTER: Record<string, FolkRole> = {
 export const ROLE_TITLE: Record<FolkRole, string> = {
   campesino: 'campesino', pescador: 'pescador', pastor: 'pastora', comerciante: 'comerciante', guardia: 'guardia',
   artesano: 'artesano', nino: 'niño', anciano: 'anciano', lider: 'líder', sanadora: 'sanadora', exploradora: 'exploradora',
+  posadero: 'posadero', minero: 'minero', carpintero: 'carpintero',
 };
 
 function rolesFor(resource: string): FolkRole[] {
@@ -26,7 +27,7 @@ function rolesFor(resource: string): FolkRole[] {
     case 'lana':
       return ['pastor', 'pastor', 'campesino'];
     case 'hierro':
-      return ['artesano', 'artesano', 'campesino'];
+      return ['artesano', 'minero', 'campesino'];
     case 'sal':
     case 'arcilla':
       return ['artesano', 'campesino', 'pescador'];
@@ -71,14 +72,14 @@ export function populate(life: Life, w: WorldState, rng: Rng, houseCount: (regio
     // Personajes del motor.
     for (const c of w.characters.filter((x) => x.regionId === r.id && x.alive)) linkCharacter(life, w, c, rng);
     const n = folkTarget(r.population, r.isHome);
-    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', ...(r.isHome ? (['anciano', 'lider', 'sanadora'] as FolkRole[]) : (['anciano', 'guardia'] as FolkRole[]))];
+    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', ...(r.isHome ? (['anciano', 'lider', 'sanadora'] as FolkRole[]) : (['anciano', 'guardia'] as FolkRole[])), 'posadero', 'comerciante', 'nino', 'carpintero'];
     while (roles.length < n) roles.push(rng.pick(pool));
     for (const role of roles.slice(0, n)) {
       const age = role === 'nino' ? rng.int(5, 12) : role === 'anciano' ? rng.int(62, 78) : rng.int(18, 55);
       life.folk.push(makeFolk(life, w, rng, r.id, role, age, used));
     }
   }
-  assignHouses(life, w, houseCount);
+  assignHouses(life, w, houseCount, true);
 }
 
 export function linkCharacter(life: Life, w: WorldState, c: Character, rng: Rng): Folk {
@@ -107,10 +108,13 @@ export function linkCharacter(life: Life, w: WorldState, c: Character, rng: Rng)
 }
 
 /** Cada vecino vive en una casa existente de su pueblo. */
-export function assignHouses(life: Life, w: WorldState, houseCount: (regionId: number) => number): void {
+export function assignHouses(life: Life, w: WorldState, houseCount: (regionId: number) => number, initial = false): void {
   for (const r of w.regions) {
     const n = Math.max(1, houseCount(r.id));
-    life.folk.filter((f) => f.regionId === r.id && f.alive).forEach((f, i) => (f.house = i % n));
+    // Cada uno conserva su casa (las familias viven juntas); solo se recoloca a quien se quedó sin ella.
+    life.folk.filter((f) => f.regionId === r.id && f.alive).forEach((f, i) => {
+      if (initial || f.house >= n) f.house = i % n;
+    });
   }
 }
 

@@ -16,6 +16,12 @@ import { examinePlace, listenTavern } from '../src/world/presence';
 import { roadPath } from '../src/world/roadnet';
 import { acequiaOptions, acequiaResolve, logDay, prologueBlocks, prologueChoose, prologueDawn, prologueItems, prologueOf, prologueScene, prologueTick, recap } from '../src/world/prologue';
 import { routineOf } from '../src/world/routines';
+import { arcAct, arcChoices } from '../src/world/arcs';
+import { marketOf } from '../src/world/economy';
+import { seedRumor, spreadRumors } from '../src/world/gossip';
+import { mournDeaths } from '../src/world/social';
+import { fadeMemories, kinOf, memorize } from '../src/world/society';
+import { Rng } from '../src/core/rng';
 import { giveTo, talkToFolk } from '../src/world/talk';
 import { idx } from '../src/world/terrain';
 import { T } from '../src/world/types';
@@ -479,5 +485,138 @@ describe('el prólogo: los primeros días', () => {
     expect(lines.join(' ')).toMatch(/decisión/);
     const back = importGame(exportGame(w))!;
     expect(back.life!.prologue!.bag.opened).toBe(true);
+  });
+});
+
+describe('Fase 2: el pueblo vive solo', () => {
+  it('cada vecino es una persona distinta, con familia y lazos', () => {
+    const w = world(501);
+    const life = w.life!;
+    const folk = life.folk.filter((f) => f.alive);
+    expect(folk.every((f) => f.p && f.gender)).toBe(true);
+    const kind = new Set(folk.map((f) => Math.round(f.p!.t.amable / 20)));
+    expect(kind.size).toBeGreaterThan(2);
+    const ties = Object.values(life.society!.ties);
+    expect(ties.some((t) => t.kin === 'pareja')).toBe(true);
+    expect(ties.some((t) => t.kin === 'progenitor')).toBe(true);
+    expect(ties.some((t) => t.aff >= 30)).toBe(true);
+    expect(ties.some((t) => t.aff < 0)).toBe(true);
+    expect(folk.some((f) => f.p!.tier === 1) && folk.some((f) => f.p!.tier === 2)).toBe(true);
+    // Desde el día 1 hay una historia en marcha con el comerciante del prólogo.
+    const arc = life.society!.arcs[0];
+    expect(arc).toBeTruthy();
+    expect(arc.a).toBe(life.prologue!.merchant);
+  });
+
+  it('cien días sin el jugador: discuten, cuentan versiones, cambian de oficio, el pueblo habla, las familias se implican y se resuelve', () => {
+    const w = world(502);
+    const life = w.life!;
+    const s = life.society!;
+    const arc = s.arcs[0];
+    const prices: number[] = [];
+    const stock: number[] = [];
+    const before = JSON.stringify(Object.values(s.ties).map((t) => Math.round(t.aff)));
+    let versions: typeof s.rumors = [];
+    for (let i = 0; i < 110; i++) {
+      advanceDay(w);
+      if (w.day === 22) versions = s.rumors.filter((r) => r.arc === arc.id && r.kind === 'version');
+      const m = s.market[w.player.home];
+      prices.push(m.price.comida);
+      stock.push(Math.round(m.stock.comida));
+    }
+    // El conflicto ha recorrido sus etapas sin que nadie intervenga.
+    expect(arc.log.find((l) => /discutieron/.test(l.text))!.day).toBeLessThanOrEqual(10);
+    expect(arc.log.some((l) => /versión/.test(l.text))).toBe(true);
+    expect(arc.log.some((l) => /pueblo habla/.test(l.text))).toBe(true);
+    expect(arc.log.some((l) => /familia/i.test(l.text))).toBe(true);
+    expect(arc.outcome).toBeTruthy();
+    // Dos versiones distintas del mismo pleito circulan por el pueblo.
+    expect(versions.length).toBe(2);
+    expect(versions[0].versions[0]).not.toBe(versions[1].versions[0]);
+    // Los rumores se deforman al pasar de boca en boca.
+    expect(s.rumors.some((r) => Object.values(r.knownBy).some((v) => v > 0))).toBe(true);
+    // El mundo no se ha congelado: acontecimientos variados, economía que se mueve, relaciones que cambian.
+    const kinds = new Set(s.events.map((e) => e.kind));
+    expect(kinds.size).toBeGreaterThanOrEqual(6);
+    expect(Math.max(...prices)).toBeGreaterThan(Math.min(...prices));
+    expect(new Set(stock).size).toBeGreaterThan(5);
+    expect(JSON.stringify(Object.values(s.ties).map((t) => Math.round(t.aff)))).not.toBe(before);
+    expect(life.folk.some((f) => (f.p?.jobs.length ?? 0) > 1)).toBe(true);
+  });
+
+  it('el jugador puede intervenir: escuchar las dos versiones y mediar enfría el conflicto', () => {
+    const w = world(503);
+    const s = w.life!.society!;
+    const arc = s.arcs[0];
+    arc.stage = 2;
+    const A = w.life!.folk.find((f) => f.id === arc.a)!;
+    const B = w.life!.folk.find((f) => f.id === arc.b)!;
+    const lucky = { chance: () => true, next: () => 0, range: (a: number) => a, int: (a: number) => a, pick: <T,>(x: T[]) => x[0] } as never;
+    expect(arcChoices(w, A).map((c) => c.id)).toContain('escuchar');
+    arcAct(w, A, 'escuchar', lucky, () => 2);
+    arcAct(w, B, 'escuchar', lucky, () => 2);
+    expect(arcChoices(w, A).map((c) => c.id)).toContain('mediar');
+    const heat = arc.heat;
+    const res = arcAct(w, A, 'mediar', lucky, () => 3);
+    expect(arc.heat).toBeLessThan(heat);
+    expect(res.rumor?.kind).toBe('p_media');
+  });
+
+  it('información imperfecta: cada uno cree su versión, y un recuerdo menor se olvida', () => {
+    const w = world(504);
+    const life = w.life!;
+    const people = life.folk.filter((f) => f.alive && f.regionId === w.player.home);
+    const [a, b] = people;
+    const r = seedRumor(w, { regionId: w.player.home, kind: 'discusion', subject: a.id, target: b.id, witnesses: [a.id, b.id] });
+    for (let i = 0; i < 15; i++) spreadRumors(w, new Rng(900 + i), w.player.home, people);
+    expect(Object.keys(r.knownBy).length).toBeGreaterThan(3);
+    const minor = memorize(w, people[2], { kind: 'charla', about: people[3].id, text: 'Charlamos.', w: 0.1, src: 'propio' })!;
+    const grave = memorize(w, people[2], { kind: 'traicion', about: people[3].id, text: 'Me traicionó.', w: -0.9, src: 'propio' })!;
+    for (let i = 0; i < 60; i++) fadeMemories(w, people[2]);
+    expect(people[2].p!.mem.includes(minor)).toBe(false);
+    expect(people[2].p!.mem.includes(grave)).toBe(true);
+  });
+
+  it('lo que hace el jugador se cuenta, y la familia viene a preguntarle', () => {
+    const w = world(505);
+    const life = w.life!;
+    const f = life.folk.find((x) => x.alive && x.regionId === w.player.home && kinOf(w, x.id).some((k) => life.folk.find((o) => o.id === k.id)!.age >= 14))!;
+    giveTo(w, f.id, 'comida'); // sin comida no da nada
+    life.player.inventory.comida = 2;
+    giveTo(w, f.id, 'comida');
+    advanceDay(w);
+    const s = life.society!;
+    const rumor = s.rumors.find((r) => r.subject === 'jugador' && r.target === f.id);
+    expect(rumor).toBeTruthy();
+    expect(s.approaches.some((a) => a.kind === 'pariente' || a.kind === 'gracias')).toBe(true);
+  });
+
+  it('las conversaciones cambian con la vida de cada uno (precios, luto, ánimo)', () => {
+    const w = world(506);
+    const life = w.life!;
+    const merchant = life.folk.find((f) => f.alive && f.role === 'comerciante' && f.regionId === w.player.home)!;
+    const m = marketOf(w, w.player.home);
+    m.stock.comida = 0;
+    m.price.comida = 4;
+    merchant.trust = 0.9;
+    const lines = Array.from({ length: 6 }, () => talkToFolk(w, merchant.id).lines.join(' ')).join(' ');
+    expect(lines).toMatch(/nubes|vuela|nada|carísimo|precio/);
+    // Si alguien muere, su familia guarda luto y hay funeral.
+    const dead = life.folk.find((f) => f.alive && f.regionId === w.player.home && kinOf(w, f.id).length)!;
+    const kin = kinOf(w, dead.id)[0];
+    dead.alive = false;
+    mournDeaths(w, [dead]);
+    const k = life.folk.find((f) => f.id === kin.id)!;
+    expect(k.p!.mourning).toBeGreaterThan(w.day);
+    expect(life.society!.festivals.some((x) => x.kind === 'funeral')).toBe(true);
+    expect(routineOf(w, k, (w.day - 1) * 1440 + 4 * 60).activity).toMatch(/luto|despide|reza/);
+  });
+
+  it('el guardado conserva la sociedad', () => {
+    const w = world(507);
+    advanceDay(w);
+    const back = importGame(exportGame(w))!;
+    expect(Object.keys(back.life!.society!.ties).length).toBe(Object.keys(w.life!.society!.ties).length);
+    expect(back.life!.folk[0].p!.t).toEqual(w.life!.folk[0].p!.t);
   });
 });

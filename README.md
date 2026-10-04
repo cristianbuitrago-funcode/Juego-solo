@@ -95,6 +95,11 @@ src/
 │   │                      talentos únicos y crónica personal
 │   ├── livelihood.ts      Ganarse la vida: trabajar, comer, dormir, estudiar, comerciar, convencer
 │   ├── prologue.ts        Los primeros días: mochila, primer encuentro, caja, acequia, carta
+│   ├── society.ts         Personas: carácter, necesidades, emociones, familia, lazos, memoria con olvido
+│   ├── social.ts          La vida diaria del pueblo: acontecimientos, objetivos, planes, acercamientos
+│   ├── economy.ts         Mercado local: producción, consumo, inventario y precios
+│   ├── gossip.ts          Rumores que se deforman, versiones, conversación dinámica
+│   ├── arcs.ts            Conflictos largos entre vecinos (≈100 días) y cómo intervenir
 │   ├── folk.ts            Vecinos con memoria y disposición a ayudar
 │   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
 │   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
@@ -265,6 +270,22 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - El segundo día, dos vecinos se pelean por el agua de una acequia: dar la razón a uno u otro, investigar, mediar, mentir o no meterte. Las consecuencias duran varios días.
 - Al final, la posadera guarda una carta sellada con el símbolo de tu colgante que nombra un lugar que conoces sin saber por qué. «¿Por qué conozco esto?»
 - Código: `src/world/prologue.ts` (estado, escenas, consecuencias al amanecer, resumen del día) y su conexión en las rutinas, la escena y los diálogos.
+
+**Fase 2 — NPC y mundo vivo.** Los vecinos no esperan al jugador: tienen su propia vida y el jugador se mete en ella.
+
+- **Personas.** Cada vecino tiene género, carácter (14 rasgos con intensidad: amable, desconfiado, ambicioso, tímido, curioso, trabajador, perezoso, orgulloso, generoso, egoísta, valiente, cobarde, reservado, sociable), ocho necesidades (comida, dinero, descanso, seguridad, trabajo, vivienda, relaciones, ocio), emociones (felicidad, tristeza, miedo, enojo, estrés), dinero propio, objetivos (ahorrar, abrir un puesto, casarse, mudarse, aprender, vengarse, reconciliarse, cuidar de alguien), gustos, recuerdos propios, acontecimientos personales e historial de oficios. Tres niveles: principales (más memoria y objetivos), secundarios y el gentío de las ciudades.
+- **Familias y red social.** Parejas que comparten casa, hijos, hermanos, padres mayores; amistades, compañeros de oficio, rivalidades y enemistades entre vecinos (desconocido → conocido → frecuente → amigo → amigo cercano / aliado; rival → enemigo). Nunca se muestran cifras: se nota en lo que dicen y hacen.
+- **Memoria con olvido.** Recuerdos recientes, personales e históricos: lo menor se apaga en semanas; una traición dura décadas. Quien es rencoroso recuerda más las ofensas; lo de la familia se olvida más despacio.
+- **Rutinas dinámicas.** Con tormenta nadie va al campo; con guerra cierran los puestos; con escasez se trabaja hasta tarde; los perezosos se escaquean; los chavales ayudan a su padre o su madre; quien está enfermo guarda cama; quien está de luto no sale o va al templo; los amigos quedan por la tarde en la plaza o la posada; hay bodas, fiestas de la cosecha y funerales con todo el pueblo.
+- **Acontecimientos que pasan solos:** discusiones, peleas, noviazgos, bodas, separaciones, nacimientos, muertes con herencia y luto, robos (con sospechosos que pueden ser inocentes), fiebres, accidentes, viajes, desapariciones, descubrimientos, conflictos familiares, retiros, cambios de oficio, malas cosechas y migraciones (la región pierde población de verdad).
+- **Rumores e información imperfecta.** Cada hecho lo saben quienes lo vieron; se cuenta de boca en boca entre quienes se tratan y crece o se suaviza («Le dio comida» → «Salvó a la familia» → «Salvó a todo el pueblo»). Cada vecino cuenta su versión. Lo que hace el jugador también se cuenta y cambia lo que el pueblo piensa de él.
+- **Conflictos largos** (la prueba principal): desde el día 1, el comerciante del prólogo tiene un pleito con otro vecino que evoluciona solo en unos 100 días — discusión a gritos en el mercado, cada uno contando su versión, uno que pierde clientes y cambia de oficio, el pueblo tomando partido, las familias implicadas y, al final, paz, distancia, enemistad o marcha. Pueden nacer otros entre vecinos que se llevan mal. El jugador puede escuchar, investigar la verdad, mediar, tomar partido, enredar con mentiras, ayudar al más débil o aprovecharse.
+- **Conversaciones dinámicas.** Lo que dice cada uno depende de su ánimo, su familia y amistades, sus objetivos, la hora, el clima, los precios, las fiestas, los rumores que conoce y lo que se dice de ti. «👥 Preguntar por alguien» descubre la red de relaciones del pueblo; «Gente que conoces» (en Quién soy) guarda lo que te han contado.
+- **Los vecinos se acercan a ti:** «Te vi hablando con…», «¿Es verdad que ayudaste a mi hermano?», «Necesito preguntarte algo», «Quiero que sepas la verdad», agradecimientos y ofertas de trabajo por recomendación.
+- **Economía local** (base de la Fase 3): campesinos, pescadores y pastores producen comida según estación, clima y desgracias; mineros, carpinteros y artesanos producen mineral, madera y herramientas; todos comen y pagan; los comerciantes importan lo que falta y venden fuera lo que sobra. Inventario y precios cambian de verdad; el jugador compra del mismo inventario. Cadenas: mala cosecha → escasez → precios → enfado → discusiones → migración.
+- **El mundo no se detiene.** Si te quedas días sin salir, el pueblo sigue. Al volver te ponen al día («Mientras no estabas…»). Simulación por distancia: tu región y tu pueblo con todo detalle; las visitadas, con detalle medio; el resto, abstracta.
+- **Lo que se ve:** expresiones que salen de la emoción de cada uno, frases sueltas al pasar junto a quienes charlan, gritos de quienes discuten, la plaza llena en las bodas, el templo en los funerales, los puestos cerrados cuando no hay qué vender.
+- Código: `src/world/society.ts` (personas, lazos, memoria), `social.ts` (el día a día), `economy.ts`, `gossip.ts` (rumores, conversación), `arcs.ts` (conflictos largos).
 
 **Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
 

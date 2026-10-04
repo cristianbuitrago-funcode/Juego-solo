@@ -7,6 +7,7 @@ import { remember } from './folk';
 import { addScore, chanceOf, deed, eat, gain, hasTalent, levelOf, rest, story, tryFragment, type FragmentEvent, type GainNote, type KnowId, type SkillId } from './identity';
 import { ensureLife } from './life';
 import { getLayout } from './layout';
+import { foodPrice, marketOf, trade } from './economy';
 import type { Folk } from './types';
 import { T } from './types';
 
@@ -68,6 +69,12 @@ export function jobFor(w: WorldState, f: Folk): Job | null {
       return { label: '📜 Escuchar sus historias', skill: 'investigacion', know: 'historia', minutes: 90, pay: { coins: 0, comida: 0, hierbas: 0 }, task: 'Te cuenta cómo era el valle antes, quién peleó con quién y por qué. Tú escuchas.' };
     case 'exploradora':
       return { label: '🧭 Acompañarla a explorar', skill: 'supervivencia', know: 'geografia', minutes: 240, pay: { coins: 1, comida: 0, hierbas: 1 }, task: 'Recorréis senderos que no salen en ningún mapa. Te enseña a orientarte por el musgo y las estrellas.' };
+    case 'posadero':
+      return { label: '🍺 Ayudar en la posada', skill: 'persuasion', know: 'culturas', minutes: 150, pay: { coins: 1, comida: 1, hierbas: 0 }, task: 'Sirves jarras, friegas cuencos y escuchas. En una posada se entera uno de todo.' };
+    case 'minero':
+      return { label: '⛏ Bajar a la mina', skill: 'supervivencia', know: 'geografia', minutes: 240, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Polvo, oscuridad y el eco de los picos. Sales con los pulmones llenos de piedra y unas monedas.' };
+    case 'carpintero':
+      return { label: '🪚 Ayudar en la carpintería', skill: 'artesania', know: 'tecnologia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Serrar, cepillar, encajar. La madera tiene su genio y hay que escucharla.' };
     case 'lider':
       return { label: '🏛 Ofrecer tu ayuda al consejo', skill: 'liderazgo', know: 'politica', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Organizas turnos, escribes cartas, escuchas quejas. Ves por dentro cómo se decide en un pueblo.', needs: 2 };
     default:
@@ -192,9 +199,10 @@ export function deceive(w: WorldState, folkId: string): Outcome {
 export function priceOf(w: WorldState, regionId: number, base: number): number {
   const id = ensureLife(w).identity!;
   const r = w.regions[regionId];
-  const scarce = r.flags.hambre ? 2 : (r.isHome ? w.player.reserves < 20 : r.food < 5) ? 1 : 0;
+  // El precio sale del mercado del pueblo: sube con la escasez y baja con la abundancia.
+  const market = w.life?.society ? foodPrice(w, regionId) - 1 : (r.flags.hambre ? 2 : (r.isHome ? w.player.reserves < 20 : r.food < 5) ? 1 : 0);
   const skill = hasTalent(id, 'mercader') ? 1 : 0;
-  return Math.max(1, base + scarce - skill);
+  return Math.max(1, base + market - skill);
 }
 
 export function buyMeal(w: WorldState, regionId: number): Outcome {
@@ -210,8 +218,10 @@ export function buyFood(w: WorldState, regionId: number): Outcome {
   const life = ensureLife(w);
   const id = life.identity!;
   const price = priceOf(w, regionId, 1);
+  if (life.society && marketOf(w, regionId).stock.comida < 1) return none(['No queda nada en los puestos. Hoy no se vende comida.']);
   if (id.needs.coins < price) return none([`Una hogaza y algo de queso: ${price} moneda${price > 1 ? 's' : ''}. No te llega.`]);
   id.needs.coins -= price;
+  if (life.society) trade(w, regionId, 'comida', 1);
   life.player.inventory.comida++;
   deed(id, 'comerciar');
   return { lines: ['Guardas la comida en la mochila.'], notes: gain(w, 'comercio', 0.4), minutes: 10 };

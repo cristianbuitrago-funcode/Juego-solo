@@ -7,6 +7,7 @@ import { findPath, passable } from '../world/path';
 import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { prologueBlocks, prologueItems } from '../world/prologue';
+import { overheard } from '../world/gossip';
 import { idx, speedOf } from '../world/terrain';
 import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
@@ -25,6 +26,12 @@ import * as S from './sprites';
  * de verdad. Los lejanos "viven" en su rutina abstracta y se materializan
  * en el sitio correcto cuando el jugador se acerca.
  */
+const hashOf = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+
 export type Target =
   | { kind: 'folk'; id: string; label: string }
   | { kind: 'building'; regionId: number; building: BuildingKind; label: string }
@@ -254,6 +261,26 @@ export class WorldScene {
     this.pending = target;
     const path = findPath(this.w, p.x, p.y, x, y, 9000);
     this.path = path.length ? path : [{ x, y }];
+  }
+
+  /** Vecinos visibles a menos de `radius` teselas del jugador. */
+  folkNear(radius: number): string[] {
+    const me = ensureLife(this.w).player;
+    const out: string[] = [];
+    for (const [id, e] of this.ents) if (!e.inside && Math.hypot(e.x - me.x, e.y - me.y) <= radius) out.push(id);
+    return out;
+  }
+
+  /** Alguien viene hacia ti por su cuenta (para hablarte). */
+  summonId: string | null = null;
+  summon(id: string | null): void {
+    this.summonId = id;
+  }
+
+  distanceTo(id: string): number {
+    const e = this.ents.get(id);
+    const me = ensureLife(this.w).player;
+    return e && !e.inside ? Math.hypot(e.x - me.x, e.y - me.y) : Infinity;
   }
 
   folkPosition(id: string): { x: number; y: number } | undefined {
@@ -680,6 +707,10 @@ export class WorldScene {
   }
 
   private targetOf(f: Folk, enc: Map<string, { x: number; y: number }>) {
+    if (f.id === this.summonId) {
+      const me = ensureLife(this.w).player;
+      return { x: me.x + 0.9, y: me.y + 0.2, inside: false, activity: 'se acerca a ti' };
+    }
     const spot = enc.get(f.id);
     if (spot) return { ...spot, inside: false, activity: 'discute' };
     return routineOf(this.w, f, ensureLife(this.w).clock);
@@ -1498,6 +1529,29 @@ export class WorldScene {
       g.strokeText(f.name, p.x, p.y);
       g.fillStyle = '#f6ecd2';
       g.fillText(f.name, p.x, p.y);
+    }
+    // Lo que se oye al pasar: frases sueltas de quienes charlan cerca (y gritos de quienes discuten).
+    let bubbles = 0;
+    const slot = Math.floor(performance.now() / 5200);
+    for (const [id, e] of this.ents) {
+      if (bubbles >= 2 || e.inside || !e.partner || id > e.partner || Math.hypot(e.x - me.x, e.y - me.y) > 6.5) continue;
+      const a = this.folkById.get(id);
+      const b = this.folkById.get(e.partner);
+      const o = this.ents.get(e.partner);
+      if (!a || !b || !o) continue;
+      const angry = /discute|pelea/.test(e.act);
+      const text = angry ? (slot % 2 ? '«¡Eso es mentira!»' : '«¡No vuelvas a hablarme así!»') : overheard(w, slot % 2 ? a : b, slot % 2 ? b : a, slot + hashOf(id));
+      if (!text || (slot + hashOf(id)) % 3 === 2) continue;
+      bubbles++;
+      const p = this.toScreen(((e.x + o.x) / 2) * TILE, Math.min(e.y, o.y) * TILE - 46);
+      g.font = 'italic 12px Georgia, serif';
+      const wpx = Math.min(240, g.measureText(text).width + 14);
+      g.fillStyle = angry ? 'rgba(120,30,25,0.82)' : 'rgba(30,25,20,0.72)';
+      g.beginPath();
+      g.roundRect(p.x - wpx / 2, p.y - 20, wpx, 20, 8);
+      g.fill();
+      g.fillStyle = '#f6ecd2';
+      g.fillText(text.length > 38 ? `${text.slice(0, 36)}…»` : text, p.x, p.y - 4);
     }
     // Nombre del pueblo al acercarse a la plaza.
     for (const v of this.l.villages) {
