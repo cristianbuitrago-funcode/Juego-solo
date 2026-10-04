@@ -1,0 +1,30 @@
+{
+  "name": "ecos-el-mundo-que-recuerda",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ECOS: El Mundo que Recuerda — juego 2D de estrategia para un jugador (Android)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "sim": "vite-node scripts/simulate.ts",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vite-node": "^6.0.0",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.2"
+  }
+}
