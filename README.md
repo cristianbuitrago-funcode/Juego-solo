@@ -10,25 +10,35 @@ Guías a una pequeña civilización en un mundo que funciona por sí mismo. No c
 
 ## Cómo se juega
 
-1. **Observa el mapa.** Cada región se colorea según lo que *sabes* de ella, no según la verdad. Lo que no has explorado aparece con niebla.
-2. **Interpreta las pistas.** No hay cifras: «Hay humo al norte», «Los exploradores regresaron heridos», «Alguien está construyendo algo». Unas son ciertas, otras son ruido o malentendidos.
-3. **Decide.** Toca una región → *Decidir*. Puedes enviar observadores o espías, investigar rumores, enviar provisiones, mediar, proponer o romper alianzas, presionar, sabotear, cerrar rutas, prohibir recursos, favorecer o abandonar regiones, compartir u ocultar información, crear rumores… y, como último recurso, intervenir con tu guardia.
-4. **Formula hipótesis.** Acompaña una decisión con una predicción («creo que si ayudo a esta región, su alimento aumentará en 5 días»). Al vencer el plazo sabrás si era *correcta*, *parcial* o *incorrecta*, y descubrirás parte de lo que pasó de verdad.
-5. **AVANZAR DÍA.** El mundo procesa las consecuencias y te cuenta lo que llega a tus oídos en el informe del amanecer.
+> No quiero que el jugador vea el mundo. Quiero que el jugador viva en él.
 
-Los objetivos son varios (paz duradera, cooperación entre regiones, sociedad sostenible, confirmar hipótesis…) y algunos **se descubren jugando**: la verdad oculta del mundo, convencer a una región que desconfía de ti, sobrevivir a una crisis o detener una epidemia.
+Eres una persona dentro del mundo, siempre visible en pantalla. Caminas, corres, cruzas puentes, atraviesas fronteras, entras en pueblos, hablas con su gente y ves con tus propios ojos lo que tus decisiones provocan.
+
+**EXPLORAR → OBSERVAR → DEDUCIR → DECIDIR → ESPERAR → VER CONSECUENCIAS → VOLVER A EXPLORAR**
+
+1. **Explora.** Cada región es un terreno real con su bioma (bosques, montañas, campos, marismas, salinas…), su arquitectura y sus fronteras naturales: mojones, puestos fronterizos con banderas, cambios de vegetación. Al cruzar aparece discretamente «Has entrado en Ascaria».
+2. **Observa.** Nadie te da cifras. Los mercados llenos o vacíos, los campos abandonados, las colas ante el almacén, los rebaños que desaparecen, los guardias nerviosos, las casas quemadas, los refugiados por los caminos… son la información.
+3. **Habla.** Los vecinos tienen oficio, rutina diaria, edad, familia y memoria. Te reconocen («Pensé que no volverías»), recuerdan a tus antepasados y deciden cuánto contarte. Pueden callar, exagerar o mentir.
+4. **Decide en el mundo.** En el almacén preparas caravanas que viajan de verdad por los caminos. En el salón del consejo envías emisarios, cambias leyes y atiendes a los mensajeros. Con los líderes tratas en persona (comercio, mediación, alianzas, presión, verdades y mentiras). En los puestos fronterizos se abren y cierran los caminos. En las posadas escuchas conversaciones y compruebas rumores.
+5. **Formula hipótesis** al decidir: «Creo que la reserva de alimento de Ascaria aumentará en 3 días». Vuelve más tarde y compruébalo.
+6. **El mundo sigue sin ti.** El tiempo corre (un día dura unos 6 minutos reales; puedes dormir en tu casa). Las regiones producen, comercian, inventan, se alían y entran en guerra; los vecinos nacen, envejecen, mueren y emigran.
+7. **Generaciones.** Tu personaje envejece. Cuando muere, un hijo, una hija o un aprendiz toma el relevo y hereda casa, conocimiento, reputación y enemigos. La partida puede durar generaciones.
+
+Mientras caminas surgen **encuentros** que no estaban escritos para ti: una disputa en el bosque, refugiados, un herido, soldados, un viajero con un rumor, una hoguera… Lo que hagas (o no hagas) puede escalar hasta convertirse en un conflicto entre pueblos.
 
 ### Controles táctiles
 
 | Gesto | Acción |
 | --- | --- |
-| Tocar región | Abre su panel (Saber · Gente · Decidir · Historia) |
-| Mantener pulsado | Resumen rápido de lo que sabes de la región |
-| Arrastrar | Mover el mapa |
-| Pellizcar | Zoom |
-| Doble toque | Acercar |
-| Deslizar hacia abajo el panel | Cerrarlo |
-| Botón «atrás» de Android | Cierra el último panel o diálogo |
+| Arrastrar en la mitad izquierda | Joystick: caminar (más lejos para correr) |
+| Tocar un punto / una persona / un edificio | Ir hasta allí (y hablar o entrar al llegar) |
+| Pellizcar | Zoom de la cámara |
+| Botón 🏃 | Correr |
+| Botones de contexto | Hablar · Observar · Seguir · Entrar · Examinar · Viajar… |
+| ☰ | Diario: mapa, crónica, hipótesis, investigación, consejo, objetivos, linaje, ajustes |
+| Botón «atrás» de Android | Cierra el último diálogo o panel |
+
+En el ordenador: flechas o WASD para caminar, Mayús para correr y rueda para el zoom.
 
 ---
 
@@ -55,6 +65,8 @@ Los objetivos son varios (paz duradera, cooperación entre regiones, sociedad so
 
 ## Arquitectura
 
+El análisis del código previo y el diseño del mundo vivo están en [`docs/ANALISIS-Y-ARQUITECTURA.md`](docs/ANALISIS-Y-ARQUITECTURA.md).
+
 ```
 src/
 ├── core/                  Motor del juego (TypeScript puro, sin DOM; probado con Vitest)
@@ -73,16 +85,39 @@ src/
 │   └── systems/           Reglas del mundo: economy, ecology, tech, relations, conflict,
 │                          rumors, clues, characters, patterns, petitions, hypotheses,
 │                          mystery, objectives, player
-├── ui/                    Interfaz táctil (DOM + Canvas, sin framework)
-│   ├── app.ts             Controlador: vistas, hoja de región, modales, botón atrás
-│   ├── map/               view.ts (mapa interactivo) · colors.ts (color según lo que sabes)
-│   └── screens/           menu, region, decisions, research, hypotheses, chronicle,
-│                          composer (pantalla de decisión + hipótesis), dawn, help
+├── world/                 El mundo explorable (lógica pura, probada con Vitest)
+│   ├── terrain.ts         Terreno real por teselas desde la semilla (biomas por región, río)
+│   ├── layout.ts          Pueblos, edificios, campos, caminos (A*), puentes, fronteras, lugares
+│   ├── life.ts            Capa de vida persistente: pueblos que crecen/arden/se reconstruyen,
+│   │                      vecinos que nacen/envejecen/mueren/emigran, generaciones del jugador
+│   ├── folk.ts            Vecinos con memoria y disposición a ayudar
+│   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
+│   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
+│   ├── encounters.ts      Encuentros que se descubren caminando y pueden escalar
+│   ├── presence.ts        Observación en persona, lugares, posadas, templos
+│   ├── clock.ts           Horas, estaciones, años, clima, día y noche
+│   ├── path.ts · roadnet.ts  Colisiones, A* y red de caminos
+│   └── index.ts           Conexión con el motor (sistema «vida» y caravanas)
+├── render/                Dibujo 2D en canvas
+│   ├── human.ts           Figura humana ilustrada: proporciones reales, rostro, 10 expresiones,
+│   │                      vistas de frente/espalda/perfil, acciones y 3 niveles de detalle
+│   ├── appearance.ts      Rasgos únicos + vestuario por región y clase social; aspecto del jugador
+│   ├── mood.ts            Expresión y gesto a partir de memoria, emociones y estado de la región
+│   ├── sprites.ts         Árboles, rocas, casas por cultura, edificios, mobiliario, animales, carros
+│   ├── chunks.ts          Suelo fundido entre teselas con relieve + objetos estáticos
+│   ├── gallery.ts         Galería de dirección artística (abrir con #galeria)
+│   └── scene.ts           Cámara con zoom, proximidad y nivel de detalle, NPC, gentío, tráfico,
+│                          luz del día, noche con luces cálidas, clima, entrada
+├── ui/                    Interfaz (DOM)
+│   ├── app.ts             Controlador: HUD mínimo, reloj del mundo, diario, modales
+│   ├── world-dialogs.ts   Decisiones dentro del mundo (almacén, consejo, líderes, fronteras…)
+│   ├── map/               Mapa del mundo (en el diario)
+│   └── screens/           crónica, hipótesis, investigación, consejo, linaje, menú, ayuda…
 ├── audio/audio.ts         Música ambiental generativa (Web Audio) según el estado del mundo
 ├── styles.css
 └── main.ts
 android/                   Proyecto nativo Android (Capacitor)
-tests/core.test.ts         Pruebas del motor
+tests/                     Pruebas del motor y del mundo explorable
 scripts/                   Simulaciones sin interfaz para equilibrar
 ```
 
@@ -151,13 +186,30 @@ La app está fijada en orientación vertical, usa el botón «atrás» del siste
 
 ---
 
-## Estado del prototipo
+## Estado del proyecto
 
-Implementadas las cuatro fases pedidas:
+**Versión 2 — el mundo vivo.** El juego pasó de ser un tablero de estrategia a un mundo explorable, sin perder la estrategia:
 
-- **Fase 1:** mapa, regiones, sistema de tiempo, decisiones, memoria, eventos y consecuencias.
-- **Fase 2:** personajes con memoria y emociones, relaciones, investigación, hipótesis e información incompleta.
-- **Fase 3:** generación procedural, eventos emergentes, objetivos múltiples (visibles y ocultos) y una primera pasada de equilibrio con simulaciones automáticas.
-- **Fase 4:** interfaz táctil Android, animaciones discretas (humo, comercio, emisarios, pulsos), música generativa según el estado del mundo, guardado/carga (3 ranuras + autoguardado + exportar/importar) y proyecto Capacitor.
+- Personaje controlable siempre en pantalla; cámara 2D cenital que le sigue, con zoom.
+- Terreno real continuo, sin pantallas de carga entre regiones; cada región con su bioma y arquitectura.
+- Pueblos con plaza, mercado, almacén, salón, posada, templo, forja, campos y animales; crecen de aldea a ciudad o se vacían.
+- Vecinos con rutinas (campesinos, comerciantes, guardias, niños, pastores, ancianos, líderes…) y memoria propia.
+- Consecuencias visibles: caravanas, refugiados, soldados en marcha, campamentos, barricadas, casas quemadas, reconstrucción, murallas, campos abandonados, mercados vacíos.
+- Decisiones e hipótesis tomadas en el mundo; misterio con lugares que examinar; encuentros emergentes.
+- Día y noche, estaciones, lluvia, niebla y nieve; generaciones del personaje; crónica por años.
+- Simulación por proximidad para Android: solo lo cercano se mueve; lo lejano vive en la simulación abstracta.
 
-Pendiente para iteraciones futuras: más contenido (misterios, técnicas, tipos de petición), afinar el equilibrio con partidas reales y pruebas en dispositivos concretos.
+**Versión 3 — revisión visual.** Mismas mecánicas, nueva dirección artística de RPG 2D ilustrado:
+
+- Personas con proporciones humanas (cabeza ≈ 1/7 de la altura), rostro visible y único, y 10 expresiones que salen de lo que cada vecino ha vivido (gratitud, rencor, miedo, hambre, guerra) y de reacciones del momento (sorpresa, saludo, alivio).
+- Vestuario por región (frío y pesado, de bosque, de costa, comercial y elegante, campesino) y por clase social (campesino, guardia, comerciante, artesano, líder con diadema y capa…).
+- Animaciones: caminar, correr, trabajar, martillear, pescar, sentarse en los bancos, conversar entre ellos (uno habla, otro escucha y asiente), saludar, cruzar los brazos, mirar alrededor.
+- Personaje del jugador personalizable (capa, jubón, pelo, barba, piel) en la pestaña Linaje; retratos en los diálogos.
+- Cámara que se acerca al hablar con alguien y encuadra la conversación.
+- Escala coherente: casas mucho más grandes que una persona, árboles altos, caballos mayores que la gente; pueblos con calles, fuente o pozo, bancos, faroles, almacenes, establos, graneros y carros.
+- Luz por hora (mañana rosada, tarde dorada) y noches oscuras con ventanas, faroles y hogueras cálidas; tormentas con relámpagos, viento con hojas; la gente se refugia o se cubre con capucha y se abriga en invierno.
+- Gentío en las ciudades grandes, pájaros, perros, patos y caballos; nivel de detalle por distancia y ajuste de calidad gráfica para Android.
+
+El motor estratégico de la versión 1 (memoria, consecuencias en cadena, rumores, hipótesis, mundo autónomo, legado) se conserva entero y alimenta todo lo que se ve.
+
+Pendiente: más contenido (oficios, encuentros, edificios especiales), afinar el equilibrio con partidas reales y probar en dispositivos Android concretos.

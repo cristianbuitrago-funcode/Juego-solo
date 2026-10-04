@@ -2,7 +2,9 @@ import { chainRoots, childrenOf } from '../../core/chronicle';
 import type { Entry, EntryKind, WorldState } from '../../core/types';
 import type { App } from '../app';
 import { clear, h } from '../dom';
-import { empty, ENTRY_ICON, entryRow } from './common';
+import { empty, ENTRY_ICON } from './common';
+import { ensureLife } from '../../world/life';
+import { seasonOf, yearOf } from '../../world/clock';
 
 /**
  * Crónica (registro de acontecimientos) e historial de consecuencias.
@@ -17,9 +19,9 @@ export function renderChronicle(app: App): Node[] {
   const container = h('div');
   const draw = () => {
     clear(container).append(
-      h('h2', null, 'Crónica'),
+      h('h2', null, 'Crónica del mundo'),
       h('div', { class: 'tabs' },
-        h('button', { class: app.chronicleTab === 'dias' ? 'on' : '', onclick: () => ((app.chronicleTab = 'dias'), draw()) }, 'Día a día'),
+        h('button', { class: app.chronicleTab === 'dias' ? 'on' : '', onclick: () => ((app.chronicleTab = 'dias'), draw()) }, 'Historia'),
         h('button', { class: app.chronicleTab === 'cadenas' ? 'on' : '', onclick: () => ((app.chronicleTab = 'cadenas'), draw()) }, 'Consecuencias'),
       ),
       ...(app.chronicleTab === 'dias' ? days(app, draw) : chains(w)),
@@ -29,34 +31,53 @@ export function renderChronicle(app: App): Node[] {
   return [container];
 }
 
+/**
+ * La historia del mundo, por años, estaciones y generaciones. Se genera sola a
+ * partir de los acontecimientos reales que conoces.
+ */
 function days(app: App, redraw: () => void): Node[] {
   const w = app.w!;
+  const life = ensureLife(w);
   const kinds: Record<Filter, (e: Entry) => boolean> = {
-    todo: () => true,
+    todo: (e) => e.importance >= 2 || !!e.byPlayer,
     mias: (e) => !!e.byPlayer,
     conflicto: (e) => e.kind === 'conflicto' || e.kind === 'diplomacia',
     descubrimiento: (e) => e.kind === 'descubrimiento' || e.kind === 'informacion',
   };
-  const list = w.entries.filter((e) => e.known && kinds[filter](e)).slice(-120).reverse();
+  const list = w.entries.filter((e) => e.known && kinds[filter](e)).slice(-200).reverse();
+  const reigns = [...life.player.lineage.map((a) => ({ name: a.name, from: a.fromDay, to: a.toDay, title: a.title })), { name: life.player.name, from: life.player.since, to: Infinity, title: '' }];
+  const reignOf = (day: number) => reigns.find((r) => day >= r.from && day <= r.to) ?? reigns[reigns.length - 1];
   const out: Node[] = [
     h('div', { class: 'choices', style: 'margin-bottom:8px' },
-      ...([['todo', 'Todo'], ['mias', 'Mis decisiones'], ['conflicto', 'Conflictos'], ['descubrimiento', 'Descubrimientos']] as [Filter, string][]).map(([f, l]) =>
+      ...([['todo', 'Lo importante'], ['mias', 'Mis decisiones'], ['conflicto', 'Conflictos y tratados'], ['descubrimiento', 'Descubrimientos']] as [Filter, string][]).map(([f, l]) =>
         h('button', { class: filter === f ? 'on' : '', onclick: () => ((filter = f), redraw()) }, l))),
   ];
-  if (!list.length) out.push(empty('Nada registrado todavía.'));
-  let day = -1;
+  if (!list.length) out.push(empty('Todavía no hay historia que contar. Sal a vivirla.'));
+  let year = -1;
+  let reign = '';
   for (const e of list) {
-    if (e.day !== day) {
-      day = e.day;
-      out.push(h('div', { class: 'daysep' }, `Día ${day}`));
+    const y = yearOf(e.day);
+    const rg = reignOf(e.day);
+    if (y !== year) {
+      year = y;
+      out.push(h('div', { class: 'year' }, h('span', null, `Año ${y}`)));
     }
-    out.push(entryRow(w, e, () => {
+    if (rg.name !== reign) {
+      reign = rg.name;
+      out.push(h('div', { class: 'reign' }, `En tiempos de ${rg.name}${rg.title ? `, «${rg.title}»` : ''}`));
+    }
+    out.push(h('div', { class: `chron ${e.byPlayer ? 'player' : ''} imp${e.importance}`, onclick: () => {
       const r = e.regions.find((id) => !w.regions[id].isHome);
       if (r !== undefined) app.openRegion(r);
-    }));
+    } },
+      h('div', { class: 'chron-ico' }, ENTRY_ICON[e.kind]),
+      h('div', null, h('div', { class: 'chron-date' }, `${capFirst(seasonOf(e.day))}, día ${((e.day - 1) % 5) + 1}${e.byPlayer ? ` · decisión de ${reignOf(e.day).name}` : ''}`), h('div', { class: 'chron-text' }, e.text)),
+    ));
   }
   return out;
 }
+
+const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function chains(w: WorldState): Node[] {
   // Raíces: tus decisiones y los grandes acontecimientos con consecuencias.

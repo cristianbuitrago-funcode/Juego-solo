@@ -1,4 +1,4 @@
-import { SAVE_VERSION } from './gen/worldgen';
+import { MIN_SAVE_VERSION, SAVE_VERSION } from './gen/worldgen';
 import { storage } from './storage';
 import type { WorldState } from './types';
 
@@ -28,8 +28,7 @@ export function loadGame(slot: Slot): WorldState | null {
   if (!raw) return null;
   try {
     const data = JSON.parse(raw) as { world: WorldState };
-    if (data.world.version !== SAVE_VERSION) return null;
-    return data.world;
+    return migrate(data.world);
   } catch {
     return null;
   }
@@ -47,6 +46,13 @@ export function slotInfo(slot: Slot): SlotInfo | null {
   }
 }
 
+/** Las partidas antiguas siguen siendo jugables: la capa de vida se crea al cargarlas. */
+function migrate(w: WorldState): WorldState | null {
+  if (!w || typeof w.version !== 'number' || w.version < MIN_SAVE_VERSION || w.version > SAVE_VERSION) return null;
+  w.version = SAVE_VERSION;
+  return w;
+}
+
 export function deleteSave(slot: Slot): void {
   storage.remove(key(slot));
 }
@@ -59,7 +65,7 @@ export function exportGame(w: WorldState): string {
 export function importGame(text: string): WorldState | null {
   try {
     const w = JSON.parse(decodeURIComponent(escape(atob(text.trim())))) as WorldState;
-    return w.version === SAVE_VERSION ? w : null;
+    return migrate(w);
   } catch {
     return null;
   }

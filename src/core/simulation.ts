@@ -109,7 +109,7 @@ function checkEnd(ctx: Ctx): void {
     w.ended = true;
     w.outcome = 'colapso';
     record(ctx, { kind: 'evento', text: 'Tu gente se dispersa. Ya no queda una civilización que guiar.', regions: [w.player.home], known: true, importance: 3 });
-  } else if (w.day >= w.eraLength) {
+  } else if (w.eraLength > 0 && w.day >= w.eraLength) {
     w.ended = true;
     w.outcome = 'era';
     record(ctx, { kind: 'evento', text: 'Termina una era. El mundo seguirá recordando lo que hiciste.', regions: [w.player.home], known: true, importance: 3 });

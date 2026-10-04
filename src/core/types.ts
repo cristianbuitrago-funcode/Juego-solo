@@ -356,6 +356,8 @@ export interface WorldState {
   outcome?: 'era' | 'colapso';
   legacyNotes: string[];
   mood: Mood;
+  /** Capa del mundo explorable (src/world). Opcional: el motor no depende de ella. */
+  life?: import('../world/types').Life;
 }
 
 export type Mood = 'calma' | 'tension' | 'crisis' | 'descubrimiento';

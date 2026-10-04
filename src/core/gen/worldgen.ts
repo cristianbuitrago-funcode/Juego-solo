@@ -13,7 +13,9 @@ import { clamp } from '../util';
 import { commitCtx, hops, type Ctx } from '../world';
 import { generateLayout, WORLD_H, WORLD_W } from './mapgen';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+/** Versiones antiguas que se pueden migrar al cargar. */
+export const MIN_SAVE_VERSION = 1;
 
 export interface WorldOptions {
   regionCount?: number;

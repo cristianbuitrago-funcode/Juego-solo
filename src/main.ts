@@ -7,7 +7,8 @@ import { App } from './ui/app';
  */
 const root = document.getElementById('app')!;
 const app = new App(root);
-app.showMenu();
+if (location.hash === '#galeria') void import('./render/gallery').then((m) => m.showGallery(root));
+else app.showMenu();
 
 async function bindAndroid(): Promise<void> {
   try {

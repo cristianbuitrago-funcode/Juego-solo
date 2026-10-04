@@ -26,37 +26,23 @@ export function renderMenu(app: App): HTMLElement {
 }
 
 function newGameDialog(app: App): void {
-  let length = 60;
+  let length = 0;
   const seed = h('input', { type: 'text', placeholder: 'Semilla (opcional): una palabra cualquiera' }) as HTMLInputElement;
   const lens = h('div', { class: 'choices' });
-  const drawLens = () => clear(lens).append(...([[40, 'Corta · 40 días'], [60, 'Normal · 60 días'], [90, 'Larga · 90 días']] as [number, string][]).map(([v, l]) => h('button', { class: length === v ? 'on' : '', onclick: () => ((length = v), drawLens()) }, l)));
+  const drawLens = () => clear(lens).append(...([[0, 'Sin fin · generaciones'], [60, 'Una era · 60 días'], [120, 'Dos eras · 120 días']] as [number, string][]).map(([v, l]) => h('button', { class: length === v ? 'on' : '', onclick: () => ((length = v), drawLens()) }, l)));
   drawLens();
   const close = app.modal(() => [
     h('h2', null, 'Nueva partida'),
     h('p', { class: 'lead' }, 'Cada mundo es distinto: su mapa, sus pueblos, sus recuerdos y su secreto. La misma semilla genera el mismo mundo.'),
     h('div', { class: 'field' }, h('label', null, 'Semilla'), seed),
-    h('div', { class: 'field' }, h('label', null, 'Duración de la era'), lens),
+    h('div', { class: 'field' }, h('label', null, 'Duración'), lens),
     h('button', { class: 'btn primary block', onclick: () => { close(); app.newGame(seed.value, length); } }, 'Crear mundo'),
   ]);
 }
 
-/** Menú dentro de la partida. */
-export function showGameMenu(app: App, open?: 'objetivos'): void {
-  if (open === 'objetivos') return objectivesDialog(app);
-  const close = app.modal(() => [
-    h('h2', null, 'Menú'),
-    h('button', { class: 'btn block', style: 'margin:6px 0', onclick: () => { close(); objectivesDialog(app); } }, '★ Objetivos'),
-    h('button', { class: 'btn block', style: 'margin:6px 0', onclick: () => { close(); app.chronicleTab = 'cadenas'; app.setView('cronica'); } }, '↪ Historial de consecuencias'),
-    h('button', { class: 'btn block', style: 'margin:6px 0', onclick: () => { close(); savesDialog(app, true); } }, '💾 Guardar / cargar'),
-    h('button', { class: 'btn block', style: 'margin:6px 0', onclick: () => { close(); settingsDialog(app); } }, '⚙ Configuración'),
-    h('button', { class: 'btn block', style: 'margin:6px 0', onclick: () => { close(); showHelp(app); } }, '❔ Cómo jugar'),
-    h('button', { class: 'btn block ghost', style: 'margin:6px 0', onclick: () => { close(); if (app.w) saveGame(app.w, 'auto'); app.showMenu(); } }, '⏏ Salir al menú principal'),
-  ]);
-}
-
-export function objectivesDialog(app: App): void {
+export function objectivesDialog(app: App, inline = false): Node[] {
   const w = app.w!;
-  app.modal(() => [
+  const nodes = () => [
     h('h2', null, 'Objetivos'),
     h('p', { class: 'lead' }, 'No hay una única forma de ganar. Algunos objetivos solo aparecen cuando descubres lo que ocurre en el mundo.'),
     ...w.objectives.map((o) =>
@@ -67,10 +53,28 @@ export function objectivesDialog(app: App): void {
             h('p', { class: 'muted' }, o.description),
             meter(o.progress),
           )),
-  ]);
+  ];
+  if (inline) return nodes();
+  app.modal(() => nodes());
+  return [];
 }
 
-function savesDialog(app: App, inGame: boolean): void {
+/** Ajustes dentro del diario: configuración, guardado, ayuda y salida. */
+export function renderSettingsInline(app: App): Node[] {
+  return [
+    h('h2', null, 'Ajustes'),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: () => settingsDialog(app) }, '⚙ Sonido, texto y animaciones'),
+      h('button', { class: 'btn', onclick: () => savesDialog(app, true) }, '💾 Guardar / cargar'),
+      h('button', { class: 'btn', onclick: () => showHelp(app) }, '❔ Cómo jugar'),
+      h('button', { class: 'btn', onclick: () => { app.closeDiary(); app.passTime(60); app.toast('Esperas una hora.'); } }, '⏳ Esperar una hora'),
+      h('button', { class: 'btn ghost', onclick: () => { if (app.w) saveGame(app.w, 'auto'); app.showMenu(); } }, '⏏ Salir al menú principal'),
+    ),
+    h('p', { class: 'tiny' }, 'La partida se guarda sola cada amanecer y al salir.'),
+  ];
+}
+
+export function savesDialog(app: App, inGame: boolean): void {
   const body = h('div');
   const draw = () => {
     clear(body).append(h('h2', null, inGame ? 'Guardar / cargar' : 'Cargar partida'));
@@ -114,6 +118,9 @@ export function settingsDialog(app: App): void {
     h('div', { class: 'field' }, h('label', null, '🎵 Música ambiental'), range(s.music, (v) => (s.music = v))),
     h('div', { class: 'field' }, h('label', null, '🔔 Efectos de sonido'), range(s.sfx, (v) => (s.sfx = v))),
     toggle('Texto grande', 'Aumenta el tamaño de letra de los paneles.', s.textSize === 'grande', (v) => (s.textSize = v ? 'grande' : 'normal')),
+    h('div', { class: 'field' }, h('label', null, '🖼 Calidad gráfica'),
+      h('select', { onchange: (e: Event) => { s.quality = (e.target as HTMLSelectElement).value as typeof s.quality; app.saveSettings(); } },
+        ...([['alta', 'Alta: máxima nitidez'], ['media', 'Media: equilibrada'], ['baja', 'Baja: menos gentío, más batería']] as const).map(([v, l]) => h('option', { value: v, selected: s.quality === v }, l)))),
     toggle('Reducir animaciones', 'Detiene el humo, los carros y los pulsos del mapa. Ahorra batería.', s.reduceMotion, (v) => (s.reduceMotion = v)),
     toggle('Vibración', 'Pequeña vibración al tomar decisiones.', s.haptics, (v) => (s.haptics = v)),
     toggle('Mostrar ayuda al empezar', 'Abre «Cómo jugar» en cada partida nueva.', s.tutorial, (v) => (s.tutorial = v)),
