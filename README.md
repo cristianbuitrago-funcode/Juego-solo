@@ -187,6 +187,30 @@ cd android
 
 La app está fijada en orientación vertical, usa el botón «atrás» del sistema, guarda las partidas en el almacenamiento local del dispositivo y funciona sin conexión.
 
+### APK automático (GitHub Actions)
+
+Cada push a `main` ejecuta el flujo **APK Android**: pruebas, compilación web y `assembleDebug`. El APK de prueba se descarga en Actions → la ejecución → *Artifacts* → `ecos-apk`.
+
+## Publicar en Google Play
+
+Google Play pide un **Android App Bundle (.aab)** firmado con una **clave de subida**. La clave nunca está en el repositorio: `android/app/build.gradle` la lee de variables de entorno (`ECOS_KEYSTORE_PATH`, `ECOS_KEYSTORE_PASSWORD`, `ECOS_KEY_ALIAS`, `ECOS_KEY_PASSWORD`) y el `versionCode` sale de `ECOS_VERSION_CODE`.
+
+1. **Secretos del repositorio** (Settings → Secrets and variables → Actions):
+   `ECOS_KEYSTORE_BASE64` (el `.jks` en base64), `ECOS_KEYSTORE_PASSWORD`, `ECOS_KEY_ALIAS`, `ECOS_KEY_PASSWORD`.
+2. **Compilar**: Actions → **Publicación Android** → *Run workflow* (indica la versión, p. ej. `1.0.0`), o sube una etiqueta `v1.0.0`. El `versionCode` es el número de ejecución, así que siempre crece.
+3. **Descargar** los artefactos `ecos-play-aab` (para Play) y `ecos-release-apk` (APK firmado).
+4. **Play Console** → crear la app → *Prueba interna* → subir el `.aab`. Activa *Firma de apps de Google Play*: Google guarda la clave de firma final y tu clave es solo la de subida (si se pierde, se puede restablecer desde la consola).
+
+Para generar una clave nueva:
+
+```bash
+keytool -genkeypair -v -keystore ecos-upload.jks -storetype PKCS12 -alias ecos \
+  -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 ecos-upload.jks > ecos-upload.jks.base64   # contenido para ECOS_KEYSTORE_BASE64
+```
+
+Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×500, capturas de pantalla, política de privacidad (el juego no recoge datos: todo se guarda en el dispositivo) y el cuestionario de clasificación de contenido.
+
 ---
 
 ## Estado del proyecto

@@ -1,5 +1,11 @@
 apply plugin: 'com.android.application'
 
+// Firma de publicación (Google Play). La clave NUNCA está en el repositorio:
+// se lee de variables de entorno, que en GitHub Actions salen de los secretos
+// cifrados del repositorio. Sin ellas, la versión release se compila sin firmar.
+def releaseKeystore = System.getenv("ECOS_KEYSTORE_PATH")
+def hasReleaseKey = releaseKeystore != null && file(releaseKeystore).exists()
+
 android {
     namespace = "com.ecos.mundoquerecuerda"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +13,9 @@ android {
         applicationId "com.ecos.mundoquerecuerda"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Google Play exige un versionCode mayor en cada subida: en CI es el número de ejecución.
+        versionCode((System.getenv("ECOS_VERSION_CODE") ?: "1").toInteger())
+        versionName System.getenv("ECOS_VERSION_NAME") ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +23,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv("ECOS_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ECOS_KEY_ALIAS")
+                keyPassword System.getenv("ECOS_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseKey) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
