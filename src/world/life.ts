@@ -9,9 +9,10 @@ import { PLAYER_CULTURE } from '../core/content/cultures';
 import { personName } from '../core/content/names';
 import { dayOf, yearOf } from './clock';
 import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember } from './folk';
-import { doorOf, getLayout, nearestWalkable } from './layout';
+import { createIdentity, legacyIdentity, story, syncAuthority, updateStanding, type Identity } from './identity';
+import { getLayout, nearestWalkable } from './layout';
 import type { Avatar, Folk, Life, TownState } from './types';
-import { DAYS_PER_YEAR, TH, TW } from './types';
+import { DAYS_PER_YEAR, T, TH, TW } from './types';
 
 /**
  * Vida del mundo: crea y mantiene la capa explorable. Cada amanecer
@@ -29,28 +30,42 @@ export function housesFor(w: WorldState, regionId: number): number {
   return Math.max(3, Math.min(v.houses.length, Math.round(r.population / (r.isHome ? 60 : 70))));
 }
 
-export function createLife(w: WorldState): Life {
+/**
+ * Donde despierta el protagonista: a las afueras, entre la hierba, lejos de
+ * los caminos y a una caminata del pueblo más cercano.
+ */
+function wakeSpot(w: WorldState, rng: Rng): { x: number; y: number } {
   const layout = getLayout(w);
+  const v = layout.villages[w.player.home];
+  const { tiles, region } = layout.terrain;
+  for (let k = 0; k < 400; k++) {
+    const a = rng.range(0, Math.PI * 2);
+    const d = rng.range(22, 32);
+    const x = Math.round(v.cx + Math.cos(a) * d);
+    const y = Math.round(v.cy + Math.sin(a) * d);
+    if (x < 2 || y < 2 || x >= TW - 2 || y >= TH - 2) continue;
+    const i = y * TW + x;
+    const t = tiles[i];
+    if ((t === T.Grass || t === T.Meadow) && !layout.blocked[i] && region[i] === w.player.home) return nearestWalkable(layout, x + 0.5, y + 0.5);
+  }
+  return nearestWalkable(layout, v.cx + 0.5, v.cy + v.plazaR + 20);
+}
+
+export function createLife(w: WorldState): Life {
   const rng = new Rng(w.seed ^ 0x2545f491);
-  const homeV = layout.villages[w.player.home];
-  const hogar = homeV.keys.find((b) => b.kind === 'hogar') ?? homeV.keys[0];
-  const door = hogar ? doorOf(hogar) : { x: homeV.cx, y: homeV.cy };
-  const start = nearestWalkable(layout, door.x, door.y);
-  const used = new Set<string>();
+  const start = wakeSpot(w, rng);
+  // Despierta sin nombre, sin familia y sin nada: solo un colgante.
   const avatar: Avatar = {
-    name: personName(rng, PLAYER_CULTURE.syllables, used),
+    name: 'Sin nombre',
     x: start.x,
     y: start.y,
     age: 27,
     birthDay: w.day,
     since: w.day,
     generation: 1,
-    family: [
-      { name: personName(rng, PLAYER_CULTURE.syllables, used), relation: rng.chance(0.5) ? 'hija' : 'hijo', age: 4 },
-      { name: personName(rng, PLAYER_CULTURE.syllables, used), relation: 'aprendiz', age: 15 },
-    ],
+    family: [],
     lineage: [],
-    inventory: { comida: 3, hierbas: 0, reliquias: 0 },
+    inventory: { comida: 0, hierbas: 0, reliquias: 0 },
     pendingDeath: false,
   };
   const life: Life = {
@@ -74,14 +89,29 @@ export function createLife(w: WorldState): Life {
     life.towns[r.id] = { houses: housesFor(w, r.id), burned: [], abandoned: 0, walls: r.militancy > 0.55, tower: false, tier };
   }
   populate(life, w, rng, (id) => life.towns[id].houses);
-  life.clock = (w.day - 1) * 1440 + 60;
-  explore(life, avatar.x, avatar.y, 18);
+  life.clock = (w.day - 1) * 1440 + 40; // 06:40: despierta con el alba
+  explore(life, avatar.x, avatar.y, 10);
+  w.life = life;
+  const id = createIdentity(w, life);
+  life.identity = id;
+  // Alguien de su tierra le conoció.
+  const past = id.past!;
+  const candidates = life.folk.filter((f) => f.regionId === past.origin && f.age >= 30 && f.role !== 'lider' && f.role !== 'nino' && !f.charId);
+  past.link = (candidates[0] ?? life.folk.find((f) => f.regionId === past.origin && f.role !== 'nino'))?.id;
+  life.visited = {};
+  story(w, 'Despertó junto a un camino, sin recordar quién era ni cómo había llegado allí.', 'despertar');
+  syncAuthority(w);
   return life;
 }
 
 /** Asegura que la partida tenga capa de vida (las partidas antiguas se migran). */
 export function ensureLife(w: WorldState): Life {
   if (!w.life) w.life = createLife(w);
+  if (!w.life.identity) {
+    // Partidas anteriores: el protagonista ya gobernaba; sigue haciéndolo.
+    w.life.identity = legacyIdentity(w, w.life);
+    syncAuthority(w);
+  }
   return w.life;
 }
 
@@ -120,6 +150,9 @@ export function dailyLife(w: WorldState): void {
   for (const r of w.regions) updateTown(ctx, life, r.id);
   folkLifecycle(ctx, life);
   ageAvatar(ctx, life);
+  const news = updateStanding(w);
+  const id = life.identity;
+  if (id) for (const n of news) (id.inbox ??= []).push(n.text);
   life.caravans = life.caravans.filter((c) => c.arrive > life.clock);
   life.encounters = life.encounters.filter((e) => !e.resolved && w.day - e.day < 2);
   // dailyLife usa su propio RNG: no altera la secuencia aleatoria del motor.
@@ -249,12 +282,14 @@ function ageAvatar(ctx: Ctx, life: Life): void {
   if ((w.day - p.birthDay) % DAYS_PER_YEAR !== 0 || w.day === p.birthDay) return;
   p.age++;
   for (const k of p.family) k.age++;
-  // Puede nacer alguien más en la familia.
-  if (p.age < 46 && rng.chance(0.18)) {
+  // Puede nacer alguien más en la familia (si ha echado raíces en algún sitio).
+  const rooted = life.identity?.mode === 'gobernante' || (life.identity?.housed && (life.identity.standing[w.player.home] ?? 0) >= 2);
+  if (p.age < 46 && rooted && rng.chance(0.18)) {
     const name = personName(rng, PLAYER_CULTURE.syllables, new Set(p.family.map((k) => k.name)));
     const rel = rng.chance(0.5) ? 'hija' : 'hijo';
     p.family.push({ name, relation: rel, age: 0 });
     record(ctx, { kind: 'personaje', text: `Nace ${name}, ${rel === 'hija' ? 'hija' : 'hijo'} de ${p.name}.`, regions: [w.player.home], known: true, importance: 2, byPlayer: true });
+    story(w, `Nació ${rel === 'hija' ? 'su hija' : 'su hijo'} ${name}.`, 'relacion');
   }
   const risk = p.age >= 85 ? 1 : p.age > 58 ? (p.age - 58) * 0.035 : 0;
   if (rng.chance(risk)) p.pendingDeath = true;
@@ -269,7 +304,7 @@ export function heirs(life: Life): Avatar['family'] {
  * casa, el conocimiento, la reputación y los enemigos: los vecinos recordarán
  * a tu antepasado cuando hablen contigo.
  */
-export function succeed(w: WorldState, heirName: string): string {
+export function succeed(w: WorldState, heirName: string, honor = true): string {
   const life = ensureLife(w);
   const ctx = makeCtx(w);
   const old = life.player;
@@ -292,6 +327,7 @@ export function succeed(w: WorldState, heirName: string): string {
   };
   // El mundo nota el cambio: un poco de la reputación se diluye.
   for (const r of w.regions) if (!r.isHome) r.attitude.trust = clamp(r.attitude.trust + (0.45 - r.attitude.trust) * 0.15);
+  if (life.identity) life.identity = heirIdentity(w, life.identity, old.name, honor);
   commitCtx(ctx);
   return life.player.name;
 }
@@ -310,4 +346,46 @@ export function syncClock(w: WorldState): void {
 
 export function folkOf(w: WorldState, id: string): Folk | undefined {
   return w.life?.folk.find((f) => f.id === id);
+}
+
+const TEMPERS = ['inquieto', 'prudente', 'ambicioso', 'compasivo', 'testarudo', 'soñador', 'callado', 'alegre'];
+
+/**
+ * Quien hereda no es una copia: tiene su propio carácter, sabe otras cosas y
+ * puede honrar el legado familiar… o darle la espalda.
+ */
+function heirIdentity(w: WorldState, prev: Identity, oldName: string, honor: boolean): Identity {
+  const life = w.life!;
+  const rng = new Rng(w.seed ^ (w.day * 7919));
+  const next: Identity = JSON.parse(JSON.stringify(prev));
+  next.lives = [...prev.lives, { name: oldName, story: prev.story }];
+  next.story = [];
+  next.mode = prev.mode;
+  next.named = true;
+  next.nickname = life.player.name;
+  next.past = null;
+  next.fragments = [];
+  next.items = prev.items.filter((x) => x !== 'colgante');
+  next.latent = {};
+  next.talents = [];
+  next.offers = [];
+  next.worked = {};
+  next.vow = undefined;
+  next.needs = { hunger: 0.2, fatigue: 0.1, coins: Math.floor(prev.needs.coins / 2), warned: 0 };
+  next.temper = rng.pick(TEMPERS);
+  // Habilidades propias: lo que aprendió en casa, no lo que sabía su predecesor.
+  for (const t of Object.values(next.skills)) Object.assign(t, { xp: 0, level: 0, found: -1, past: false });
+  for (const t of Object.values(next.know)) {
+    const lv = Math.max(0, t.level - 2);
+    Object.assign(t, { xp: [0, 1, 5, 12, 24, 40][lv], level: lv, found: lv ? w.day : -1, past: false });
+  }
+  const own = rng.pick(Object.keys(next.skills)) as keyof Identity['skills'];
+  next.skills[own] = { xp: 5, level: 2, found: w.day };
+  next.latent[rng.pick(Object.keys(next.skills))] = 2;
+  // La reputación se hereda en parte; los cargos no.
+  const keep = honor ? 0.6 : 0.25;
+  for (const k of Object.keys(next.score)) next.score[Number(k)] = (next.score[Number(k)] ?? 0) * keep;
+  for (const k of Object.keys(next.rank)) next.rank[Number(k)] = honor ? Math.min(4, next.rank[Number(k)] ?? 0) : 0;
+  next.story.push({ day: w.day, age: life.player.age, kind: 'despertar', text: honor ? `Tomó el relevo de ${oldName} y decidió honrar su legado.` : `Tomó el relevo de ${oldName}, pero eligió su propio camino.` });
+  return next;
 }

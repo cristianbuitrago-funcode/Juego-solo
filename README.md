@@ -90,6 +90,10 @@ src/
 │   ├── layout.ts          Pueblos, edificios, campos, caminos (A*), puentes, fronteras, lugares
 │   ├── life.ts            Capa de vida persistente: pueblos que crecen/arden/se reconstruyen,
 │   │                      vecinos que nacen/envejecen/mueren/emigran, generaciones del jugador
+│   ├── identity.ts        El protagonista: habilidades y conocimientos que se descubren, pasado
+│   │                      olvidado y fragmentos de memoria, necesidades, reputación y cargos,
+│   │                      talentos únicos y crónica personal
+│   ├── livelihood.ts      Ganarse la vida: trabajar, comer, dormir, estudiar, comerciar, convencer
 │   ├── folk.ts            Vecinos con memoria y disposición a ayudar
 │   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
 │   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
@@ -236,6 +240,18 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - Escala coherente: casas mucho más grandes que una persona, árboles altos, caballos mayores que la gente; pueblos con calles, fuente o pozo, bancos, faroles, almacenes, establos, graneros y carros.
 - Luz por hora (mañana rosada, tarde dorada) y noches oscuras con ventanas, faroles y hogueras cálidas; tormentas con relámpagos, viento con hojas; la gente se refugia o se cubre con capucha y se abriga en invierno.
 - Gentío en las ciudades grandes, pájaros, perros, patos y caballos; nivel de detalle por distancia y ajuste de calidad gráfica para Android.
+
+**Versión 5 — despertar sin memoria.** El protagonista ya no gobierna desde el principio:
+
+- Despierta junto a un camino, sin nombre, sin familia y sin nada más que un colgante. Nadie le debe nada; nadie sabe quién es.
+- Primero hay que vivir: hambre, cansancio, monedas. Trabaja con los vecinos (campo, redes, taller, puesto, guardia, sanadora…), come en la posada, duerme donde pueda.
+- Se convierte en lo que hace: 11 habilidades (lo que puede hacer) y 9 conocimientos (lo que comprende) que se descubren al usarlos. Algunas venían de su pasado y despiertan de golpe: «algo en tus manos parece recordar cómo hacerlo».
+- El pasado vuelve por fragmentos (el colgante, un objeto, una canción, un sueño, un camino, alguien que le reconoce, lo que hizo) y el jugador decide qué hacer con ello: aceptar su nombre o no, reparar, callar, no dejar que le defina.
+- Talentos únicos según cómo se ha vivido (Lectura política, Superviviente, Comandante, Ojo de mercader, Mirada de investigador, Manos de sanador, Lengua de plata, Sombra) que abren opciones nuevas en el mundo.
+- El poder se gana: desconocido → conocido → apreciado → de confianza → consejero → miembro del consejo → líder. Los cargos se ofrecen (no se piden) y se pueden rechazar. Sin cargo, las decisiones políticas del motor no están disponibles.
+- El diario crece con la vida: al principio solo mapa, «Quién soy» y crónica; la investigación, las hipótesis, el consejo y los objetivos aparecen cuando el personaje tiene voz para usarlos.
+- Crónica personal («Tu historia»): «A los 27 años, despertó junto a un camino…». Los herederos tienen su propio carácter y pueden honrar o rechazar el legado.
+- Las partidas guardadas antes de este cambio siguen como estaban: el protagonista gobierna.
 
 **Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
 

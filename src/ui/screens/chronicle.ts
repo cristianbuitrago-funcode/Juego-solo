@@ -5,6 +5,7 @@ import { clear, h } from '../dom';
 import { empty, ENTRY_ICON } from './common';
 import { ensureLife } from '../../world/life';
 import { seasonOf, yearOf } from '../../world/clock';
+import { storyLine, type StoryEntry } from '../../world/identity';
 
 /**
  * Crónica (registro de acontecimientos) e historial de consecuencias.
@@ -19,16 +20,35 @@ export function renderChronicle(app: App): Node[] {
   const container = h('div');
   const draw = () => {
     clear(container).append(
-      h('h2', null, 'Crónica del mundo'),
+      h('h2', null, app.chronicleTab === 'vida' ? 'Tu historia' : 'Crónica del mundo'),
       h('div', { class: 'tabs' },
-        h('button', { class: app.chronicleTab === 'dias' ? 'on' : '', onclick: () => ((app.chronicleTab = 'dias'), draw()) }, 'Historia'),
+        h('button', { class: app.chronicleTab === 'vida' ? 'on' : '', onclick: () => ((app.chronicleTab = 'vida'), draw()) }, 'Tu historia'),
+        h('button', { class: app.chronicleTab === 'dias' ? 'on' : '', onclick: () => ((app.chronicleTab = 'dias'), draw()) }, 'El mundo'),
         h('button', { class: app.chronicleTab === 'cadenas' ? 'on' : '', onclick: () => ((app.chronicleTab = 'cadenas'), draw()) }, 'Consecuencias'),
       ),
-      ...(app.chronicleTab === 'dias' ? days(app, draw) : chains(w)),
+      ...(app.chronicleTab === 'vida' ? personal(w) : app.chronicleTab === 'dias' ? days(app, draw) : chains(w)),
     );
   };
   draw();
   return [container];
+}
+
+/**
+ * La crónica del personaje: lo que hizo, descubrió, aprendió y decidió,
+ * contado como un libro. Las vidas anteriores del linaje quedan debajo.
+ */
+const STORY_ICON: Record<string, string> = { despertar: '🌅', habilidad: '✋', conocimiento: '📖', talento: '✦', memoria: '🔱', logro: '★', decision: '⚖', relacion: '🤝', lugar: '🧭', error: '✗', cargo: '🏛' };
+
+function personal(w: WorldState): Node[] {
+  const life = ensureLife(w);
+  const id = life.identity;
+  if (!id) return [empty('Aún no hay nada que contar.')];
+  const block = (name: string, entries: StoryEntry[]) =>
+    h('div', null, h('h3', null, name), ...(entries.length ? entries.map((e) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, STORY_ICON[e.kind] ?? '·'), h('div', { class: 'txt' }, storyLine(e), h('div', { class: 'tiny' }, `día ${e.day} · ${seasonOf(e.day)} del año ${yearOf(e.day)}`)))) : [empty('Todavía nada.')]));
+  return [
+    block(life.player.name === 'Sin nombre' ? 'Alguien sin nombre' : life.player.name, [...id.story].reverse()),
+    ...[...id.lives].reverse().map((l) => block(l.name, [...l.story].reverse())),
+  ];
 }
 
 /**

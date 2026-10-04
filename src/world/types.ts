@@ -155,6 +155,8 @@ export interface Life {
   observed: Record<number, number>; // último minuto con observación directa
   nextEncounter: number;
   seq: number;
+  /** Quién es el protagonista: habilidades, pasado, reputación, crónica personal. */
+  identity?: import('./identity').Identity;
 }
 
 export const DAY_MINUTES = 1440;

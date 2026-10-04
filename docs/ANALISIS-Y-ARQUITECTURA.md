@@ -128,3 +128,16 @@ Dirección artística: RPG de pixel art de alta calidad (referencias de estilo y
 | Pueblos | Las casas solo tienen un sendero corto ante la puerta: el pueblo es verde con calles principales. |
 | Clima y fuego (`fx.ts`) | `WeatherFx` dibuja gotas (trazos diagonales con punta clara y salpicadura de tres fotogramas), copos (1–3 px), hojas y ráfagas en el lienzo del mundo; en la pantalla solo quedan el tono del cielo, la niebla y el relámpago. Hogueras y faroles son sprites de píxeles con 4 y 3 fotogramas; el humo son discos pixelados. La hoguera de la plaza busca el hueco más despejado. |
 | Montañas | `peak()` genera cada montaña píxel a píxel (seis variantes): una o dos cumbres, arista que separa la cara iluminada de la sombra violácea, estratos, grietas, nieve con borde dentado y pinos diminutos que dan escala. |
+
+
+## 5. Despertar sin memoria (v5)
+
+**Problema del prototipo:** el jugador empezaba gobernando (provisiones, emisarios, leyes, peticiones, diplomacia) desde el primer minuto. **Cambio:** empieza como una persona sin memoria y sin autoridad; el poder se construye.
+
+| Pieza | Diseño |
+| --- | --- |
+| Autoridad en el motor | `Player.authority` (0 forastero … 6 líder). `ACTION_LEVEL` fija el nivel que necesita cada acción y `performAction` la rechaza si no se tiene («Nadie actuaría por orden tuya…»). Las peticiones solo llegan con nivel ≥ 4. Sin definir = partidas antiguas (gobierna). |
+| `world/identity.ts` | Habilidades (11) y conocimientos (9) con experiencia y niveles; se descubren al usarlos. Aptitudes latentes del pasado que despiertan de golpe. Talentos únicos por combinaciones. Hambre, cansancio y monedas. Reputación por región (lo ganado + lo que recuerdan los vecinos) → reconocimiento 0–6; los cargos ≥ 4 se ofrecen y se aceptan o rechazan; el consejo exige haber ayudado en una crisis. Fragmentos de memoria con desencadenantes (colgante, edificio según el oficio pasado, canción en la posada, sueño, llegar a su tierra, alguien que le reconoce, la verdad) y decisiones. Crónica personal y vidas anteriores. |
+| `world/livelihood.ts` | Trabajar con cada oficio (tiempo, paga, aprendizaje, memoria del vecino, reputación), preguntar por uno mismo, convencer, mentir, comer, dormir, comprar, vender, pedir, buscar comida, estudiar (templo, posada, salón, mercado), escuchar tras la puerta, atender una fiebre, aprendizaje en encuentros y al explorar. |
+| Vida y generaciones | `createLife` despierta al personaje a las afueras, sin familia ni provisiones; elige su pasado (oficio, tierra de origen, nombre verdadero, un hecho bueno o terrible y alguien que le conoció). Los hijos solo llegan si ha echado raíces. El heredero tiene carácter y habilidades propias y puede honrar o rechazar el legado. |
+| Interfaz | Escena de despertar sin explicaciones; HUD con monedas, mochila, hambre y cansancio; botón ✋ (comer, buscar comida, descansar, dormir al raso, mirar el colgante); diario que se amplía con el cargo; pantalla «Quién soy»; crónica «Tu historia»; edificios y conversaciones que cambian según quién eres en cada pueblo. |

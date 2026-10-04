@@ -30,6 +30,12 @@ const ignore: Choice = { label: 'No intervenir', action: 'ignorar', params: {} }
 
 export function tickPetitions(ctx: Ctx): void {
   const { w, rng } = ctx;
+  // Las peticiones van al consejo. Mientras el protagonista no tenga voz en
+  // él, ni le llegan ni se le cuenta el silencio: las resuelve el consejo.
+  if ((w.player.authority ?? 6) < 4) {
+    w.petitions = w.petitions.filter((x) => x.expires >= w.day);
+    return;
+  }
   // Caducadas: el silencio también se recuerda.
   for (const p of w.petitions.filter((x) => x.expires < w.day)) expire(ctx, p);
   w.petitions = w.petitions.filter((x) => x.expires >= w.day);

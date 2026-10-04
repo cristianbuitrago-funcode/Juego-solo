@@ -3,31 +3,27 @@ import { clear, h } from '../dom';
 
 /** Cómo jugar, en páginas cortas. */
 const PAGES: [string, string, string[]][] = [
-  ['🌍', 'No ves el mundo: vives en él', [
-    'Eres una persona de carne y hueso en un mundo que funciona solo. Los pueblos comercian, inventan, migran, se alían y se enfrentan aunque no mires.',
-    'Todo lo que haces queda en la memoria del mundo. La gente te recuerda —y recordará a tus hijos—.',
+  ['🌅', 'No sabes quién eres', [
+    'Despiertas en un mundo que no recuerdas. Nadie te debe nada. Nadie sabe quién eres. Tendrás que descubrirlo.',
+    'El mundo funciona solo: los pueblos comercian, inventan, migran y se enfrentan aunque no mires. No gira a tu alrededor.',
   ]],
   ['🕹', 'Moverte', [
     'Arrastra el pulgar en la mitad izquierda de la pantalla para caminar (más lejos, para correr). También puedes tocar un punto y tu personaje irá hasta allí.',
-    'Pellizca para acercar o alejar la cámara. El botón 🏃 activa correr.',
-    'Al acercarte a alguien o a algo aparecen las acciones: Hablar, Observar, Seguir, Entrar, Examinar…',
+    'Al acercarte a alguien o a algo aparecen las acciones. El botón ✋ es tu cuerpo: comer, buscar comida, descansar, mirar lo que llevas.',
   ]],
-  ['🔎', 'Nadie te lo cuenta todo', [
-    'No hay cifras. Mira los mercados, los campos, los guardias, los rebaños. Escucha en las posadas. Habla con la gente: pueden callar, exagerar o mentir.',
-    'Algunos avisos llegan como susurros a lo largo del día. Algunos sonidos —gritos, pasos, una hoguera— te invitan a desviarte del camino.',
+  ['🍞', 'Primero, vivir', [
+    'Tienes hambre y te cansas. Trabaja con los vecinos para ganar monedas y comida; come en la posada; duerme donde puedas.',
+    'Haciendo cosas descubres lo que sabes hacer. Algunas cosas las sabías antes de olvidarlo todo: despertarán de golpe.',
   ]],
-  ['⚖', 'Decidir en el mundo', [
-    'En el almacén de tu pueblo preparas caravanas de provisiones; viajan de verdad por los caminos y tardan días en llegar.',
-    'En el salón del consejo envías emisarios, cambias leyes y escuchas a los mensajeros. En tu casa duermes y velas por tu familia.',
-    'Con los líderes de otros pueblos tratas en persona: comercio, mediaciones, alianzas, presiones, verdades y mentiras. En los puestos fronterizos se abren o se cierran los caminos.',
+  ['🔱', 'Tu pasado', [
+    'Un objeto, una canción, un camino, una cara: los recuerdos vuelven por fragmentos. Lo que fuiste explica algunas cosas, pero no decide quién serás.',
   ]],
-  ['🧪', 'Experimenta y comprueba', [
-    'Acompaña cualquier decisión con una hipótesis: «creo que la reserva de alimento de esta región aumentará en 3 días».',
-    'Sigue explorando. Cuando venza el plazo, vuelve y míralo con tus propios ojos. A veces lo bueno trae consecuencias inesperadas.',
+  ['🏛', 'Ganarse un lugar', [
+    'Quien no es nadie no decide nada. Ayuda, trabaja, gánate la confianza de un pueblo. Con el tiempo te pedirán opinión, quizá te ofrezcan un cargo… y puedes aceptarlo o no.',
+    'Con voz en el consejo podrás enviar emisarios, votar leyes y tratar con otros pueblos. Puedes detenerte en cualquier punto: también vale una vida tranquila.',
   ]],
-  ['🌳', 'Generaciones', [
-    'Tu personaje envejece. Cuando muera, alguien de tu familia tomará el relevo con tu casa, tu conocimiento, tu reputación y tus enemigos.',
-    'La crónica cuenta la historia del mundo año a año. El diario (☰) guarda el mapa, la crónica, las hipótesis, la investigación, el consejo y tu linaje.',
+  ['🌳', 'Lo que dejas', [
+    'Tu crónica cuenta tu historia. Si formas una familia, alguien seguirá cuando mueras: con su propio carácter, y libre de honrar o rechazar tu legado.',
   ]],
 ];
 

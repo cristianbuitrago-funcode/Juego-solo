@@ -265,3 +265,20 @@ body[data-motion='reduced'] .banner { animation: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .opt-chip { border: 1px solid #b9a27a; background: #f3e8cf; border-radius: 14px; padding: 5px 11px; font: inherit; font-size: 0.85em; color: #3a2a1a; }
 .opt-chip.on { background: #2f5f63; color: #f3e8cf; border-color: #2f5f63; }
+
+/* Quién soy */
+.need { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.need span { width: 110px; font-size: 0.9em; }
+.dots { letter-spacing: 1px; color: var(--accent-2, #c9902c); font-size: 0.85em; }
+.fragment-modal p { font-style: italic; line-height: 1.6; }
+.fragment-modal h2 { font-variant: small-caps; letter-spacing: 1px; }
+.awaken { position: absolute; inset: 0; z-index: 80; background: #0d0b09; color: #e9dcc0; display: flex; flex-direction: column; justify-content: center; padding: 32px; gap: 18px; font-family: Georgia, serif; }
+.awaken p { font-size: 1.15em; line-height: 1.6; opacity: 0; animation: awaken-in 1.6s forwards; }
+.awaken p:nth-child(2) { animation-delay: 1.4s; }
+.awaken p:nth-child(3) { animation-delay: 2.8s; }
+.awaken p:nth-child(4) { animation-delay: 4.2s; }
+.awaken button { align-self: center; margin-top: 18px; opacity: 0; animation: awaken-in 1s 5.4s forwards; }
+@keyframes awaken-in { to { opacity: 1; } }
+body[data-motion="reduced"] .awaken p, body[data-motion="reduced"] .awaken button { animation: none; opacity: 1; }
+.quick-btn { position: absolute; right: 14px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%; border: 2px solid rgba(243,232,207,0.5); background: rgba(30,25,20,0.55); color: #f3e8cf; font-size: 22px; z-index: 5; }
+.hud .chip.warn { background: rgba(160,50,30,0.75); }

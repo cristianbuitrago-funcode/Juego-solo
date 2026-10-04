@@ -122,7 +122,7 @@ function tabKnow(app: App, id: number): Node[] {
 function tabPeople(app: App, id: number): Node[] {
   const w = app.w!;
   const r = w.regions[id];
-  if (r.isHome) return [empty('Tu gente te sigue. Su ánimo depende de las provisiones, de las guerras cercanas y de tus leyes.')];
+  if (r.isHome) return [empty('El pueblo donde despertaste. Su ánimo depende de las provisiones, de las guerras cercanas y de lo que decida su consejo.')];
   const known = charactersOf(w, id, false).filter((c) => c.known);
   const out: Node[] = [];
   if (!known.length) out.push(empty('Aún no conoces a nadie aquí. Observa, espía o espera a que te busquen.'));

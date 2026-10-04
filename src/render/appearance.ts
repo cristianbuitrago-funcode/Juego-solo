@@ -327,11 +327,11 @@ export const DEFAULT_PLAYER_LOOK: PlayerLook = { cloak: '#c9902c', tunic: '#2f5f
 
 export function playerAppearance(p: Avatar): Appearance {
   const look = (p.look as PlayerLook | undefined) ?? DEFAULT_PLAYER_LOOK;
-  const r = prng(seedOf(p.name) ^ p.generation);
+  const r = prng(seedOf(`${p.generation}:${p.birthDay}`) ^ p.generation);
   const skin = SKINS[look.skin % SKINS.length];
   const old = p.age >= 58;
   return {
-    seed: seedOf(p.name),
+    seed: seedOf(`${p.generation}:${p.birthDay}`),
     height: 1.03,
     build: 1.02,
     fem: look.fem,

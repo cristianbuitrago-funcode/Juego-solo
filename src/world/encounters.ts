@@ -202,7 +202,7 @@ export function encounterOptions(w: WorldState, e: Encounter): Option[] {
     case 'refugiados':
       o.push({ id: 'hablar', label: '💬 Preguntar qué ha pasado' });
       if (inv.comida > 0) o.push({ id: 'comida', label: '🍞 Darles comida' });
-      o.push({ id: 'hogar', label: '🏠 Indicarles el camino a tu hogar' });
+      o.push({ id: 'hogar', label: `🏠 Indicarles el camino a ${w.regions[w.player.home].name}` });
       break;
     case 'soldados':
       o.push({ id: 'hablar', label: '💬 Hablar con ellos' });
@@ -324,7 +324,7 @@ export function resolveEncounter(w: WorldState, encId: string, opt: string): { l
         a.origin = a.regionId;
         a.regionId = w.player.home;
         remember(a, { day: w.day, kind: 'refugio', weight: 0.7 }, gen);
-        lines.push('Siguen tus indicaciones. Encontrarán sitio entre tu gente.');
+        lines.push(`Siguen tus indicaciones hacia ${w.regions[w.player.home].name}. Allí encontrarán sitio.`);
         finish(`Acogiste en tu hogar a ${a.name} y su familia, que huían de ${O?.name}.`);
       } else {
         lines.push('«¿Nos dejarán entrar? Dicen que tus leyes cierran las puertas.» Tu ley de hospitalidad no está en vigor.');

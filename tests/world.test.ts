@@ -9,6 +9,8 @@ import { dayOf, hourOf, seasonOf, weatherOf, yearOf } from '../src/world/clock';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../src/world/encounters';
 import { getLayout } from '../src/world/layout';
 import { createLife, ensureLife, heirs, succeed } from '../src/world/life';
+import { answerOffer, chooseFragment, gain, questions, standingOf, tryFragment } from '../src/world/identity';
+import { jobFor, work } from '../src/world/livelihood';
 import { findPath, passable } from '../src/world/path';
 import { examinePlace, listenTavern } from '../src/world/presence';
 import { roadPath } from '../src/world/roadnet';
@@ -81,6 +83,7 @@ describe('vecinos con rutinas y memoria', () => {
   it('un vecino recuerda que le diste comida y te reconoce al volver', () => {
     const w = world(82);
     const f = w.life!.folk.find((x) => !x.charId && x.role !== 'nino')!;
+    w.life!.player.inventory.comida = 2; // el protagonista despierta sin nada: primero hay que conseguirla
     talkToFolk(w, f.id);
     giveTo(w, f.id, 'comida');
     expect(f.memories.some((m) => m.kind === 'comida')).toBe(true);
@@ -115,6 +118,7 @@ describe('consecuencias visibles', () => {
   it('la caravana física sale del almacén y llega cuando el motor entrega las provisiones', () => {
     const w = world(85);
     const target = w.regions.find((r) => !r.isHome && roadPath(w, w.player.home, r.id).length)!;
+    w.player.authority = 6; // solo quien tiene voz en el consejo puede mandar caravanas
     performAction(w, 'ayuda', { region: target.id, amount: 12 });
     const c = w.life!.caravans[0];
     expect(c).toBeDefined();
@@ -185,7 +189,7 @@ describe('tiempo y generaciones', () => {
   it('cuando el personaje muere, un heredero toma el relevo y la partida continúa', () => {
     const w = world(95);
     const life = w.life!;
-    life.player.family[0].age = 20;
+    life.player.family.push({ name: 'Ilae', relation: 'hija', age: 20 });
     expect(heirs(life).length).toBeGreaterThan(0);
     const oldName = life.player.name;
     const heir = heirs(life)[0].name;
@@ -216,5 +220,132 @@ describe('guardado del mundo vivo', () => {
     expect(migrated.version).toBe(2);
     expect(ensureLife(migrated).folk.length).toBeGreaterThan(0);
     expect(createLife(migrated).player.name).toBeTruthy();
+  });
+});
+
+describe('despertar sin memoria y ganarse un lugar', () => {
+  it('empieza sin nombre, sin nada y sin autoridad', () => {
+    const w = world(301);
+    const life = w.life!;
+    const id = life.identity!;
+    expect(id.mode).toBe('forastero');
+    expect(id.named).toBe(false);
+    expect(life.player.family.length).toBe(0);
+    expect(life.player.inventory.comida).toBe(0);
+    expect(w.player.authority).toBe(0);
+    expect(id.items).toContain('colgante');
+    expect(id.story[0].kind).toBe('despertar');
+    // Despierta fuera del pueblo, no en la plaza.
+    const v = getLayout(w).villages[w.player.home];
+    expect(Math.hypot(v.cx - life.player.x, v.cy - life.player.y)).toBeGreaterThan(15);
+  });
+
+  it('sin cargo no puede tomar decisiones políticas', () => {
+    const w = world(302);
+    const target = w.regions.find((r) => !r.isHome)!;
+    const res = performAction(w, 'alianza', { region: target.id, other: target.neighbors[0] });
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/haría falta/);
+    expect(w.petitions.length).toBe(0);
+  });
+
+  it('las habilidades se descubren al usarlas y el pasado despierta de golpe', () => {
+    const w = world(303);
+    const id = w.life!.identity!;
+    const skill = Object.keys(id.latent).find((k) => !k.startsWith('k:')) as keyof typeof id.skills;
+    const latent = id.latent[skill];
+    expect(id.skills[skill].level).toBe(0);
+    const notes = gain(w, skill, 1);
+    expect(id.skills[skill].level).toBe(latent);
+    expect(id.skills[skill].past).toBe(true);
+    expect(notes[0].big).toBe(true);
+    // Sin pasado: se aprende poco a poco.
+    const plain = (Object.keys(id.skills) as (keyof typeof id.skills)[]).find((k) => !(k in id.latent) && id.skills[k].level === 0)!;
+    gain(w, plain, 1);
+    expect(id.skills[plain].level).toBe(1);
+    for (let i = 0; i < 20; i++) gain(w, plain, 1);
+    expect(id.skills[plain].level).toBeGreaterThanOrEqual(3);
+  });
+
+  it('trabajar da monedas, enseña y gana reputación hasta abrir puertas', () => {
+    const w = world(304);
+    const life = w.life!;
+    const id = life.identity!;
+    const workers = life.folk.filter((f) => f.alive && f.regionId === w.player.home && jobFor(w, f) && f.role !== 'lider');
+    expect(workers.length).toBeGreaterThan(2);
+    for (let d = 0; d < 6; d++) {
+      for (const f of workers.slice(0, 3)) {
+        id.needs.fatigue = 0;
+        const out = work(w, f.id);
+        expect(out.minutes).toBeGreaterThan(0);
+      }
+      advanceDay(w);
+    }
+    expect(id.needs.coins).toBeGreaterThan(0);
+    expect(id.deeds.trabajar).toBeGreaterThanOrEqual(18);
+    expect(standingOf(w, w.player.home)).toBeGreaterThanOrEqual(2);
+    expect(w.player.authority).toBe(standingOf(w, w.player.home));
+  });
+
+  it('los cargos se ofrecen y se pueden rechazar; aceptarlos da voz en el consejo', () => {
+    const w = world(305);
+    const id = w.life!.identity!;
+    id.score[w.player.home] = 60;
+    id.deeds[`crisis:${w.player.home}`] = 1;
+    for (let i = 0; i < 30 && !id.offers.length; i++) advanceDay(w);
+    const offer = id.offers.find((o) => o.regionId === w.player.home)!;
+    expect(offer.level).toBe(4);
+    answerOffer(w, w.player.home, false);
+    expect(w.player.authority).toBe(3);
+    expect(id.story.some((e) => e.text.includes('Rechazó'))).toBe(true);
+    id.offers.push({ regionId: w.player.home, level: 4, day: w.day });
+    answerOffer(w, w.player.home, true);
+    expect(w.player.authority).toBe(4);
+    expect(performAction(w, 'observar', { region: w.regions.find((r) => !r.isHome)!.id }).ok).toBe(true);
+  });
+
+  it('los recuerdos llegan por fragmentos y el jugador decide qué hacer con ellos', () => {
+    const w = world(306);
+    const life = w.life!;
+    const id = life.identity!;
+    const past = id.past!;
+    expect(tryFragment(w, { kind: 'colgante' })!.lines.join(' ')).toContain(past.symbol);
+    expect(tryFragment(w, { kind: 'region', regionId: past.origin })!.id).toBe('lugar');
+    const meet = tryFragment(w, { kind: 'hablar', folkId: past.link! })!;
+    expect(meet.id).toBe('persona');
+    chooseFragment(w, 'persona', 'rechazar');
+    expect(id.named).toBe(true);
+    expect(life.player.name).not.toBe(past.trueName);
+    id.fragments.push({ id: 'x', day: w.day }, { id: 'y', day: w.day });
+    const truth = tryFragment(w, { kind: 'hablar', folkId: past.link! })!;
+    expect(truth.id).toBe('verdad');
+    expect(truth.choices!.length).toBeGreaterThan(1);
+    expect(questions(w).length).toBeGreaterThan(0);
+  });
+
+  it('el heredero no es una copia y puede rechazar el legado', () => {
+    const w = world(307);
+    const life = w.life!;
+    const id = life.identity!;
+    gain(w, 'comercio', 30);
+    id.score[w.player.home] = 50;
+    life.player.family.push({ name: 'Ilae', relation: 'hija', age: 20 });
+    succeed(w, 'Ilae', false);
+    const next = life.identity!;
+    expect(next.lives.length).toBe(1);
+    expect(next.skills.comercio.level).toBeLessThan(id.skills.comercio.level);
+    expect(next.score[w.player.home]).toBeLessThan(20);
+    expect(next.temper).toBeTruthy();
+    expect(next.past).toBeNull();
+  });
+
+  it('las partidas antiguas siguen gobernando', () => {
+    const w = world(308);
+    delete w.life!.identity;
+    delete w.player.authority;
+    const life = ensureLife(w);
+    expect(life.identity!.mode).toBe('gobernante');
+    expect(w.player.authority).toBeUndefined();
+    expect(performAction(w, 'observar', { region: w.regions.find((r) => !r.isHome)!.id }).ok).toBe(true);
   });
 });

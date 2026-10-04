@@ -164,6 +164,8 @@ export class WorldScene {
   timeScale = 1;
   running = false; // correr
   reduceMotion = false;
+  /** Multiplicador de velocidad del personaje (hambre, cansancio). */
+  speed: () => number = () => 1;
   private quality: 'alta' | 'media' | 'baja' = 'media';
 
   /** Calidad gráfica: resolución del lienzo, gentío y detalle de las figuras. */
@@ -487,7 +489,7 @@ export class WorldScene {
     if (!this.playerMoving) return;
     this.facing = { x: dx, y: dy };
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
-    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * dt;
+    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed() * dt;
     const nx = me.x + dx * speed;
     const ny = me.y + dy * speed;
     const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
@@ -841,7 +843,9 @@ export class WorldScene {
       for (const b of v.keys) {
         if (!this.buildingExists(v.regionId, b.kind)) continue;
         const d = doorOf(b);
-        consider({ kind: 'building', regionId: v.regionId, building: b.kind, label: BUILDING_LABEL[b.kind] }, d.x, d.y, radius * 0.9);
+        const id = life.identity;
+        const label = b.kind === 'hogar' && id?.mode === 'forastero' && !id.housed ? 'Casa vacía' : BUILDING_LABEL[b.kind];
+        consider({ kind: 'building', regionId: v.regionId, building: b.kind, label }, d.x, d.y, radius * 0.9);
       }
       consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
