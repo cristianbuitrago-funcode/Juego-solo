@@ -99,8 +99,10 @@ src/
 │   ├── path.ts · roadnet.ts  Colisiones, A* y red de caminos
 │   └── index.ts           Conexión con el motor (sistema «vida» y caravanas)
 ├── render/                Dibujo 2D en canvas
-│   ├── human.ts           Figura humana ilustrada: proporciones reales, rostro, 10 expresiones,
-│   │                      vistas de frente/espalda/perfil, acciones y 3 niveles de detalle
+│   ├── pixel.ts           Base común del pixel art: pintor de píxeles, tonos, contorno y
+│   │                      conversión de dibujos vectoriales en pixel art (pixelize)
+│   ├── human.ts           Personas en pixel art: cabeza grande y expresiva, 10 expresiones,
+│   │                      vistas de frente/espalda/perfil, acciones; retratos de diálogo
 │   ├── appearance.ts      Rasgos únicos + vestuario por región y clase social; aspecto del jugador
 │   ├── mood.ts            Expresión y gesto a partir de memoria, emociones y estado de la región
 │   ├── sprites.ts         Árboles, rocas, casas por cultura, edificios, mobiliario, animales, carros
@@ -209,6 +211,15 @@ La app está fijada en orientación vertical, usa el botón «atrás» del siste
 - Escala coherente: casas mucho más grandes que una persona, árboles altos, caballos mayores que la gente; pueblos con calles, fuente o pozo, bancos, faroles, almacenes, establos, graneros y carros.
 - Luz por hora (mañana rosada, tarde dorada) y noches oscuras con ventanas, faroles y hogueras cálidas; tormentas con relámpagos, viento con hojas; la gente se refugia o se cubre con capucha y se abriga en invierno.
 - Gentío en las ciudades grandes, pájaros, perros, patos y caballos; nivel de detalle por distancia y ajuste de calidad gráfica para Android.
+
+**Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
+
+- El mundo se dibuja a 1 píxel de arte por píxel de mundo en un lienzo intermedio y se amplía sin suavizado: personas, edificios, vegetación, animales y suelo comparten la misma rejilla.
+- Personas con proporciones de RPG de pixel art (cabeza ≈ 2/5 de la altura) y caras legibles; mismas expresiones, ropa regional y por oficio, acciones y vistas.
+- Retratos de diálogo en pixel art (48×48 ampliados).
+- Suelo con bordes orgánicos entre materiales, adoquines, reflejos y espuma en el agua, matas de hierba y florecillas; pueblos verdes con senderos.
+- Árboles con hojas en racimos, escala coherente (persona ≈ 29 px, casa ≈ 100 px, árbol 55–75 px, caballo mayor que una persona).
+- Sombras planas, contorno oscuro teñido y luz nocturna cálida.
 
 El motor estratégico de la versión 1 (memoria, consecuencias en cadena, rumores, hipótesis, mundo autónomo, legado) se conserva entero y alimenta todo lo que se ve.
 

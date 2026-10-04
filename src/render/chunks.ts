@@ -66,8 +66,9 @@ export class ChunkCache {
     // Cada región tiñe ligeramente su vegetación: las fronteras se notan sin dibujar líneas.
     this.grass = w.regions.map((r) => {
       const hue = (r.isHome ? PLAYER_CULTURE : CULTURES.find((c) => c.id === r.culture) ?? PLAYER_CULTURE).hue;
-      const shift = ((hue % 60) - 30) * 0.25;
-      return hsl(88 + shift, 34 + (r.ecology - 0.6) * 20, 55);
+      const shift = ((hue % 60) - 30) * 0.12;
+      // Verde vivo de pixel art; una tierra degradada amarillea.
+      return hsl(96 + shift - (r.ecology < 0.5 ? 14 : 0), Math.max(26, Math.min(58, 48 + (r.ecology - 0.6) * 30)), 47);
     });
   }
 
@@ -102,15 +103,21 @@ export class ChunkCache {
   }
 
   /**
-   * Pinta un fragmento: el color de cada tesela se mezcla con el de sus
-   * vecinas (sin cuadrícula visible), con ruido fino y relieve según la
-   * elevación (la luz viene del noroeste). Después se añaden detalles.
+   * Pinta un fragmento en pixel art. Cada píxel toma el color de su tesela,
+   * pero el límite entre teselas se desplaza con ruido: los bordes entre
+   * hierba, tierra, agua o roca quedan dentados y orgánicos, sin cuadrícula.
+   * Cada material tiene su textura (matas de hierba, guijarros, adoquines,
+   * reflejos del agua, surcos, grietas) con 3–4 tonos por color, y el
+   * relieve se marca en escalones de luz.
    */
   private paint(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season): void {
     const g = canvas.getContext('2d')!;
     const { tiles, region, variant, elev } = this.l.terrain;
     const N = CHUNK + 2;
     const col = new Float32Array(N * N * 3);
+    const typ = new Uint8Array(N * N);
+    const lit = new Float32Array(N * N);
+    const high = new Uint8Array(N * N);
     const tx0 = cx * CHUNK - 1;
     const ty0 = cy * CHUNK - 1;
     for (let j = 0; j < N; j++)
@@ -118,47 +125,118 @@ export class ChunkCache {
         const tx = Math.max(0, Math.min(TW - 1, tx0 + i));
         const ty = Math.max(0, Math.min(TH - 1, ty0 + j));
         const c = this.tileColor(tx, ty, season);
-        // Relieve: sombreado por la pendiente.
         const k = idx(tx, ty);
         const t = tiles[k];
-        let lit = 1;
+        let l = 1;
         if (t !== T.Deep && t !== T.Sea && t !== T.River) {
           const ex = elev[idx(Math.max(0, tx - 1), ty)] - elev[idx(Math.min(TW - 1, tx + 1), ty)];
           const ey = elev[idx(tx, Math.max(0, ty - 1))] - elev[idx(tx, Math.min(TH - 1, ty + 1))];
-          lit = 1 + Math.max(-0.16, Math.min(0.16, (ex + ey) * (t === T.Mountain || t === T.Rock ? 0.022 : 0.012)));
+          const raw = (ex + ey) * (t === T.Mountain || t === T.Rock ? 0.022 : 0.012);
+          l = raw > 0.05 ? 1.07 : raw < -0.05 ? 0.9 : 1;
         }
-        const o = (j * N + i) * 3;
-        col[o] = c[0] * lit;
-        col[o + 1] = c[1] * lit;
-        col[o + 2] = c[2] * lit;
-        void region;
-        void variant;
+        const o = j * N + i;
+        col[o * 3] = c[0];
+        col[o * 3 + 1] = c[1];
+        col[o * 3 + 2] = c[2];
+        typ[o] = t;
+        lit[o] = l;
+        high[o] = t === T.Mountain && elev[k] > 200 ? 1 : 0;
       }
     const img = g.createImageData(CPX, CPX);
     const d = img.data;
-    const sm = (t: number) => {
-      const u = Math.max(0, Math.min(1, (t - 0.2) / 0.6));
-      return u * u * (3 - 2 * u);
+    const isWater = (t: number) => t === T.Sea || t === T.Deep || t === T.River;
+    const wx0 = cx * CPX;
+    const wy0 = cy * CPX;
+    // Tesela (en la rejilla con margen) que "posee" un píxel de mundo, con borde dentado.
+    const owner = (wx: number, wy: number): number => {
+      const jx = (NOISE[(((wy >> 2) + 11) & 63) * 64 + (((wx >> 2) + 37) & 63)] - 8) * 1.1 + (NOISE[((wy + 3) & 63) * 64 + ((wx + 29) & 63)] - 8) * 0.35;
+      const jy = (NOISE[(((wy >> 2) + 41) & 63) * 64 + (((wx >> 2) + 5) & 63)] - 8) * 1.1 + (NOISE[((wy + 17) & 63) * 64 + ((wx + 3) & 63)] - 8) * 0.35;
+      const i = Math.floor((wx + jx) / TILE) - tx0;
+      const j = Math.floor((wy + jy) / TILE) - ty0;
+      return Math.max(0, Math.min(N - 1, j)) * N + Math.max(0, Math.min(N - 1, i));
     };
     for (let py = 0; py < CPX; py++) {
-      const fy = py / TILE + 0.5;
-      const j = Math.floor(fy);
-      const vy = sm(fy - j);
+      const wy = wy0 + py;
       for (let px = 0; px < CPX; px++) {
-        const fx = px / TILE + 0.5;
-        const i = Math.floor(fx);
-        const vx = sm(fx - i);
-        const o00 = (j * N + i) * 3;
-        const o10 = o00 + 3;
-        const o01 = o00 + N * 3;
-        const o11 = o01 + 3;
-        const n = NOISE[((py & 63) << 6) | (px & 63)] - 8;
-        const q = (py * CPX + px) * 4;
-        for (let ch = 0; ch < 3; ch++) {
-          const top = col[o00 + ch] + (col[o10 + ch] - col[o00 + ch]) * vx;
-          const bot = col[o01 + ch] + (col[o11 + ch] - col[o01 + ch]) * vx;
-          d[q + ch] = top + (bot - top) * vy + n;
+        const wx = wx0 + px;
+        const o = owner(wx, wy);
+        const t = typ[o];
+        let r = col[o * 3];
+        let gg = col[o * 3 + 1];
+        let b = col[o * 3 + 2];
+        const h = (Math.imul(wx, 73856093) ^ Math.imul(wy, 19349663) ^ (wx * wy)) >>> 0;
+        const v = h & 255;
+        const n = NOISE[((wy >> 2) & 63) * 64 + ((wx >> 2) & 63)]; // manchas grandes 0..16
+        let k = n < 6 ? 0.94 : n > 11 ? 1.05 : 1; // manchas de color
+        let cool = 0; // desplazamiento a violeta de las sombras
+        switch (t) {
+          case T.Grass:
+          case T.Meadow:
+          case T.Forest:
+            if (v < (t === T.Forest ? 34 : 20)) (k *= 0.8), (cool = 1);
+            else if (v > 247) k *= 1.14;
+            break;
+          case T.Road:
+          case T.Clay:
+            if (v < 16) (k *= 0.8), (cool = 1);
+            else if (v > 242) k *= 1.12;
+            break;
+          case T.Sand:
+          case T.Salt:
+            if (v < 10) k *= 0.88;
+            else if (v > 236) k *= 1.08;
+            break;
+          case T.Plaza: {
+            // Adoquines de 6×5 en hileras alternas.
+            const row = Math.floor(wy / 5);
+            const off = (row & 1) * 3;
+            const sx = (wx + off) % 6;
+            const sy = wy % 5;
+            const stone = ((Math.imul(Math.floor((wx + off) / 6), 2654435761) ^ Math.imul(row, 40503)) >>> 0) & 7;
+            if (sx === 0 || sy === 0) (k = 0.74), (cool = 1);
+            else if (sx === 1 && sy === 1) k = 1.12;
+            else k = 0.94 + stone * 0.018;
+            break;
+          }
+          case T.Bridge:
+            if (wx % 4 === 0) (k = 0.72), (cool = 1);
+            else if (wx % 4 === 1) k = 1.1;
+            break;
+          case T.Field:
+            if (wy % 4 === 0) (k *= 0.78), (cool = 1);
+            else if (wy % 4 === 1) k *= 1.06;
+            break;
+          case T.Mountain:
+          case T.Rock:
+            if (v < 22) (k *= 0.76), (cool = 1);
+            else if (v > 238) k *= 1.12;
+            if (high[o]) (r = 228), (gg = 234), (b = 242), (k = v < 30 ? 0.86 : 1);
+            break;
+          case T.Marsh:
+            if (n < 5) (r = 78), (gg = 120), (b = 128);
+            else if (v < 24) k *= 0.82;
+            break;
+          case T.Sea:
+          case T.Deep:
+          case T.River: {
+            // Reflejos: rayas cortas horizontales.
+            const band = (wy + (n >> 2)) % (t === T.River ? 7 : 9);
+            if (band === 0 && (v & 7) < 5) k = 1.16;
+            else if (band === 1 && (v & 7) < 3) k = 1.07;
+            else if (n < 5) k = 0.92;
+            // Espuma donde toca tierra; orilla mojada al otro lado.
+            if (!isWater(typ[owner(wx, wy - 2)]) || !isWater(typ[owner(wx, wy + 2)]) || !isWater(typ[owner(wx - 2, wy)]) || !isWater(typ[owner(wx + 2, wy)])) (r = 214), (gg = 232), (b = 236), (k = v < 60 ? 0.94 : 1);
+            break;
+          }
         }
+        if (!isWater(t) && t !== T.Plaza && t !== T.Bridge) {
+          k *= lit[o];
+          if (isWater(typ[owner(wx, wy - 2)]) || isWater(typ[owner(wx, wy + 2)]) || isWater(typ[owner(wx - 2, wy)]) || isWater(typ[owner(wx + 2, wy)])) (k *= 0.84), (cool = 1);
+        }
+        const q = (py * CPX + px) * 4;
+        d[q] = r * k - cool * 8;
+        d[q + 1] = gg * k - cool * 4;
+        d[q + 2] = b * k + cool * 10;
         d[q + 3] = 255;
       }
     }
@@ -176,12 +254,12 @@ export class ChunkCache {
   }
 
   private tileColor(tx: number, ty: number, season: Season): [number, number, number] {
-    const { tiles, region, variant } = this.l.terrain;
+    const { tiles, region } = this.l.terrain;
     const k = idx(tx, ty);
     const t = tiles[k];
     const reg = region[k];
     const r = reg >= 0 ? this.w.regions[reg] : undefined;
-    const jitter = 0.95 + (variant[k] & 15) / 160;
+    const jitter = 1; // la variación viene del ruido por píxel, no por tesela (sin cuadros)
     let base: [number, number, number];
     switch (t) {
       case T.Deep:
@@ -240,89 +318,68 @@ export class ChunkCache {
   }
 
   private detail(g: CanvasRenderingContext2D, t: number, px: number, py: number, v: number, season: Season, base: [number, number, number], k: number, tx: number, ty: number, e: number, hungry: number): void {
-    const tiles = this.l.terrain.tiles;
-    const water = (x: number, y: number) => {
-      if (!inside(x, y)) return true;
-      const tt = tiles[idx(x, y)];
-      return tt === T.Sea || tt === T.Deep || tt === T.River;
-    };
+    void tx;
+    void ty;
+    void e;
+    const P = (x: number, y: number, c: string, w = 1, h = 1) => ((g.fillStyle = c), g.fillRect(px + x, py + y, w, h));
     switch (t) {
       case T.Grass:
-      case T.Meadow:
-        g.fillStyle = rgb(base, 0.82);
-        for (let n = 0; n < 3; n++) g.fillRect(px + ((v * (n + 3)) % 14), py + ((v * (n + 7)) % 13), 1, 3);
-        if (season === 'primavera' && v % 9 === 0) for (let n = 0; n < 3; n++) (g.fillStyle = ['#f3e27a', '#f0b8cf', '#ffffff'][n]), g.fillRect(px + ((v + n * 5) % 13), py + ((v * 3 + n * 4) % 13), 2, 2);
+      case T.Meadow: {
+        // Matas de hierba en forma de «v» y, en primavera, florecillas.
+        const dark = rgb(base, 0.74);
+        const light = rgb(base, 1.12);
+        for (let n = 0; n < (t === T.Meadow ? 3 : 2); n++) {
+          const x = (v * (n * 5 + 3)) % 13;
+          const y = (v * (n * 3 + 7)) % 12 + 2;
+          P(x, y, dark);
+          P(x + 2, y, dark);
+          P(x + 1, y + 1, dark);
+          P(x + 1, y - 1, light);
+        }
+        if ((season === 'primavera' || season === 'verano') && v % 7 === 0) {
+          const fc = ['#f3e27a', '#f0b8cf', '#ffffff', '#b8a0e8'][v % 4];
+          const x = (v * 3) % 13;
+          const y = (v * 5) % 12 + 2;
+          P(x, y, fc);
+          P(x + 1, y + 1, rgb(base, 0.7));
+        }
+        if (season === 'otoño' && v % 5 === 0) P((v * 7) % 14, (v * 3) % 14, ['#d9733a', '#e8b03a', '#b8462a'][v % 3]);
         break;
+      }
       case T.Forest:
-        g.fillStyle = rgb(base, 0.8);
-        g.fillRect(px + (v % 10), py + ((v >> 3) % 10), 4, 3);
+        P(v % 12, (v >> 3) % 12, rgb(base, 0.7), 3, 1);
+        P((v * 3) % 13, (v * 7) % 13, season === 'otoño' ? '#c9702a' : rgb(base, 1.15));
         break;
       case T.Field: {
-        // Surcos. Abandonados: malas hierbas y tierra seca.
-        g.fillStyle = rgb(base, 0.78);
-        for (let y = 2; y < TILE; y += 4) g.fillRect(px, py + y, TILE, 1.4);
-        if (hungry) (g.fillStyle = '#7c8a4a'), g.fillRect(px + (v % 12), py + ((v >> 2) % 12), 3, 2);
-        else if (season === 'verano' || season === 'otoño') {
-          g.fillStyle = season === 'verano' ? '#e6c45a' : '#d2a24a';
-          for (let y = 1; y < TILE; y += 4) for (let x = 1; x < TILE; x += 3) g.fillRect(px + x, py + y, 1.4, 2.2);
+        if (hungry) {
+          P(v % 12, (v >> 2) % 12, '#7c8a4a', 2, 2);
+          P((v * 5) % 12, (v * 3) % 12, '#9a8a5a');
+        } else if (season === 'verano' || season === 'otoño') {
+          const c1 = season === 'verano' ? '#e6c45a' : '#d2a24a';
+          const c2 = season === 'verano' ? '#b8963a' : '#a87a32';
+          for (let y = 1; y < TILE; y += 4)
+            for (let x = 1; x < TILE; x += 3) {
+              P(x, y, c1, 1, 2);
+              P(x, y + 2, c2);
+            }
         } else if (season === 'primavera') {
-          g.fillStyle = '#7fb24f';
-          for (let y = 1; y < TILE; y += 4) for (let x = 2; x < TILE; x += 4) g.fillRect(px + x, py + y, 1.6, 1.6);
+          for (let y = 1; y < TILE; y += 4)
+            for (let x = 2; x < TILE; x += 4) {
+              P(x, y, '#7fb24f');
+              P(x + 1, y, '#5f923a');
+            }
         }
         break;
       }
-      case T.Sea:
-      case T.Deep:
-      case T.River: {
-        g.fillStyle = 'rgba(255,255,255,0.08)';
-        if (v % 5 === 0) g.fillRect(px + (v % 10), py + ((v >> 4) % 12), 6, 1);
-        // Orilla: espuma clara junto a tierra.
-        g.fillStyle = t === T.River ? 'rgba(220,235,240,0.35)' : 'rgba(235,240,230,0.45)';
-        // Espuma suave donde el agua toca tierra.
-        if (!water(tx, ty - 1)) (g.beginPath(), g.ellipse(px + 8, py + 1, 9, 2.2, 0, 0, Math.PI * 2), g.fill());
-        if (!water(tx, ty + 1)) (g.beginPath(), g.ellipse(px + 8, py + TILE - 1, 9, 2.2, 0, 0, Math.PI * 2), g.fill());
-        if (!water(tx - 1, ty)) (g.beginPath(), g.ellipse(px + 1, py + 8, 2.2, 9, 0, 0, Math.PI * 2), g.fill());
-        if (!water(tx + 1, ty)) (g.beginPath(), g.ellipse(px + TILE - 1, py + 8, 2.2, 9, 0, 0, Math.PI * 2), g.fill());
+      case T.Bridge:
+        P(0, 0, '#4a3420', TILE, 1);
+        P(0, TILE - 1, '#4a3420', TILE, 1);
         break;
-      }
-      case T.Road: {
-        g.fillStyle = 'rgba(120,95,60,0.25)';
-        g.fillRect(px + (v % 12), py + ((v >> 3) % 12), 3, 2);
-        break;
-      }
-      case T.Bridge: {
-        g.fillStyle = '#6b4e30';
-        for (let x = 0; x < TILE; x += 4) g.fillRect(px + x, py, 1, TILE);
-        g.fillStyle = '#4a3420';
-        g.fillRect(px, py, TILE, 1.5);
-        g.fillRect(px, py + TILE - 1.5, TILE, 1.5);
-        break;
-      }
-      case T.Plaza: {
-        g.strokeStyle = 'rgba(120,100,70,0.3)';
-        g.lineWidth = 0.8;
-        g.strokeRect(px + 0.5, py + 0.5, 7.5, 7.5);
-        g.strokeRect(px + 8.5, py + 8.5, 7, 7);
-        break;
-      }
-      case T.Mountain:
-      case T.Rock: {
-        g.fillStyle = 'rgba(0,0,0,0.12)';
-        g.fillRect(px + (v % 9), py + ((v >> 2) % 9), 5, 2);
-        if (t === T.Mountain && e > 200) (g.fillStyle = 'rgba(240,244,248,0.55)'), g.beginPath(), g.ellipse(px + 8, py + 8, 10, 8, 0, 0, Math.PI * 2), g.fill();
-        break;
-      }
-      case T.Marsh:
-        g.fillStyle = 'rgba(70,110,120,0.55)';
-        if (v % 3 === 0) g.fillRect(px + (v % 8), py + ((v >> 3) % 8), 7, 4);
-        break;
-      case T.Salt:
-        g.strokeStyle = 'rgba(160,150,130,0.4)';
-        g.lineWidth = 0.6;
-        g.strokeRect(px + 1, py + 1, 14, 14);
+      case T.Road:
+        if (v % 3 === 0) P(v % 13, (v >> 3) % 13, '#d8c49a', 2, 1), P(v % 13, ((v >> 3) % 13) + 1, '#8a6e48', 2, 1);
         break;
       case T.Sand:
-        if (v % 11 === 0) (g.fillStyle = '#f6efe0'), g.fillRect(px + (v % 12), py + 6, 2, 2);
+        if (v % 9 === 0) P(v % 12, 6, '#f6efe0'), P((v % 12) + 1, 7, '#c8b080');
         break;
     }
     void k;
@@ -354,13 +411,13 @@ export class ChunkCache {
         const v2 = (v * 7) & 255;
         const kindOf = (): StaticObject['tree'] =>
           nearWater && v2 < 120 ? 'sauce' : res === 'hierro' || res === 'ambar' ? (v2 % 3 ? 'pino' : 'roble') : res === 'hierbas' ? (v2 % 4 === 0 ? 'abedul' : 'roble') : v2 % 6 === 0 ? 'abedul' : v2 % 9 === 0 ? 'pino' : 'roble';
-        if (t === T.Forest && p < 0.34) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
+        if (t === T.Forest && p < 0.24) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
         else if ((t === T.Grass || t === T.Meadow) && p < 0.018) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.965) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.9) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
         else if (t === T.Forest && p > 0.9) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if (t === T.Rock && p < 0.08) out.push({ x: ox, y: oy, kind: 'roca', v, region: reg });
-        else if (t === T.Mountain && tx % 5 === 0 && ty % 4 === (tx % 10 === 0 ? 0 : 2)) out.push({ x: tx * TILE + 8, y: ty * TILE + 16, kind: 'pico', v, region: reg });
+        else if (t === T.Mountain && tx % 4 === 0 && ty % 3 === (tx % 8 === 0 ? 0 : 1) && v > 60) out.push({ x: tx * TILE + (v % 24) - 4, y: ty * TILE + 10 + ((v >> 3) % 10), kind: 'pico', v, region: reg });
         else if (t === T.Marsh && p < 0.22) out.push({ x: ox, y: oy, kind: 'junco', v, region: reg });
         // Mojones en las fronteras (sin líneas: piedras viejas que marcan el límite).
         if (reg >= 0 && v < 30 && (t === T.Grass || t === T.Meadow)) {

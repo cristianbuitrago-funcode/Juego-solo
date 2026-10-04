@@ -112,3 +112,17 @@ El resto de la arquitectura (motor, capa de vida, rutinas, interacción) no camb
 - Las luces nocturnas se recogen mientras se preparan los dibujables (ventanas encendidas, faroles de `Village.lamps`, hogueras, forjas, puestos fronterizos, tu farol) y se aplican en dos pasadas: huecos en la capa de oscuridad y halo cálido aditivo.
 - Clima: `weatherOf` añade `tormenta` y `viento`. Las rutinas mandan a casa a quien estaba de ocio al aire libre si llueve; la escena viste con capa y capucha a quien sigue fuera (`dress()`), y con piel en invierno.
 - Rendimiento: tres niveles de detalle por distancia (y por zoom); calidad gráfica `alta` / `media` / `baja` (resolución del lienzo, gentío, pájaros).
+
+
+## 4. Pixel art (v4)
+
+Dirección artística: RPG de pixel art de alta calidad (referencias de estilo y referencias generadas para el proyecto), con universo propio. Jerarquía: jugabilidad intacta → identidad del mundo → lenguaje visual de las referencias → adaptación a cada cultura → nada copiado.
+
+| Pieza | Cómo se consigue la coherencia |
+| --- | --- |
+| Rejilla única | `WorldScene` dibuja el mundo en un lienzo intermedio a 1 píxel de arte por píxel de mundo y lo amplía con vecino más próximo. Las capas de luz, clima e interfaz van encima, a resolución de pantalla. |
+| `render/pixel.ts` | `Painter` (píxeles enteros, óvalos, polígonos, líneas), `tone()` (sombras hacia violeta, luces hacia amarillo), `vivid()`, contorno teñido y `pixelize()`, que convierte cualquier dibujo vectorial en pixel art (paleta de colores sólidos del propio dibujo, alfa todo o nada, sombras planas, contorno). |
+| Sprites (`sprites.ts`) | Árboles, edificios, mobiliario y animales se dibujan una vez a 1:1 y pasan por `pixelize`. `makeK` reduce diseños para mantener la escala con las personas. |
+| Personas (`human.ts`) | Muñeco por capas en píxeles: piernas y calzado, falda o túnica, torso con estampado, chaleco, mandil, sobreveste, cinturón, fajín, bandolera, bolsa, joyas, capa, brazos por acción, cabeza, pelo (9 estilos), cara (10 expresiones), barba (5), sombreros (11) y objetos (12). Caché por aspecto y postura. Misma API que antes (`drawHuman`, `drawPortrait`). |
+| Suelo (`chunks.ts`) | Cada píxel pertenece a una tesela desplazada con ruido (bordes dentados y orgánicos), con textura por material y relieve en escalones de luz. |
+| Pueblos | Las casas solo tienen un sendero corto ante la puerta: el pueblo es verde con calles principales. |

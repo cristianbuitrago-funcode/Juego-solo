@@ -106,7 +106,7 @@ interface Drawable {
 const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
 
 /** Zoom de cámara: explorando, junto a alguien y conversando. */
-const ZOOM = { explore: 1.12, near: 1.5, talk: 2.25 };
+const ZOOM = { explore: 2, near: 2.5, talk: 3.5 };
 
 function hash(s: string, salt = 0): number {
   let h = 2166136261 ^ salt;
@@ -116,7 +116,9 @@ function hash(s: string, salt = 0): number {
 
 export class WorldScene {
   readonly canvas: HTMLCanvasElement;
-  private g: CanvasRenderingContext2D;
+  private g: CanvasRenderingContext2D; // mundo, en píxeles de arte 1:1
+  private screen: CanvasRenderingContext2D; // pantalla (capas de luz, clima, interfaz)
+  private buf = document.createElement('canvas');
   private l: Layout;
   private chunks: ChunkCache;
   private dark = document.createElement('canvas');
@@ -175,7 +177,8 @@ export class WorldScene {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'world-canvas';
     parent.appendChild(this.canvas);
-    this.g = this.canvas.getContext('2d')!;
+    this.screen = this.canvas.getContext('2d')!;
+    this.g = this.buf.getContext('2d')!;
     this.l = getLayout(w);
     this.chunks = new ChunkCache(w, this.l);
     const life = ensureLife(w);
@@ -413,11 +416,11 @@ export class WorldScene {
     const conv = this.converseId ? this.ents.get(this.converseId) : undefined;
     if (conv && !conv.inside) {
       // La hoja del diálogo tapa la mitad inferior: la pareja se encuadra arriba.
-      const z = Math.min(3.6, ZOOM.talk * Math.max(0.85, this.userZ));
-      return { x: ((me.x + conv.x) / 2) * TILE, y: ((me.y + conv.y) / 2) * TILE - 26 + (this.vh * 0.2) / z, z };
+      const z = Math.min(5, ZOOM.talk * Math.max(0.85, this.userZ));
+      return { x: ((me.x + conv.x) / 2) * TILE, y: ((me.y + conv.y) / 2) * TILE - 16 + (this.vh * 0.2) / z, z };
     }
     const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
-    return { x: me.x * TILE, y: me.y * TILE - 12, z: Math.max(0.6, Math.min(3.4, (near && !this.playerMoving ? ZOOM.near : ZOOM.explore) * this.userZ)) };
+    return { x: me.x * TILE, y: me.y * TILE - 10, z: Math.max(1, Math.min(4.5, (near && !this.playerMoving ? ZOOM.near : ZOOM.explore) * this.userZ)) };
   }
 
   private updateCamera(dt: number): void {
@@ -491,7 +494,7 @@ export class WorldScene {
     else if (ok(nx, me.y)) me.x = nx;
     else if (ok(me.x, ny)) me.y = ny;
     else if (this.path.length) this.path.shift();
-    this.playerAnim += dt * (run ? 12 : 8);
+    this.playerAnim += dt * (run ? 16 : 11);
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -595,7 +598,7 @@ export class WorldScene {
     e.flip = e.dx < 0;
     e.moving = true;
     e.inside = false;
-    e.anim += dt * 7.5;
+    e.anim += dt * 11;
   }
 
   /**
@@ -866,11 +869,21 @@ export class WorldScene {
     const life = ensureLife(w);
     const g = this.g;
     const z = this.cam.z;
-    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    // El mundo se dibuja a 1 píxel de arte por píxel de mundo en un lienzo
+    // intermedio y se amplía sin suavizado: todo comparte la misma rejilla.
+    const bw = Math.ceil(this.vw / z) + 2;
+    const bh = Math.ceil(this.vh / z) + 2;
+    if (this.buf.width < bw || this.buf.height < bh || this.buf.width > bw + 160 || this.buf.height > bh + 160) {
+      this.buf.width = bw + 48;
+      this.buf.height = bh + 48;
+    }
+    const ox = Math.floor(this.cam.x - this.vw / 2 / z);
+    const oy = Math.floor(this.cam.y - this.vh / 2 / z);
+    g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#2f5468';
-    g.fillRect(0, 0, this.vw, this.vh);
-    g.setTransform(this.dpr * z, 0, 0, this.dpr * z, this.dpr * (this.vw / 2 - this.cam.x * z), this.dpr * (this.vh / 2 - this.cam.y * z));
-    g.imageSmoothingEnabled = true;
+    g.fillRect(0, 0, bw, bh);
+    g.setTransform(1, 0, 0, 1, -ox, -oy);
+    g.imageSmoothingEnabled = false;
 
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
@@ -961,7 +974,7 @@ export class WorldScene {
     const pap = this.dress(this.playerAp(darkness(life.clock) > 0.3), wet, cold);
     const ppose = this.playerPose(sec, wet, cold);
     items.push({ y: me.y * TILE, draw: () => drawHuman(g, pap, ppose, me.x * TILE, me.y * TILE) });
-    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 24, r: 120, k: 1 });
+    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 72, k: 1 });
 
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
@@ -970,7 +983,21 @@ export class WorldScene {
     this.drawBirds(g);
     this.drawMarkers(g, t);
 
-    // Capa de pantalla: luz del día, noche, clima, joystick, etiquetas.
+    // Ampliación a pantalla (vecino más próximo) con el resto de subpíxel para un desplazamiento suave.
+    const sg = this.screen;
+    {
+      const sc = z * this.dpr;
+      const fx = this.cam.x - this.vw / 2 / z - ox;
+      const fy = this.cam.y - this.vh / 2 / z - oy;
+      sg.setTransform(1, 0, 0, 1, 0, 0);
+      sg.imageSmoothingEnabled = false;
+      sg.drawImage(this.buf, 0, 0, bw, bh, Math.round(-fx * sc), Math.round(-fy * sc), bw * sc, bh * sc);
+    }
+    this.drawScreen(sg, t, weather, life);
+  }
+
+  /** Capa de pantalla: luz del día, noche, clima, joystick, etiquetas. */
+  private drawScreen(g: CanvasRenderingContext2D, t: number, weather: string, life: ReturnType<typeof ensureLife>): void {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawGrade(g, hourOf(life.clock), weather);
     this.drawNight(g);
@@ -1059,7 +1086,7 @@ export class WorldScene {
       // De noche, las ventanas de las casas habitadas se encienden (no todas a la vez).
       const lit = state === 'normal' && night && (hash(`${regionId}:${i}`) < 0.82 || hourOf(life.clock) < 23);
       const wins = st.shape === 'redondo' ? [{ x: -b.w * 8 + 10, y: -32, w: 11, h: 11 }] : S.houseWindows(b.w);
-      if (lit) for (const wn of wins) this.lights.push({ x: bx + wn.x + wn.w / 2, y: by + wn.y + wn.h / 2, r: 30, k: 0.75 });
+      if (lit) for (const wn of wins) this.lights.push({ x: bx + wn.x + wn.w / 2, y: by + wn.y + wn.h / 2, r: 20, k: 0.8 });
       items.push({
         y: by,
         draw: () => {
@@ -1078,10 +1105,10 @@ export class WorldScene {
       if (!inView(bx, by)) continue;
       const extra = b.kind === 'almacen' ? (food < 4 ? 'vacio' : '') : b.kind === 'salon' ? `hsl(${hue} 55% 45%)` : '';
       items.push({ y: by, draw: () => S.drawSprite(g, S.keyBuilding(b.kind, st, extra), bx, by) });
-      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 64 : 44, k: 0.85 });
+      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 42 : 30, k: 0.85 });
       if (b.kind === 'forja') {
         const working = hourOf(life.clock) > 8 && hourOf(life.clock) < (r.militancy > 0.55 ? 23 : 18);
-        if (working) this.lights.push({ x: bx - 14, y: by - 14, r: 52, k: 0.9 });
+        if (working) this.lights.push({ x: bx - 14, y: by - 14, r: 34, k: 0.9 });
         if (working && !this.reduceMotion && Math.random() < (r.militancy > 0.55 ? 0.14 : 0.05)) this.puff(bx + 16, by - 96, 'rgba(70,65,60,', 1.6);
       }
     }
@@ -1094,10 +1121,10 @@ export class WorldScene {
     }
     if (night) for (const lp of v.lamps) {
       const px = lp.x * TILE;
-      const py = lp.y * TILE + 2;
+      const py = lp.y * TILE + 9; // cabeza del farol (el farol mide ~43 px)
       if (!inView(px, py)) continue;
-      this.lights.push({ x: px, y: py, r: 54, k: 0.95 });
-      items.push({ y: py + 48, draw: () => this.flame(px, py, t) });
+      this.lights.push({ x: px, y: py, r: 36, k: 0.95 });
+      items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
     }
     // Mercado: puestos llenos, vacíos o abandonados.
     const traffic = w.routes.filter((x) => (x.a === regionId || x.b === regionId) && x.status === 'abierta').reduce((s, x) => s + x.traffic, 0);
@@ -1143,7 +1170,7 @@ export class WorldScene {
     if (town?.tower) {
       const px = (v.cx + v.plazaR + 1.5) * TILE;
       const py = (v.cy - v.plazaR) * TILE;
-      if (night) this.lights.push({ x: px, y: py - 106, r: 90, k: 1 });
+      if (night) this.lights.push({ x: px, y: py - 106, r: 56, k: 1 });
       items.push({
         y: py,
         draw: () => {
@@ -1185,8 +1212,8 @@ export class WorldScene {
     if ((hh > 19 || hh < 1) && !r.abandoned && weatherOf(w, w.day) !== 'lluvia' && weatherOf(w, w.day) !== 'tormenta') {
       const px = (v.cx + 0.5 - (v.plazaR - 2.4)) * TILE;
       const py = (v.cy + 1) * TILE;
-      this.lights.push({ x: px, y: py - 10, r: 110, k: 1 });
-      items.push({ y: py, draw: () => this.fire(px, py, t, 1.8) });
+      this.lights.push({ x: px, y: py - 8, r: 70, k: 1 });
+      items.push({ y: py, draw: () => this.fire(px, py, t, 1.2) });
       if (!this.reduceMotion && Math.random() < 0.05) this.puff(px, py - 26, 'rgba(120,110,100,', 1);
     }
   }
@@ -1203,7 +1230,7 @@ export class WorldScene {
     const owner = a.isHome ? b : a;
     items.push({ y: py + 4, draw: () => S.drawSprite(g, S.post(`hsl(${this.hueOf(owner.id)} 60% 45%)`, closed), px - 30, py + 4) });
     if (closed) items.push({ y: py + 6, draw: () => S.drawSprite(g, S.barricade(), px + 4, py + 6) });
-    if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 70, k: 0.9 });
+    if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 44, k: 0.9 });
     const sec = t / 1000;
     const lifeW = ensureLife(w);
     const weather = weatherOf(w, w.day);
@@ -1237,8 +1264,8 @@ export class WorldScene {
         const ty = py - 70 - (i % 2) * 16;
         items.push({ y: ty, draw: () => S.drawSprite(g, S.tent(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
       }
-      this.lights.push({ x: px, y: py - 50, r: 100, k: 1 });
-      items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.6) });
+      this.lights.push({ x: px, y: py - 50, r: 64, k: 1 });
+      items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.1) });
     }
   }
 
@@ -1398,22 +1425,22 @@ export class WorldScene {
       g.strokeStyle = '#2b1e15';
       g.lineWidth = 1.5;
       g.beginPath();
-      g.arc(e.x * TILE, e.y * TILE - 66 + bob, 8, 0, Math.PI * 2);
+      g.arc(e.x * TILE, Math.round(e.y * TILE - 44 + bob), 5, 0, Math.PI * 2);
       g.fill();
       g.stroke();
       g.fillStyle = '#b5562d';
-      g.font = 'bold 11px system-ui';
+      g.font = 'bold 8px monospace';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText('!', e.x * TILE, e.y * TILE - 65 + bob);
+      g.fillText('!', e.x * TILE, Math.round(e.y * TILE - 43.5 + bob));
     }
     const f = this.focus ? this.targetPos(this.focus) : undefined;
     if (f) {
       g.strokeStyle = 'rgba(255,240,190,0.9)';
       g.lineWidth = 1.5;
-      g.setLineDash([3, 3]);
+      g.setLineDash([2, 2]);
       g.beginPath();
-      g.ellipse(f.x * TILE, f.y * TILE + 1, 13, 5, 0, 0, Math.PI * 2);
+      g.ellipse(Math.round(f.x * TILE), Math.round(f.y * TILE), 8, 3, 0, 0, Math.PI * 2);
       g.stroke();
       g.setLineDash([]);
     }
@@ -1430,7 +1457,7 @@ export class WorldScene {
       if (e.inside || Math.hypot(e.x - me.x, e.y - me.y) > 5) continue;
       const f = this.folkById.get(id);
       if (!f || f.lastMet < 0 || id === this.converseId) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE - 54 * (this.apCache.get(id)?.ap.height ?? 1));
+      const p = this.toScreen(e.x * TILE, e.y * TILE - 33 * (this.apCache.get(id)?.ap.height ?? 1));
       g.font = '600 12px Georgia, serif';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(30,25,20,0.7)';
@@ -1554,12 +1581,25 @@ export class WorldScene {
       dc.arc(x, y, r, 0, Math.PI * 2);
       dc.fill();
     }
+    // Los charcos de luz no son neutros: el fuego tiñe de ámbar lo que ilumina.
+    dc.globalCompositeOperation = 'source-over';
+    for (const l of vis) {
+      const x = l.x / 2;
+      const y = l.y / 2;
+      const r = l.r / 2;
+      const grad = dc.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(255,150,60,${0.1 * l.k * d})`);
+      grad.addColorStop(0.6, `rgba(200,90,40,${0.16 * l.k * d})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      dc.fillStyle = grad;
+      dc.fillRect(x - r, y - r, r * 2, r * 2);
+    }
     g.drawImage(this.dark, 0, 0, this.vw, this.vh);
     // Halo cálido: la luz del fuego tiñe lo que toca.
     g.globalCompositeOperation = 'lighter';
     for (const l of vis) {
       const grad = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
-      grad.addColorStop(0, `rgba(255,160,70,${0.3 * d * l.k})`);
+      grad.addColorStop(0, `rgba(255,150,60,${0.17 * d * l.k})`);
       grad.addColorStop(1, 'rgba(255,120,40,0)');
       g.fillStyle = grad;
       g.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
