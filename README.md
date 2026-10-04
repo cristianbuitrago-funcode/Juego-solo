@@ -99,9 +99,15 @@ src/
 │   ├── path.ts · roadnet.ts  Colisiones, A* y red de caminos
 │   └── index.ts           Conexión con el motor (sistema «vida» y caravanas)
 ├── render/                Dibujo 2D en canvas
-│   ├── sprites.ts         Gráficos procedurales (árboles, casas por cultura, gente, animales…)
-│   ├── chunks.ts          Suelo por fragmentos cacheados + objetos estáticos
-│   └── scene.ts           Cámara, simulación por proximidad, NPC, tráfico, noche, clima, entrada
+│   ├── human.ts           Figura humana ilustrada: proporciones reales, rostro, 10 expresiones,
+│   │                      vistas de frente/espalda/perfil, acciones y 3 niveles de detalle
+│   ├── appearance.ts      Rasgos únicos + vestuario por región y clase social; aspecto del jugador
+│   ├── mood.ts            Expresión y gesto a partir de memoria, emociones y estado de la región
+│   ├── sprites.ts         Árboles, rocas, casas por cultura, edificios, mobiliario, animales, carros
+│   ├── chunks.ts          Suelo fundido entre teselas con relieve + objetos estáticos
+│   ├── gallery.ts         Galería de dirección artística (abrir con #galeria)
+│   └── scene.ts           Cámara con zoom, proximidad y nivel de detalle, NPC, gentío, tráfico,
+│                          luz del día, noche con luces cálidas, clima, entrada
 ├── ui/                    Interfaz (DOM)
 │   ├── app.ts             Controlador: HUD mínimo, reloj del mundo, diario, modales
 │   ├── world-dialogs.ts   Decisiones dentro del mundo (almacén, consejo, líderes, fronteras…)
@@ -192,6 +198,17 @@ La app está fijada en orientación vertical, usa el botón «atrás» del siste
 - Decisiones e hipótesis tomadas en el mundo; misterio con lugares que examinar; encuentros emergentes.
 - Día y noche, estaciones, lluvia, niebla y nieve; generaciones del personaje; crónica por años.
 - Simulación por proximidad para Android: solo lo cercano se mueve; lo lejano vive en la simulación abstracta.
+
+**Versión 3 — revisión visual.** Mismas mecánicas, nueva dirección artística de RPG 2D ilustrado:
+
+- Personas con proporciones humanas (cabeza ≈ 1/7 de la altura), rostro visible y único, y 10 expresiones que salen de lo que cada vecino ha vivido (gratitud, rencor, miedo, hambre, guerra) y de reacciones del momento (sorpresa, saludo, alivio).
+- Vestuario por región (frío y pesado, de bosque, de costa, comercial y elegante, campesino) y por clase social (campesino, guardia, comerciante, artesano, líder con diadema y capa…).
+- Animaciones: caminar, correr, trabajar, martillear, pescar, sentarse en los bancos, conversar entre ellos (uno habla, otro escucha y asiente), saludar, cruzar los brazos, mirar alrededor.
+- Personaje del jugador personalizable (capa, jubón, pelo, barba, piel) en la pestaña Linaje; retratos en los diálogos.
+- Cámara que se acerca al hablar con alguien y encuadra la conversación.
+- Escala coherente: casas mucho más grandes que una persona, árboles altos, caballos mayores que la gente; pueblos con calles, fuente o pozo, bancos, faroles, almacenes, establos, graneros y carros.
+- Luz por hora (mañana rosada, tarde dorada) y noches oscuras con ventanas, faroles y hogueras cálidas; tormentas con relámpagos, viento con hojas; la gente se refugia o se cubre con capucha y se abriga en invierno.
+- Gentío en las ciudades grandes, pájaros, perros, patos y caballos; nivel de detalle por distancia y ajuste de calidad gráfica para Android.
 
 El motor estratégico de la versión 1 (memoria, consecuencias en cadena, rumores, hipótesis, mundo autónomo, legado) se conserva entero y alimenta todo lo que se ve.
 

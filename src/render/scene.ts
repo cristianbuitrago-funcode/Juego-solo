@@ -7,8 +7,11 @@ import { findPath, passable } from '../world/path';
 import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { idx, speedOf } from '../world/terrain';
-import { TILE, TW, type Folk } from '../world/types';
-import { CHUNK, ChunkCache } from './chunks';
+import { TILE, TW, type Folk, type FolkRole } from '../world/types';
+import { appearanceOf, playerAppearance, type Appearance } from './appearance';
+import { CHUNK, ChunkCache, type StaticObject } from './chunks';
+import { drawHuman, type Action, type Expr, type Facing, type Pose } from './human';
+import { actionOf, moodOf } from './mood';
 import * as S from './sprites';
 
 /**
@@ -48,10 +51,23 @@ interface Ent {
   flip: boolean;
   moving: boolean;
   anim: number;
+  dx: number; // última dirección de marcha
+  dy: number;
+  act: string; // actividad de la rutina
+  facing: Facing;
+  partner?: string; // con quién conversa
+  greeted?: boolean;
+  react?: { expr?: Expr; action?: Action; until: number };
+}
+
+/** Figurante de las ciudades grandes: da vida a la plaza, no tiene memoria. */
+interface Extra extends Ent {
+  regionId: number;
+  wait: number;
 }
 
 interface Animal {
-  kind: 'vaca' | 'oveja' | 'gallina' | 'ciervo';
+  kind: S.AnimalKind;
   x: number;
   y: number;
   hx: number;
@@ -60,6 +76,15 @@ interface Animal {
   ty: number;
   flip: boolean;
   anim: number;
+  water?: boolean; // patos: solo nadan
+  v: number;
+}
+
+interface Light {
+  x: number; // píxeles de mundo
+  y: number;
+  r: number;
+  k: number;
 }
 
 interface Particle {
@@ -78,7 +103,10 @@ interface Drawable {
   draw: () => void;
 }
 
-const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa' };
+const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
+
+/** Zoom de cámara: explorando, junto a alguien y conversando. */
+const ZOOM = { explore: 1.12, near: 1.5, talk: 2.25 };
 
 function hash(s: string, salt = 0): number {
   let h = 2166136261 ^ salt;
@@ -92,7 +120,16 @@ export class WorldScene {
   private l: Layout;
   private chunks: ChunkCache;
   private dark = document.createElement('canvas');
-  cam = { x: 0, y: 0, z: 1.7 };
+  cam = { x: 0, y: 0, z: ZOOM.explore };
+  private userZ = 1; // multiplicador del pellizco
+  private converseId: string | null = null;
+  private apCache = new Map<string, { key: string; ap: Appearance }>();
+  private extras = new Map<string, Extra>();
+  private birds: { x: number; y: number; vx: number; ph: number }[] = [];
+  private lights: Light[] = [];
+  private flash = 0;
+  private socialAcc = 0;
+  private folkById = new Map<string, Folk>();
   private dpr = 1;
   private vw = 0;
   private vh = 0;
@@ -109,6 +146,7 @@ export class WorldScene {
   private focus: Target | null = null;
   private playerAnim = 0;
   private playerMoving = false;
+  private playerRun = false;
   private facing = { x: 0, y: 1 };
   private path: { x: number; y: number }[] = [];
   private pending: Target | null = null;
@@ -123,6 +161,15 @@ export class WorldScene {
   timeScale = 1;
   running = false; // correr
   reduceMotion = false;
+  private quality: 'alta' | 'media' | 'baja' = 'media';
+
+  /** Calidad gráfica: resolución del lienzo, gentío y detalle de las figuras. */
+  setQuality(q: 'alta' | 'media' | 'baja'): void {
+    if (q === this.quality) return;
+    this.quality = q;
+    this.resize();
+    if (q === 'baja') this.extras.clear();
+  }
 
   constructor(private parent: HTMLElement, public w: WorldState, private cb: SceneCallbacks) {
     this.canvas = document.createElement('canvas');
@@ -140,7 +187,11 @@ export class WorldScene {
     const loop = (t: number) => {
       const dt = Math.min(0.05, (t - this.last) / 1000);
       this.last = t;
-      if (!this.paused) this.update(dt);
+      if (!this.paused) {
+        this.converseId = null; // sin diálogo abierto no hay conversación
+        this.update(dt);
+      }
+      this.updateCamera(dt);
       this.draw(t);
       this.raf = requestAnimationFrame(loop);
     };
@@ -174,6 +225,13 @@ export class WorldScene {
     this.path = [];
   }
 
+  /** Conversación en curso: la cámara se acerca y ambos se miran. */
+  converse(id: string | null): void {
+    this.converseId = id;
+    const e = id ? this.ents.get(id) : undefined;
+    if (e) e.react = { action: 'talk', until: performance.now() + 2600 };
+  }
+
   stop(): void {
     this.path = [];
     this.pending = null;
@@ -198,7 +256,7 @@ export class WorldScene {
   // Entrada: joystick virtual, tocar para caminar, pellizcar para zoom.
   // -------------------------------------------------------------------------
   private resize(): void {
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.dpr = Math.min(this.quality === 'alta' ? 2 : this.quality === 'media' ? 1.5 : 1, window.devicePixelRatio || 1);
     const r = this.parent.getBoundingClientRect();
     this.vw = r.width;
     this.vh = r.height;
@@ -229,7 +287,7 @@ export class WorldScene {
       if (this.pointers.size === 2) {
         this.joy = null;
         const [a, b] = [...this.pointers.values()];
-        this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: this.cam.z };
+        this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: this.userZ };
         return;
       }
       // Mitad izquierda inferior: joystick.
@@ -246,7 +304,8 @@ export class WorldScene {
       if (this.pinch && this.pointers.size === 2) {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        this.cam.z = Math.max(0.7, Math.min(3.2, this.pinch.z * (d / Math.max(1, this.pinch.d))));
+        this.userZ = Math.max(0.55, Math.min(2.2, this.pinch.z * (d / Math.max(1, this.pinch.d))));
+        this.cam.z = this.zoomTarget().z;
         return;
       }
       if (this.joy && this.joy.id === e.pointerId) {
@@ -271,7 +330,7 @@ export class WorldScene {
     c.addEventListener('pointercancel', up);
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.cam.z = Math.max(0.7, Math.min(3.2, this.cam.z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      this.userZ = Math.max(0.55, Math.min(2.2, this.userZ * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
     }, { passive: false });
     window.addEventListener('keydown', (e) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
@@ -309,10 +368,6 @@ export class WorldScene {
     this.cb.advance((dt / SECONDS_PER_MINUTE) * this.timeScale);
     this.movePlayer(dt);
     const me = life.player;
-    // Cámara con suavizado.
-    const k = Math.min(1, dt * 6);
-    this.cam.x += (me.x * TILE - this.cam.x) * k;
-    this.cam.y += (me.y * TILE - this.cam.y) * k;
 
     this.tickAcc += dt;
     if (this.tickAcc > 0.5) {
@@ -332,7 +387,14 @@ export class WorldScene {
       this.updateLod();
     }
     this.moveFolk(dt);
+    this.moveExtras(dt);
     this.moveAnimals(dt);
+    this.moveBirds(dt);
+    this.socialAcc += dt;
+    if (this.socialAcc > 0.3) {
+      this.socialAcc = 0;
+      this.social();
+    }
     this.focusAcc += dt;
     if (this.focusAcc > 0.15) {
       this.focusAcc = 0;
@@ -343,6 +405,27 @@ export class WorldScene {
         this.cb.onFocus(t);
       }
     }
+  }
+
+  /** Hacia dónde y cuánto mira la cámara: suave, más cerca junto a la gente. */
+  private zoomTarget(): { x: number; y: number; z: number } {
+    const me = ensureLife(this.w).player;
+    const conv = this.converseId ? this.ents.get(this.converseId) : undefined;
+    if (conv && !conv.inside) {
+      // La hoja del diálogo tapa la mitad inferior: la pareja se encuadra arriba.
+      const z = Math.min(3.6, ZOOM.talk * Math.max(0.85, this.userZ));
+      return { x: ((me.x + conv.x) / 2) * TILE, y: ((me.y + conv.y) / 2) * TILE - 26 + (this.vh * 0.2) / z, z };
+    }
+    const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
+    return { x: me.x * TILE, y: me.y * TILE - 12, z: Math.max(0.6, Math.min(3.4, (near && !this.playerMoving ? ZOOM.near : ZOOM.explore) * this.userZ)) };
+  }
+
+  private updateCamera(dt: number): void {
+    const tg = this.zoomTarget();
+    const k = Math.min(1, dt * 6);
+    this.cam.x += (tg.x - this.cam.x) * k;
+    this.cam.y += (tg.y - this.cam.y) * k;
+    this.cam.z += (tg.z - this.cam.z) * Math.min(1, dt * (this.converseId ? 3 : 1.6));
   }
 
   private movePlayer(dt: number): void {
@@ -396,6 +479,7 @@ export class WorldScene {
       }
     }
     this.playerMoving = !!(dx || dy);
+    this.playerRun = run;
     if (!this.playerMoving) return;
     this.facing = { x: dx, y: dy };
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
@@ -430,10 +514,11 @@ export class WorldScene {
       }
       near.add(f.id);
       if (!e) {
-        e = { x: t.x, y: t.y, path: [], tx: t.x, ty: t.y, inside: t.inside, frame: 0, flip: false, moving: false, anim: hash(f.id) * 10 };
+        e = { x: t.x, y: t.y, path: [], tx: t.x, ty: t.y, inside: t.inside, frame: 0, flip: hash(f.id, 2) < 0.5, moving: false, anim: hash(f.id) * 10, dx: 0, dy: 1, act: t.activity, facing: 'front' };
         this.ents.set(f.id, e);
         continue;
       }
+      e.act = t.activity;
       if (Math.hypot(t.x - e.tx, t.y - e.ty) > 1.2) {
         e.tx = t.x;
         e.ty = t.y;
@@ -444,6 +529,127 @@ export class WorldScene {
       (e as Ent & { wantInside?: boolean }).wantInside = t.inside;
     }
     for (const id of [...this.ents.keys()]) if (!near.has(id)) this.ents.delete(id);
+    this.updateExtras();
+  }
+
+  /** Las ciudades grandes tienen gentío: figurantes que pasean por la plaza. */
+  private updateExtras(): void {
+    const w = this.w;
+    const me = ensureLife(w).player;
+    const keep = new Set<string>();
+    const h = hourOf(ensureLife(w).clock);
+    const weather = weatherOf(w, w.day);
+    const out = h < 7 || h > 21 || weather === 'lluvia' || weather === 'tormenta';
+    for (const v of this.l.villages) {
+      const r = w.regions[v.regionId];
+      if (out || this.quality === 'baja' || r.abandoned || r.population < 800 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
+      const n = Math.min(16, Math.floor((r.population - 600) / 110) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
+      for (let i = 0; i < n; i++) {
+        const id = `x:${v.regionId}:${i}`;
+        keep.add(id);
+        if (this.extras.has(id)) continue;
+        const p = this.plazaPoint(v.regionId, hash(id), hash(id, 1));
+        this.extras.set(id, { ...p, path: [], tx: p.x, ty: p.y, inside: false, frame: 0, flip: false, moving: false, anim: i, dx: 0, dy: 1, act: 'pasea', facing: 'front', regionId: v.regionId, wait: hash(id, 3) * 6 });
+      }
+    }
+    for (const id of [...this.extras.keys()]) if (!keep.has(id)) this.extras.delete(id);
+  }
+
+  private plazaPoint(regionId: number, a: number, b: number): { x: number; y: number } {
+    const v = this.l.villages[regionId];
+    const ang = a * Math.PI * 2;
+    const d = 2.4 + b * (v.plazaR - 2.8);
+    return { x: v.cx + 0.5 + Math.cos(ang) * d, y: v.cy + 0.5 + Math.sin(ang) * d };
+  }
+
+  private moveExtras(dt: number): void {
+    for (const [id, e] of this.extras) {
+      if (!e.path.length) {
+        e.moving = false;
+        e.wait -= dt;
+        if (e.wait <= 0) {
+          const p = this.plazaPoint(e.regionId, Math.random(), Math.random());
+          e.path = [p];
+          e.wait = 3 + Math.random() * 9;
+          e.act = Math.random() < 0.4 ? 'charla' : 'pasea';
+        }
+        continue;
+      }
+      this.step(e, dt, 1.9 + hash(id) * 0.6);
+    }
+  }
+
+  /** Avanza una entidad por su camino. */
+  private step(e: Ent, dt: number, speed: number): void {
+    const n = e.path[0];
+    const d = Math.hypot(n.x - e.x, n.y - e.y);
+    if (d < 0.2) {
+      e.path.shift();
+      return;
+    }
+    const sp = Math.min(d, speed * dt * this.timeScale ** 0.5);
+    e.dx = (n.x - e.x) / d;
+    e.dy = (n.y - e.y) / d;
+    e.x += e.dx * sp;
+    e.y += e.dy * sp;
+    e.flip = e.dx < 0;
+    e.moving = true;
+    e.inside = false;
+    e.anim += dt * 7.5;
+  }
+
+  /**
+   * Vida social a la vista: quien charla busca a alguien con quien hablar y
+   * se miran; quien ve llegar al jugador se gira hacia él, le saluda si le
+   * aprecia o se sorprende si no le conoce.
+   */
+  private social(): void {
+    const life = ensureLife(this.w);
+    const me = life.player;
+    const now = performance.now();
+    const all: [string, Ent][] = [...this.ents, ...this.extras];
+    for (const [id, e] of all) {
+      e.partner = undefined;
+      if (e.moving || e.inside) continue;
+      const f = this.folkById.get(id);
+      const dme = Math.hypot(me.x - e.x, me.y - e.y);
+      if (f && (dme < 2.8 || id === this.converseId)) {
+        this.faceTo(e, me.x, me.y);
+        if (!e.greeted) {
+          e.greeted = true;
+          if (f.lastMet < 0) e.react = { expr: 'sorpresa', until: now + 1400 };
+          else if (f.trust > 0.6 || f.gratitude > 0.45) e.react = { expr: 'feliz', action: 'wave', until: now + 1700 };
+          else if (f.resentment > 0.45) e.react = { expr: 'hostil', action: 'cross', until: now + 2200 };
+        }
+        continue;
+      }
+      if (dme > 4) e.greeted = false;
+      const act = actionOf(e.act);
+      if (act === 'talk' || /charla|pasea/.test(e.act)) {
+        let best: [string, Ent] | null = null;
+        let bd = 2.2;
+        for (const [oid, o] of all) {
+          if (oid === id || o.moving || o.inside) continue;
+          const d = Math.hypot(o.x - e.x, o.y - e.y);
+          if (d < bd) (bd = d), (best = [oid, o]);
+        }
+        if (best) {
+          e.partner = best[0];
+          this.faceTo(e, best[1].x, best[1].y);
+        }
+      } else if (act === 'work' || act === 'hammer' || act === 'fish') {
+        e.facing = 'side';
+      } else e.facing = 'front';
+    }
+  }
+
+  private faceTo(e: Ent, x: number, y: number): void {
+    const dx = x - e.x;
+    const dy = y - e.y;
+    if (Math.abs(dx) > 0.45 || Math.abs(dx) > Math.abs(dy) * 0.8) {
+      e.facing = 'side';
+      e.flip = dx < 0;
+    } else e.facing = dy < 0 ? 'back' : 'front';
   }
 
   private encounterSpots(): Map<string, { x: number; y: number }> {
@@ -471,19 +677,26 @@ export class WorldScene {
         if (wantInside) e.inside = true;
         continue;
       }
-      const n = e.path[0];
-      const d = Math.hypot(n.x - e.x, n.y - e.y);
-      if (d < 0.2) {
-        e.path.shift();
-        continue;
-      }
-      const sp = Math.min(d, 2.3 * dt * this.timeScale ** 0.5);
-      e.x += ((n.x - e.x) / d) * sp;
-      e.y += ((n.y - e.y) / d) * sp;
-      e.flip = n.x < e.x;
-      e.moving = true;
-      e.inside = false;
-      e.anim += dt * 7;
+      this.step(e, dt, 2.3);
+    }
+  }
+
+  private moveBirds(dt: number): void {
+    const h = hourOf(ensureLife(this.w).clock);
+    const weather = weatherOf(this.w, this.w.day);
+    const want = this.reduceMotion || this.quality === 'baja' || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
+    const vw = this.vw / this.cam.z;
+    const vh = this.vh / this.cam.z;
+    this.birds = this.birds.filter((b) => Math.abs(b.x - this.cam.x) < vw && Math.abs(b.y - this.cam.y) < vh);
+    if (this.birds.length < want && Math.random() < dt * 0.4) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const y0 = this.cam.y - vh * 0.4 + Math.random() * vh * 0.5;
+      for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) this.birds.push({ x: this.cam.x - dir * (vw * 0.55 + i * 14), y: y0 + (i % 2) * 9 + i * 4, vx: dir * (55 + Math.random() * 10), ph: Math.random() * 6 });
+    }
+    for (const b of this.birds) {
+      b.x += b.vx * dt;
+      b.y += Math.sin(b.ph + b.x / 60) * 0.2;
+      b.ph += dt * 11;
     }
   }
 
@@ -503,14 +716,17 @@ export class WorldScene {
       for (const a of list) {
         const d = Math.hypot(a.tx - a.x, a.ty - a.y);
         if (d < 0.2) {
-          if (Math.random() < dt * 0.3) {
-            a.tx = a.hx + (Math.random() - 0.5) * 8;
-            a.ty = a.hy + (Math.random() - 0.5) * 6;
-            if (!passable(this.w, this.l, a.tx, a.ty)) (a.tx = a.x), (a.ty = a.y);
+          if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
+            const R = a.kind === 'perro' ? 14 : a.kind === 'caballo' ? 4 : a.water ? 3 : 8;
+            a.tx = a.hx + (Math.random() - 0.5) * R;
+            a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
+            const tt = this.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
+            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty);
+            if (!ok) (a.tx = a.x), (a.ty = a.y);
           }
           continue;
         }
-        const sp = Math.min(d, (a.kind === 'ciervo' ? 1.6 : 0.7) * dt);
+        const sp = Math.min(d, ({ ciervo: 1.6, perro: 2.2, caballo: 0.8, pato: 0.5 } as Record<string, number>)[a.kind] ?? 0.7) * dt;
         a.x += ((a.tx - a.x) / d) * sp;
         a.y += ((a.ty - a.y) / d) * sp;
         a.flip = a.tx < a.x;
@@ -532,7 +748,7 @@ export class WorldScene {
         const x = cx + (hash(`${regionId}${kind}`, i) - 0.5) * 6;
         const y = cy + (hash(`${regionId}${kind}`, i + 50) - 0.5) * 5;
         if (!passable(w, this.l, x, y)) continue;
-        out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: false, anim: i });
+        out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: hash(`${regionId}${kind}`, i + 9) < 0.5, anim: i, v: i });
       }
     };
     const field = v.fields[0] ?? { x: v.cx + 10, y: v.cy + 8, w: 4, h: 4 };
@@ -542,6 +758,23 @@ export class WorldScene {
     else herd('vaca', 2, pasture.x, pasture.y);
     herd('gallina', 5, v.cx + v.plazaR + 3, v.cy + v.plazaR + 1);
     if ((r.resource === 'hierbas' || r.resource === 'ambar') && r.ecology > 0.55) herd('ciervo', 3, v.cx + 26, v.cy - 18);
+    // Caballos junto al establo y perros por las calles.
+    const stable = v.keys.find((k) => k.kind === 'establo');
+    if (stable) herd('caballo', 2.6, stable.x + stable.w / 2, stable.y + stable.h + 2);
+    for (let i = 0; i < (r.population > 700 ? 2 : 1); i++) {
+      const x = v.cx + 0.5 + (hash(`${regionId}perro`, i) - 0.5) * 8;
+      const y = v.cy + v.plazaR + 1.5;
+      if (passable(w, this.l, x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
+    }
+    // Patos donde hay agua cerca.
+    for (let k = 0; k < 40; k++) {
+      const x = v.cx + 0.5 + (hash(`${regionId}pato`, k) - 0.5) * 50;
+      const y = v.cy + 0.5 + (hash(`${regionId}pato`, k + 99) - 0.5) * 50;
+      const tt = this.l.terrain.tiles[idx(Math.floor(x), Math.floor(y))];
+      if (tt !== 2 && tt !== 10) continue;
+      for (let i = 0; i < 3; i++) out.push({ kind: 'pato', x: x + i * 0.4, y: y + (i % 2) * 0.3, hx: x, hy: y, tx: x, ty: y, flip: i % 2 === 0, anim: i, water: true, v: i });
+      break;
+    }
     return out;
   }
 
@@ -570,10 +803,8 @@ export class WorldScene {
       }
       case 'messenger':
         return this.messengers().find((m) => m.id === t.petitionId);
-      case 'signpost': {
-        const v = this.l.villages[t.regionId];
-        return { x: v.cx + 0.5, y: v.cy + 0.5 };
-      }
+      case 'signpost':
+        return this.l.villages[t.regionId].sign;
     }
   }
 
@@ -583,7 +814,7 @@ export class WorldScene {
     const hall = v.keys.find((k) => k.kind === 'salon');
     if (!hall) return [];
     const d = doorOf(hall);
-    return w.petitions.slice(0, 4).map((p, i) => ({ id: p.id, x: d.x - 1.5 + i * 1.1, y: d.y + 1.2, regionId: p.regionId }));
+    return w.petitions.slice(0, 4).map((p, i) => ({ id: p.id, x: d.x - 2.4 + i * 1.6, y: d.y + 1.8, regionId: p.regionId }));
   }
 
   /** El objetivo interactuable más cercano a un punto. */
@@ -598,9 +829,9 @@ export class WorldScene {
     for (const [id, e] of this.ents) {
       if (e.inside) continue;
       const f = life.folk.find((ff) => ff.id === id);
-      if (f) consider({ kind: 'folk', id, label: f.name }, e.x, e.y - 0.4);
+      if (f) consider({ kind: 'folk', id, label: f.name }, e.x, e.y - 1);
     }
-    for (const m of this.messengers()) consider({ kind: 'messenger', petitionId: m.id, label: `Mensajero de ${w.regions[m.regionId].name}` }, m.x, m.y);
+    for (const m of this.messengers()) consider({ kind: 'messenger', petitionId: m.id, label: `Mensajero de ${w.regions[m.regionId].name}` }, m.x, m.y - 1);
     for (const v of this.l.villages) {
       if (Math.hypot(v.cx - x, v.cy - y) > 40) continue;
       for (const b of v.keys) {
@@ -608,7 +839,7 @@ export class WorldScene {
         const d = doorOf(b);
         consider({ kind: 'building', regionId: v.regionId, building: b.kind, label: BUILDING_LABEL[b.kind] }, d.x, d.y, radius * 0.9);
       }
-      consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.cx + 0.5, v.cy + 0.5, radius * 0.8);
+      consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
     for (const p of this.l.places) if (life.places[p.id]?.discovered) consider({ kind: 'place', id: p.id, label: p.name }, p.x + 0.5, p.y + 0.5, radius * 1.3);
@@ -661,6 +892,12 @@ export class WorldScene {
     }
 
     const items: Drawable[] = [];
+    this.lights = [];
+    this.folkById.clear();
+    for (const f of life.folk) if (f.alive) this.folkById.set(f.id, f);
+    const wet = weather === 'lluvia' || weather === 'tormenta';
+    const cold = weather === 'nieve' || season === 'invierno';
+    const sec = t / 1000;
     const inView = (px: number, py: number, m = 60) => px > x0 - m && px < x1 + m && py > y0 - m && py < y1 + m * 1.5;
 
     // Objetos estáticos del terreno.
@@ -674,7 +911,7 @@ export class WorldScene {
     // Pueblos.
     for (const v of this.l.villages) {
       if (!inView(v.cx * TILE, v.cy * TILE, 34 * TILE)) continue;
-      this.villageDrawables(v.regionId, items, inView, t);
+      this.villageDrawables(v.regionId, items, inView, t, cold);
     }
     // Puestos fronterizos, campamentos de guerra y soldados.
     this.l.posts.forEach((p) => {
@@ -689,39 +926,53 @@ export class WorldScene {
     }
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
     this.roadTraffic(items, inView, t);
-    // Vecinos.
+    // Vecinos: figura completa cerca, simplificada a media distancia, silueta lejos.
     for (const [id, e] of this.ents) {
       if (e.inside || !inView(e.x * TILE, e.y * TILE)) continue;
-      const f = life.folk.find((x) => x.id === id);
+      const f = this.folkById.get(id);
       if (!f) continue;
-      items.push({ y: e.y * TILE, draw: () => S.drawSprite(g, S.person(this.lookOf(f), e.moving ? 1 + (Math.floor(e.anim) % 2) : 0, e.flip), e.x * TILE, e.y * TILE) });
+      const ap = this.dress(this.apOf(f), wet, cold);
+      const pose = this.entPose(id, e, f, sec, wet, cold);
+      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
+    }
+    // Gentío de las ciudades grandes.
+    for (const [id, e] of this.extras) {
+      if (!inView(e.x * TILE, e.y * TILE)) continue;
+      const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'pastor', 'comerciante'];
+      const ap = this.dress(this.extraAp(id, e.regionId, roles[Math.floor(hash(id, 4) * roles.length)], 14 + Math.floor(hash(id, 5) * 50)), wet, cold);
+      const pose = this.entPose(id, e, undefined, sec, wet, cold);
+      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
     }
     // Mensajeros esperando ante tu salón.
     for (const m of this.messengers()) {
-      const hue = this.hueOf(m.regionId);
-      items.push({ y: m.y * TILE, draw: () => S.drawSprite(g, S.person({ body: `hsl(${hue} 40% 40%)`, skin: '#d9a77a', hair: '#3a2a1a', hat: 'capucha', carry: 'saco' }, Math.floor(t / 500) % 2 ? 0 : 1, false), m.x * TILE, m.y * TILE) });
+      const ap = this.extraAp(`m:${m.id}`, m.regionId, 'exploradora', 30, (a) => (a.outfit.item = 'saco'));
+      const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet, heavy: cold };
+      items.push({ y: m.y * TILE, draw: () => drawHuman(g, ap, pose, m.x * TILE, m.y * TILE) });
     }
     // Animales.
     for (const list of this.animals.values())
       for (const a of list) {
         if (!inView(a.x * TILE, a.y * TILE)) continue;
-        items.push({ y: a.y * TILE, draw: () => S.drawSprite(g, S.animal(a.kind, Math.floor(a.anim) % 2, a.flip), a.x * TILE, a.y * TILE) });
+        const moving = Math.hypot(a.tx - a.x, a.ty - a.y) > 0.2;
+        items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => S.drawSprite(g, S.animal(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.flip, a.v), a.x * TILE, a.y * TILE) });
       }
     // Jugador.
     const me = life.player;
-    items.push({
-      y: me.y * TILE,
-      draw: () => S.drawSprite(g, S.person(this.playerLook(), this.playerMoving ? 1 + (Math.floor(this.playerAnim) % 2) : 0, this.facing.x < -0.1), me.x * TILE, me.y * TILE),
-    });
+    const pap = this.dress(this.playerAp(darkness(life.clock) > 0.3), wet, cold);
+    const ppose = this.playerPose(sec, wet, cold);
+    items.push({ y: me.y * TILE, draw: () => drawHuman(g, pap, ppose, me.x * TILE, me.y * TILE) });
+    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 24, r: 120, k: 1 });
 
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
 
     this.drawParticles(g, t);
+    this.drawBirds(g);
     this.drawMarkers(g, t);
 
-    // Capa de pantalla: noche, clima, joystick, etiquetas.
+    // Capa de pantalla: luz del día, noche, clima, joystick, etiquetas.
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.drawGrade(g, hourOf(life.clock), weather);
     this.drawNight(g);
     this.drawWeather(g, weather, t);
     this.drawLabels(g);
@@ -745,13 +996,12 @@ export class WorldScene {
     }
   }
 
-  private drawStatic(o: { x: number; y: number; kind: string; v: number; region: number }, look: S.SeasonLook): void {
+  private drawStatic(o: StaticObject, look: S.SeasonLook): void {
     const g = this.g;
     const r = o.region >= 0 ? this.w.regions[o.region] : undefined;
     switch (o.kind) {
       case 'arbol': {
-        const res = r?.resource ?? 'grano';
-        let kind: S.TreeKind = res === 'hierro' || res === 'ambar' ? (o.v % 3 ? 'pino' : 'roble') : res === 'hierbas' ? (o.v % 4 === 0 ? 'abedul' : 'roble') : o.v % 5 === 0 ? 'abedul' : 'roble';
+        let kind: S.TreeKind = o.tree ?? 'roble';
         // Un ecosistema degradado deja árboles muertos.
         if (r && r.ecology < 0.42 && o.v % 3 !== 0) kind = 'muerto';
         S.drawSprite(g, S.tree(kind, look, o.v), o.x, o.y);
@@ -761,7 +1011,9 @@ export class WorldScene {
         S.drawSprite(g, S.tree('arbusto', look, o.v), o.x, o.y);
         break;
       case 'junco':
-        S.drawSprite(g, S.tree('junco', look, o.v), o.x, o.y);
+      case 'hierba':
+      case 'flores':
+        S.drawSprite(g, S.tree(o.kind, look, o.v), o.x, o.y);
         break;
       case 'roca':
         S.drawSprite(g, S.rock(o.v, look === 'invierno'), o.x, o.y);
@@ -785,7 +1037,7 @@ export class WorldScene {
     return S.styleFor(r.isHome ? 'eco' : r.culture, this.hueOf(regionId));
   }
 
-  private villageDrawables(regionId: number, items: Drawable[], inView: (x: number, y: number, m?: number) => boolean, t: number): void {
+  private villageDrawables(regionId: number, items: Drawable[], inView: (x: number, y: number, m?: number) => boolean, t: number, cold: boolean): void {
     const w = this.w;
     const g = this.g;
     const life = ensureLife(w);
@@ -804,19 +1056,19 @@ export class WorldScene {
       const by = (b.y + b.h) * TILE;
       if (!inView(bx, by)) return;
       const state: S.HouseState = i === built ? 'obra' : town?.burned.includes(i) ? 'quemada' : i >= abandonedFrom ? 'abandonada' : 'normal';
+      // De noche, las ventanas de las casas habitadas se encienden (no todas a la vez).
+      const lit = state === 'normal' && night && (hash(`${regionId}:${i}`) < 0.82 || hourOf(life.clock) < 23);
+      const wins = st.shape === 'redondo' ? [{ x: -b.w * 8 + 10, y: -32, w: 11, h: 11 }] : S.houseWindows(b.w);
+      if (lit) for (const wn of wins) this.lights.push({ x: bx + wn.x + wn.w / 2, y: by + wn.y + wn.h / 2, r: 30, k: 0.75 });
       items.push({
         y: by,
         draw: () => {
-          S.drawSprite(g, S.house(st, state, i), bx, by);
-          if (state === 'normal' && night) {
-            g.fillStyle = 'rgba(255,205,110,0.85)';
-            g.fillRect(bx - 11, by - 16, 5, 5);
-            g.fillRect(bx + 6, by - 16, 5, 5);
-          }
+          S.drawSprite(g, S.house(st, state, i % 3, b.w), bx, by);
+          if (lit) for (const wn of wins) this.litWindow(bx + wn.x, by + wn.y, wn.w, wn.h, t + i * 300);
         },
       });
-      if (state === 'quemada' && !this.reduceMotion && Math.random() < 0.06) this.puff(bx, by - 26, 'rgba(60,55,50,', 1.2);
-      if (state === 'normal' && !this.reduceMotion && Math.random() < 0.004 && (hourOf(life.clock) < 9 || hourOf(life.clock) > 18)) this.puff(bx + 9, by - 34, 'rgba(200,200,200,', 0.6);
+      if (state === 'quemada' && !this.reduceMotion && Math.random() < 0.06) this.puff(bx, by - 50, 'rgba(60,55,50,', 2);
+      if (state === 'normal' && st.shape !== 'redondo' && !this.reduceMotion && Math.random() < 0.006 && (hourOf(life.clock) < 9 || hourOf(life.clock) > 17 || cold)) this.puff(bx + b.w * 8 - 17.5 - (i % 3 % 2) * 20, by - 96, 'rgba(205,205,205,', 1.1);
     });
     const food = r.isHome ? w.player.reserves / 5 : r.food;
     for (const b of v.keys) {
@@ -826,14 +1078,33 @@ export class WorldScene {
       if (!inView(bx, by)) continue;
       const extra = b.kind === 'almacen' ? (food < 4 ? 'vacio' : '') : b.kind === 'salon' ? `hsl(${hue} 55% 45%)` : '';
       items.push({ y: by, draw: () => S.drawSprite(g, S.keyBuilding(b.kind, st, extra), bx, by) });
-      if (b.kind === 'forja' && !this.reduceMotion && Math.random() < (r.militancy > 0.55 ? 0.12 : 0.04) && hourOf(life.clock) > 8 && hourOf(life.clock) < 18) this.puff(bx + 8, by - 38, 'rgba(70,65,60,', 1);
+      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 64 : 44, k: 0.85 });
+      if (b.kind === 'forja') {
+        const working = hourOf(life.clock) > 8 && hourOf(life.clock) < (r.militancy > 0.55 ? 23 : 18);
+        if (working) this.lights.push({ x: bx - 14, y: by - 14, r: 52, k: 0.9 });
+        if (working && !this.reduceMotion && Math.random() < (r.militancy > 0.55 ? 0.14 : 0.05)) this.puff(bx + 16, by - 96, 'rgba(70,65,60,', 1.6);
+      }
+    }
+    // Mobiliario: bancos, faroles, fuente, barriles, carros, heno…
+    for (const pr of v.props) {
+      const px = pr.x * TILE;
+      const py = pr.y * TILE;
+      if (!inView(px, py)) continue;
+      items.push({ y: py, draw: () => S.drawSprite(g, S.prop(pr.kind, pr.v), px, py) });
+    }
+    if (night) for (const lp of v.lamps) {
+      const px = lp.x * TILE;
+      const py = lp.y * TILE + 2;
+      if (!inView(px, py)) continue;
+      this.lights.push({ x: px, y: py, r: 54, k: 0.95 });
+      items.push({ y: py + 48, draw: () => this.flame(px, py, t) });
     }
     // Mercado: puestos llenos, vacíos o abandonados.
     const traffic = w.routes.filter((x) => (x.a === regionId || x.b === regionId) && x.status === 'abierta').reduce((s, x) => s + x.traffic, 0);
-    const active = r.flags.sinComercio ? 2 : Math.max(2, Math.min(v.stalls.length, Math.round(2 + traffic * 3 + (r.population / 400))));
+    const active = r.flags.sinComercio ? 2 : Math.max(2, Math.min(v.stalls.length, 6, Math.round(2 + traffic * 3 + (r.population / 400))));
     v.stalls.slice(0, active).forEach((s, i) => {
       const full = food > 5 && !r.flags.hambre && !(r.flags.sinComercio && i > 0);
-      items.push({ y: s.y * TILE + 10, draw: () => S.drawSprite(g, S.stall(full, `hsl(${(hue + i * 40) % 360} 50% 55%)`), s.x * TILE + 8, s.y * TILE + 10) });
+      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(full, `hsl(${(hue + i * 40) % 360} 50% 55%)`, i), s.x * TILE, s.y * TILE) });
     });
     // Empalizada.
     if (town?.walls) {
@@ -852,14 +1123,19 @@ export class WorldScene {
         items.push({
           y: py,
           draw: () => {
-            g.fillStyle = '#6b4a2e';
-            g.fillRect(px - 2, py - 16, 4, 16);
+            g.fillStyle = '#5e4128';
+            g.fillRect(px - 3.5, py - 36, 7, 36);
+            g.fillStyle = '#7d5a3a';
+            g.fillRect(px - 3.5, py - 36, 3, 36);
             g.fillStyle = '#8a6440';
             g.beginPath();
-            g.moveTo(px - 2, py - 16);
-            g.lineTo(px, py - 20);
-            g.lineTo(px + 2, py - 16);
+            g.moveTo(px - 3.5, py - 36);
+            g.lineTo(px, py - 43);
+            g.lineTo(px + 3.5, py - 36);
             g.fill();
+            g.fillStyle = 'rgba(40,28,18,0.7)';
+            g.fillRect(px - 4, py - 28, 8, 2);
+            g.fillRect(px - 4, py - 12, 8, 2);
           },
         });
       }
@@ -867,27 +1143,51 @@ export class WorldScene {
     if (town?.tower) {
       const px = (v.cx + v.plazaR + 1.5) * TILE;
       const py = (v.cy - v.plazaR) * TILE;
+      if (night) this.lights.push({ x: px, y: py - 106, r: 90, k: 1 });
       items.push({
         y: py,
         draw: () => {
-          g.fillStyle = '#8a7a64';
-          g.fillRect(px - 5, py - 46, 10, 46);
-          g.fillStyle = '#5a4a3a';
-          g.fillRect(px - 8, py - 50, 16, 6);
-          if (night || Math.floor(t / 700) % 2) {
-            g.fillStyle = 'rgba(255,170,60,0.9)';
-            g.beginPath();
-            g.arc(px, py - 54, 4, 0, Math.PI * 2);
-            g.fill();
+          // Torre de vigía de madera: cuatro pies, plataforma y tejadillo.
+          g.strokeStyle = '#5e4128';
+          g.lineWidth = 4;
+          g.beginPath();
+          g.moveTo(px - 14, py);
+          g.lineTo(px - 9, py - 92);
+          g.moveTo(px + 14, py);
+          g.lineTo(px + 9, py - 92);
+          g.stroke();
+          g.lineWidth = 1.8;
+          g.beginPath();
+          for (let k = 0; k < 4; k++) {
+            const y0 = py - k * 23;
+            g.moveTo(px - 13 + k * 1.2, y0);
+            g.lineTo(px + 12 - k * 1.2, y0 - 23);
+            g.moveTo(px + 13 - k * 1.2, y0);
+            g.lineTo(px - 12 + k * 1.2, y0 - 23);
           }
+          g.stroke();
+          g.fillStyle = '#7d5a3a';
+          g.fillRect(px - 16, py - 100, 32, 10);
+          g.fillStyle = '#6b4a2e';
+          g.beginPath();
+          g.moveTo(px - 19, py - 120);
+          g.lineTo(px, py - 134);
+          g.lineTo(px + 19, py - 120);
+          g.fill();
+          g.fillRect(px - 15, py - 120, 3, 20);
+          g.fillRect(px + 12, py - 120, 3, 20);
+          if (night || Math.floor(t / 700) % 2) this.flame(px, py - 106, t);
         },
       });
     }
     // Hoguera de la plaza al anochecer.
-    if (hourOf(life.clock) > 19 || hourOf(life.clock) < 1) {
-      const px = (v.cx + 0.5) * TILE;
-      const py = (v.cy + 0.5) * TILE;
-      items.push({ y: py, draw: () => this.fire(px, py, t) });
+    const hh = hourOf(life.clock);
+    if ((hh > 19 || hh < 1) && !r.abandoned && weatherOf(w, w.day) !== 'lluvia' && weatherOf(w, w.day) !== 'tormenta') {
+      const px = (v.cx + 0.5 - (v.plazaR - 2.4)) * TILE;
+      const py = (v.cy + 1) * TILE;
+      this.lights.push({ x: px, y: py - 10, r: 110, k: 1 });
+      items.push({ y: py, draw: () => this.fire(px, py, t, 1.8) });
+      if (!this.reduceMotion && Math.random() < 0.05) this.puff(px, py - 26, 'rgba(120,110,100,', 1);
     }
   }
 
@@ -901,26 +1201,44 @@ export class WorldScene {
     const py = p.y * TILE;
     const closed = route.status !== 'abierta';
     const owner = a.isHome ? b : a;
-    items.push({ y: py + 4, draw: () => S.drawSprite(g, S.post(`hsl(${this.hueOf(owner.id)} 60% 45%)`, closed), px - 20, py + 4) });
-    if (closed) items.push({ y: py + 2, draw: () => S.drawSprite(g, S.barricade(), px + 2, py + 2) });
+    items.push({ y: py + 4, draw: () => S.drawSprite(g, S.post(`hsl(${this.hueOf(owner.id)} 60% 45%)`, closed), px - 30, py + 4) });
+    if (closed) items.push({ y: py + 6, draw: () => S.drawSprite(g, S.barricade(), px + 4, py + 6) });
+    if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 70, k: 0.9 });
+    const sec = t / 1000;
+    const lifeW = ensureLife(w);
+    const weather = weatherOf(w, w.day);
     // Guardias según la tensión; campamentos si hay guerra.
     const war = a.relations[b.id]?.war;
     const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
     const guards = war ? 6 : mil > 0.55 ? 4 : mil > 0.35 ? 2 : route.status === 'cerrada' ? 2 : 1;
     for (let i = 0; i < guards; i++) {
       const side = i % 2 ? a : b;
-      const sx = px + (i % 2 ? -1 : 1) * (14 + (i >> 1) * 12) + Math.sin(t / 900 + i) * 3;
-      const sy = py + 10 + (i >> 1) * 6;
-      const hue = this.hueOf(side.id);
-      items.push({ y: sy, draw: () => S.drawSprite(g, S.person({ body: `hsl(${hue} 30% 35%)`, skin: '#c99a72', hair: '#2a1e14', hat: 'casco', carry: 'lanza' }, war ? Math.floor(t / 300 + i) % 3 : 0, i % 2 === 0), sx, sy) });
+      const sx = px + (i % 2 ? -1 : 1) * (26 + (i >> 1) * 20);
+      const sy = py + 18 + (i >> 1) * 10;
+      const ap = this.extraAp(`g:${p.routeId}:${side.id}:${i}`, side.id, 'guardia', 24 + i * 5);
+      const me = lifeW.player;
+      const close = Math.hypot(me.x * TILE - sx, me.y * TILE - sy) < 70;
+      const pose: Pose = {
+        facing: close ? 'front' : 'side',
+        flip: i % 2 === 0,
+        phase: 0,
+        action: war ? (Math.floor(sec / 2 + i) % 3 ? 'look' : 'point') : close ? 'idle' : 'look',
+        t: sec + i,
+        expr: war ? 'enfadado' : mil > 0.55 ? 'desconfianza' : 'neutral',
+        lod: this.lodAt(sx / TILE, sy / TILE),
+        hood: weather === 'lluvia' || weather === 'tormenta',
+        heavy: weather === 'nieve',
+      };
+      items.push({ y: sy, draw: () => drawHuman(g, ap, pose, sx, sy) });
     }
     if (war) {
       for (let i = 0; i < 3; i++) {
-        const tx = px + (i - 1) * 34;
-        const ty = py - 40 - (i % 2) * 10;
+        const tx = px + (i - 1) * 70;
+        const ty = py - 70 - (i % 2) * 16;
         items.push({ y: ty, draw: () => S.drawSprite(g, S.tent(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
       }
-      items.push({ y: py - 26, draw: () => this.fire(px, py - 26, t) });
+      this.lights.push({ x: px, y: py - 50, r: 100, k: 1 });
+      items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.6) });
     }
   }
 
@@ -947,7 +1265,7 @@ export class WorldScene {
           const py = pos.y * TILE;
           if (!inView(px, py)) continue;
           const flip = (fwd ? pos.dx : -pos.dx) < 0;
-          items.push({ y: py, draw: () => S.drawSprite(g, S.cart(Math.floor(t / 250) % 2, flip, '#d9c08a'), px, py) });
+          items.push({ y: py, draw: () => S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, flip, '#d9c08a'), px, py) });
         }
       }
       // Soldados en marcha entre regiones en guerra.
@@ -955,11 +1273,13 @@ export class WorldScene {
         for (let i = 0; i < 5; i++) {
           const phase = ((clock * 1.5) / len + i * 0.04) % 1;
           const pos = along(road.path, 0.35 + phase * 0.3);
-          const px = pos.x * TILE + (i % 2) * 8;
-          const py = pos.y * TILE + (i % 3) * 5;
+          const px = pos.x * TILE + (i % 2) * 14;
+          const py = pos.y * TILE + (i % 3) * 8;
           if (!inView(px, py)) continue;
-          const hue = this.hueOf(i % 2 ? road.a : road.b);
-          items.push({ y: py, draw: () => S.drawSprite(g, S.person({ body: `hsl(${hue} 35% 35%)`, skin: '#c99a72', hair: '#2a1e14', hat: 'casco', carry: 'lanza' }, 1 + (Math.floor(t / 200 + i) % 2), pos.dx < 0), px, py) });
+          const side = i % 2 ? road.a : road.b;
+          const ap = this.extraAp(`s:${road.routeId}:${i}`, side, 'guardia', 22 + i * 3);
+          const pose = this.marchPose(pos.dx, 0, t / 1000 * 9 + i * 1.3, 'enfadado', px, py, false);
+          items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
         }
       }
     }
@@ -973,10 +1293,16 @@ export class WorldScene {
       for (let i = 0; i < 4; i++) {
         const phase = ((clock * 0.8) / path.length + i * 0.015 + r.id * 0.21) % 1;
         const pos = along(path, phase);
-        const px = pos.x * TILE + (i % 2) * 7;
-        const py = pos.y * TILE + (i % 3) * 4;
+        const px = pos.x * TILE + (i % 2) * 12;
+        const py = pos.y * TILE + (i % 3) * 7;
         if (!inView(px, py)) continue;
-        items.push({ y: py, draw: () => S.drawSprite(g, S.person({ body: '#7a6a58', skin: '#d4a57a', hair: '#4a3626', hat: i % 2 ? 'pañuelo' : undefined, carry: 'saco', small: i === 3 }, 1 + (Math.floor(t / 280 + i) % 2), pos.dx < 0), px, py) });
+        const role: FolkRole = (['campesino', 'anciano', 'campesino', 'nino'] as FolkRole[])[i];
+        const ap = this.extraAp(`r:${r.id}:${i}`, r.id, role, role === 'nino' ? 9 : role === 'anciano' ? 66 : 30, (a) => {
+          a.outfit.item = role === 'anciano' ? 'baston' : 'saco';
+          a.outfit.patches = true;
+        });
+        const pose = this.marchPose(pos.dx, 0, t / 1000 * 6 + i, i % 2 ? 'triste' : 'miedo', px, py, true);
+        items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
       }
     }
     // Tus caravanas: salen del almacén y llegan días después.
@@ -989,25 +1315,44 @@ export class WorldScene {
       const px = pos.x * TILE;
       const py = pos.y * TILE;
       if (!inView(px, py)) continue;
+      const driver = this.extraAp(`c:${c.id}`, w.player.home, 'comerciante', 34);
+      const dpose = this.marchPose(pos.dx, 0, t / 1000 * 7, 'neutral', px, py, false);
       items.push({
-        y: py,
+        y: py + 12,
         draw: () => {
-          S.drawSprite(g, S.cart(Math.floor(t / 300) % 2, pos.dx < 0, c.kind === 'regalo' ? '#c98ad0' : '#e3c070'), px, py);
-          S.drawSprite(g, S.person(this.playerLookSmall(), 1 + (Math.floor(t / 300) % 2), pos.dx < 0), px + (pos.dx < 0 ? 22 : -22), py + 2);
+          S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, pos.dx < 0, c.kind === 'regalo' ? '#c98ad0' : '#e3c070'), px, py);
+          drawHuman(g, driver, dpose, px + (pos.dx < 0 ? 10 : -10), py + 12);
+          g.fillStyle = '#5a3a22';
+          g.fillRect(px - 1, py - 78, 2, 26);
           g.fillStyle = '#e9b44c';
-          g.fillRect(px - 1, py - 34, 2, 10);
           g.beginPath();
-          g.moveTo(px + 1, py - 34);
-          g.lineTo(px + 9, py - 31);
-          g.lineTo(px + 1, py - 28);
+          g.moveTo(px + 1, py - 78);
+          g.lineTo(px + 15, py - 73);
+          g.lineTo(px + 1, py - 68);
           g.fill();
         },
       });
     }
   }
 
-  private fire(px: number, py: number, t: number): void {
+  private fire(px: number, py: number, t: number, scale = 1): void {
     const g = this.g;
+    if (scale !== 1) {
+      g.save();
+      g.translate(px, py);
+      g.scale(scale, scale);
+      this.fire(0, 0, t);
+      g.restore();
+      return;
+    }
+    // Piedras alrededor de la hoguera.
+    for (let k = 0; k < 7; k++) {
+      const a = (k / 7) * Math.PI * 2;
+      g.fillStyle = k % 2 ? '#6a645c' : '#857d72';
+      g.beginPath();
+      g.ellipse(px + Math.cos(a) * 7.5, py + Math.sin(a) * 2.6, 2.2, 1.5, 0, 0, Math.PI * 2);
+      g.fill();
+    }
     g.fillStyle = '#4a3626';
     g.fillRect(px - 6, py - 2, 12, 3);
     const f = this.reduceMotion ? 0 : Math.sin(t / 90) * 1.5;
@@ -1053,14 +1398,14 @@ export class WorldScene {
       g.strokeStyle = '#2b1e15';
       g.lineWidth = 1.5;
       g.beginPath();
-      g.arc(e.x * TILE, e.y * TILE - 44 + bob, 7, 0, Math.PI * 2);
+      g.arc(e.x * TILE, e.y * TILE - 66 + bob, 8, 0, Math.PI * 2);
       g.fill();
       g.stroke();
       g.fillStyle = '#b5562d';
       g.font = 'bold 11px system-ui';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText('!', e.x * TILE, e.y * TILE - 43 + bob);
+      g.fillText('!', e.x * TILE, e.y * TILE - 65 + bob);
     }
     const f = this.focus ? this.targetPos(this.focus) : undefined;
     if (f) {
@@ -1068,7 +1413,7 @@ export class WorldScene {
       g.lineWidth = 1.5;
       g.setLineDash([3, 3]);
       g.beginPath();
-      g.ellipse(f.x * TILE, f.y * TILE + 1, 9, 4, 0, 0, Math.PI * 2);
+      g.ellipse(f.x * TILE, f.y * TILE + 1, 13, 5, 0, 0, Math.PI * 2);
       g.stroke();
       g.setLineDash([]);
     }
@@ -1083,9 +1428,9 @@ export class WorldScene {
     // Nombre de las personas cercanas que ya conoces.
     for (const [id, e] of this.ents) {
       if (e.inside || Math.hypot(e.x - me.x, e.y - me.y) > 5) continue;
-      const f = life.folk.find((x) => x.id === id);
-      if (!f || f.lastMet < 0) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE - 32);
+      const f = this.folkById.get(id);
+      if (!f || f.lastMet < 0 || id === this.converseId) continue;
+      const p = this.toScreen(e.x * TILE, e.y * TILE - 54 * (this.apCache.get(id)?.ap.height ?? 1));
       g.font = '600 12px Georgia, serif';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(30,25,20,0.7)';
@@ -1172,7 +1517,10 @@ export class WorldScene {
     }
   }
 
-  /** Noche: oscuridad con luces de ventanas, hogueras y tu farol. */
+  /**
+   * Noche: una capa de oscuridad azulada con huecos donde hay luz (ventanas,
+   * faroles, hogueras, tu farol) y, encima, un halo cálido aditivo.
+   */
   private drawNight(g: CanvasRenderingContext2D): void {
     const life = ensureLife(this.w);
     const d = darkness(life.clock);
@@ -1182,38 +1530,103 @@ export class WorldScene {
     const H = this.dark.height;
     dc.globalCompositeOperation = 'source-over';
     dc.clearRect(0, 0, W, H);
-    dc.fillStyle = `rgba(12,16,38,${d})`;
+    dc.fillStyle = `rgba(8,12,34,${Math.min(0.9, d * 1.38)})`;
     dc.fillRect(0, 0, W, H);
     dc.globalCompositeOperation = 'destination-out';
-    const light = (wx: number, wy: number, radius: number, k = 1) => {
-      const p = this.toScreen(wx, wy);
-      const x = p.x / 2;
-      const y = p.y / 2;
-      const r = (radius * this.cam.z) / 2;
-      if (x < -r || y < -r || x > W + r || y > H + r) return;
+    const vis: { x: number; y: number; r: number; k: number }[] = [];
+    for (const l of this.lights) {
+      const p = this.toScreen(l.x, l.y);
+      const r = l.r * this.cam.z;
+      if (p.x < -r || p.y < -r || p.x > this.vw + r || p.y > this.vh + r) continue;
+      vis.push({ x: p.x, y: p.y, r, k: l.k });
+      if (vis.length > 140) break;
+    }
+    for (const l of vis) {
+      const x = l.x / 2;
+      const y = l.y / 2;
+      const r = l.r / 2;
       const grad = dc.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(0,0,0,${0.95 * k})`);
+      grad.addColorStop(0, `rgba(0,0,0,${0.95 * l.k})`);
+      grad.addColorStop(0.45, `rgba(0,0,0,${0.55 * l.k})`);
       grad.addColorStop(1, 'rgba(0,0,0,0)');
       dc.fillStyle = grad;
       dc.beginPath();
       dc.arc(x, y, r, 0, Math.PI * 2);
       dc.fill();
-    };
-    const me = life.player;
-    light(me.x * TILE, me.y * TILE - 10, 90);
-    for (const v of this.l.villages) {
-      if (Math.hypot(v.cx - me.x, v.cy - me.y) > 50) continue;
-      light((v.cx + 0.5) * TILE, (v.cy + 0.5) * TILE, 70, 0.9);
-      const built = life.towns[v.regionId]?.houses ?? 3;
-      v.houses.slice(0, built).forEach((b, i) => {
-        if (life.towns[v.regionId]?.burned.includes(i)) return;
-        light((b.x + 1) * TILE, (b.y + 1) * TILE, 30, 0.7);
-      });
-      for (const k of v.keys) light((k.x + k.w / 2) * TILE, (k.y + k.h) * TILE, 36, 0.8);
     }
-    for (const p of this.l.posts) if (Math.hypot(p.x - me.x, p.y - me.y) < 40) light(p.x * TILE, p.y * TILE, 40, 0.7);
     g.drawImage(this.dark, 0, 0, this.vw, this.vh);
+    // Halo cálido: la luz del fuego tiñe lo que toca.
+    g.globalCompositeOperation = 'lighter';
+    for (const l of vis) {
+      const grad = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
+      grad.addColorStop(0, `rgba(255,160,70,${0.3 * d * l.k})`);
+      grad.addColorStop(1, 'rgba(255,120,40,0)');
+      g.fillStyle = grad;
+      g.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+    }
     g.globalCompositeOperation = 'source-over';
+  }
+
+  /** Luz del día: mañana suave y rosada, mediodía limpio, tarde dorada. */
+  private drawGrade(g: CanvasRenderingContext2D, h: number, weather: string): void {
+    const tint = (color: string, a: number, op: GlobalCompositeOperation) => {
+      if (a <= 0.004) return;
+      g.globalCompositeOperation = op;
+      g.fillStyle = color.replace('A', a.toFixed(3));
+      g.fillRect(0, 0, this.vw, this.vh);
+    };
+    const bump = (c: number, wdt: number) => Math.max(0, 1 - Math.abs(h - c) / wdt);
+    const dawn = bump(6.6, 1.8);
+    const dusk = bump(18.9, 2.1);
+    const grey = weather === 'nublado' || weather === 'lluvia' || weather === 'tormenta' || weather === 'niebla' ? 1 : 0;
+    tint('rgba(255,206,196,A)', dawn * 0.32 * (1 - grey * 0.6), 'multiply');
+    tint('rgba(255,236,220,A)', dawn * 0.08, 'screen');
+    tint('rgba(255,150,80,A)', dusk * 0.55 * (1 - grey * 0.45), 'multiply');
+    tint('rgba(255,150,70,A)', dusk * 0.08 * (1 - grey), 'screen');
+    tint('rgba(140,150,170,A)', grey * (weather === 'tormenta' ? 0.6 : 0.26), 'multiply');
+    if (weather === 'despejado' && h > 10 && h < 16) tint('rgba(255,250,235,A)', 0.05, 'screen');
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  private litWindow(x: number, y: number, w: number, h: number, t: number): void {
+    const g = this.g;
+    const flick = this.reduceMotion ? 0 : Math.sin(t / 340) * 0.05 + Math.sin(t / 97) * 0.03;
+    g.fillStyle = `rgba(255,${196 + Math.round(flick * 200)},110,0.95)`;
+    g.fillRect(x, y, w, h);
+    g.fillStyle = 'rgba(255,240,190,0.85)';
+    g.fillRect(x + 1.5, y + h * 0.45, w - 3, h * 0.5);
+    g.fillStyle = 'rgba(90,60,30,0.55)';
+    g.fillRect(x + w / 2 - 0.5, y, 1, h);
+    g.fillRect(x, y + h / 2 - 0.5, w, 1);
+  }
+
+  /** Llama de farol o de antorcha. */
+  private flame(x: number, y: number, t: number): void {
+    const g = this.g;
+    const f = this.reduceMotion ? 0 : Math.sin(t / 110 + x) * 0.6;
+    const grad = g.createRadialGradient(x, y, 0, x, y, 9);
+    grad.addColorStop(0, 'rgba(255,230,160,0.9)');
+    grad.addColorStop(1, 'rgba(255,170,60,0)');
+    g.fillStyle = grad;
+    g.fillRect(x - 9, y - 9, 18, 18);
+    g.fillStyle = '#ffd36a';
+    g.beginPath();
+    g.ellipse(x, y - f * 0.4, 2, 3 + f, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  private drawBirds(g: CanvasRenderingContext2D): void {
+    if (!this.birds.length) return;
+    g.strokeStyle = 'rgba(40,36,34,0.8)';
+    g.lineWidth = 1.3;
+    g.beginPath();
+    for (const b of this.birds) {
+      const k = Math.sin(b.ph) * 3;
+      g.moveTo(b.x - 5, b.y - k);
+      g.quadraticCurveTo(b.x - 2, b.y - 2, b.x, b.y);
+      g.quadraticCurveTo(b.x + 2, b.y - 2, b.x + 5, b.y - k);
+    }
+    g.stroke();
   }
 
   private drawWeather(g: CanvasRenderingContext2D, weather: string, t: number): void {
@@ -1229,22 +1642,69 @@ export class WorldScene {
       g.fillRect(0, 0, this.vw, this.vh);
       return;
     }
-    const n = this.reduceMotion ? 30 : weather === 'lluvia' ? 90 : 70;
+    const storm = weather === 'tormenta';
+    const n = this.reduceMotion ? 30 : storm ? 170 : weather === 'lluvia' ? 100 : weather === 'viento' ? 26 : 80;
+    if (this.weatherP.length > n) this.weatherP.length = n;
     while (this.weatherP.length < n) this.weatherP.push({ x: Math.random() * this.vw, y: Math.random() * this.vh, s: 0.5 + Math.random() });
-    if (weather === 'lluvia') {
-      g.fillStyle = 'rgba(40,50,70,0.15)';
-      g.fillRect(0, 0, this.vw, this.vh);
-      g.strokeStyle = 'rgba(200,215,235,0.55)';
+    if (weather === 'viento') {
+      // Hojas y briznas arrastradas; ráfagas que pasan.
+      const gust = 0.6 + Math.sin(t / 1400) * 0.4;
+      g.strokeStyle = 'rgba(240,240,230,0.22)';
       g.lineWidth = 1;
       g.beginPath();
-      for (const p of this.weatherP) {
-        p.y += 14 * p.s;
-        p.x -= 2 * p.s;
-        if (p.y > this.vh) (p.y = -10), (p.x = Math.random() * this.vw);
-        g.moveTo(p.x, p.y);
-        g.lineTo(p.x - 3, p.y + 10);
+      for (let i = 0; i < 7; i++) {
+        const y = ((i * 97 + t * 0.02) % this.vh);
+        const x = ((t * 0.9 * gust + i * 233) % (this.vw + 200)) - 100;
+        g.moveTo(x, y);
+        g.quadraticCurveTo(x + 30, y - 4, x + 70, y + 1);
       }
       g.stroke();
+      for (const [i, p] of this.weatherP.entries()) {
+        p.x += (5 + p.s * 4) * gust;
+        p.y += Math.sin(t / 300 + i) * 1.2 + 0.4;
+        if (p.x > this.vw + 10) (p.x = -10), (p.y = Math.random() * this.vh);
+        g.fillStyle = ['#b8863a', '#8a6a2a', '#7a9a4a', '#c99a3a'][i % 4];
+        g.beginPath();
+        g.ellipse(p.x, p.y, 2.6 * p.s, 1.2 * p.s, t / 200 + i, 0, Math.PI * 2);
+        g.fill();
+      }
+      return;
+    }
+    if (weather === 'lluvia' || storm) {
+      g.fillStyle = storm ? 'rgba(20,26,44,0.22)' : 'rgba(40,50,70,0.12)';
+      g.fillRect(0, 0, this.vw, this.vh);
+      g.strokeStyle = storm ? 'rgba(200,215,235,0.6)' : 'rgba(200,215,235,0.5)';
+      g.lineWidth = 1;
+      g.beginPath();
+      const slant = storm ? 6 : 2;
+      for (const p of this.weatherP) {
+        p.y += (storm ? 20 : 14) * p.s;
+        p.x -= slant * p.s;
+        if (p.y > this.vh) (p.y = -10), (p.x = Math.random() * (this.vw + 80));
+        g.moveTo(p.x, p.y);
+        g.lineTo(p.x - slant * 1.5, p.y + (storm ? 14 : 10));
+      }
+      g.stroke();
+      // Salpicaduras en el suelo.
+      if (!this.reduceMotion) {
+        g.strokeStyle = 'rgba(210,225,240,0.35)';
+        g.beginPath();
+        for (let i = 0; i < (storm ? 26 : 14); i++) {
+          const x = (i * 131 + Math.floor(t / 120) * 53) % this.vw;
+          const y = (i * 197 + Math.floor(t / 120) * 29) % this.vh;
+          g.moveTo(x - 2.5, y);
+          g.quadraticCurveTo(x, y - 2.5, x + 2.5, y);
+        }
+        g.stroke();
+      }
+      if (storm && !this.reduceMotion) {
+        if (this.flash <= 0 && Math.random() < 0.004) this.flash = 1;
+        if (this.flash > 0) {
+          g.fillStyle = `rgba(235,240,255,${(this.flash * 0.55).toFixed(3)})`;
+          g.fillRect(0, 0, this.vw, this.vh);
+          this.flash -= 0.06;
+        }
+      }
     } else {
       g.fillStyle = 'rgba(255,255,255,0.9)';
       for (const p of this.weatherP) {
@@ -1259,50 +1719,108 @@ export class WorldScene {
   }
 
   // -------------------------------------------------------------------------
-  // Aspecto de las personas
+  // Aspecto y postura de las personas
   // -------------------------------------------------------------------------
-  private lookOf(f: Folk): S.Look {
-    const hue = this.hueOf(f.regionId);
-    const hv = hash(f.id);
-    const skin = ['#e8c09a', '#d4a57a', '#b98458', '#8d5f3e', '#f0d2b4'][Math.floor(hv * 5)];
-    const hair = f.age > 60 ? '#d8d4cc' : ['#2a1e14', '#5a3a1e', '#8a5a2a', '#c99a52', '#1a1410'][Math.floor(hash(f.id, 3) * 5)];
-    const cloth = `hsl(${(hue + Math.floor(hash(f.id, 5) * 50) - 25 + 360) % 360} ${30 + Math.floor(hv * 25)}% ${32 + Math.floor(hash(f.id, 7) * 18)}%)`;
-    const r = this.w.regions[f.regionId];
-    const hungry = !!r.flags.hambre;
-    switch (f.role) {
-      case 'guardia':
-        return { body: `hsl(${hue} 25% 32%)`, skin, hair, hat: 'casco', carry: 'lanza' };
-      case 'campesino':
-        return { body: cloth, skin, hair, hat: hash(f.id, 9) < 0.5 ? 'sombrero' : undefined, carry: hungry ? undefined : 'cesta' };
-      case 'pescador':
-        return { body: '#4a6a8a', skin, hair, hat: 'pañuelo' };
-      case 'pastor':
-        return { body: cloth, skin, hair, carry: 'cayado' };
-      case 'comerciante':
-        return { body: `hsl(${(hue + 180) % 360} 45% 38%)`, skin, hair, hat: 'sombrero', carry: hungry ? undefined : 'saco' };
-      case 'nino':
-        return { body: cloth, skin, hair, small: true };
-      case 'anciano':
-        return { body: '#6a5a4a', skin, hair: '#e2ded6', carry: 'cayado' };
-      case 'lider':
-        return { body: `hsl(${hue} 55% 35%)`, skin, hair, hat: 'corona', cape: `hsl(${hue} 60% 28%)` };
-      case 'sanadora':
-        return { body: '#e8e2d2', skin, hair, hat: 'capucha', carry: 'cesta' };
-      case 'exploradora':
-        return { body: '#4a6a3a', skin, hair, hat: 'capucha', carry: 'farol' };
-      default:
-        return { body: '#5a4a3a', skin, hair, hat: 'pañuelo' };
-    }
+  /** Nivel de detalle por distancia al jugador (y por zoom). */
+  private lodAt(x: number, y: number): 0 | 1 | 2 {
+    const me = ensureLife(this.w).player;
+    const d = Math.hypot(x - me.x, y - me.y) * (this.cam.z < 0.85 ? 1.6 : 1) * (this.quality === 'baja' ? 1.8 : 1);
+    return d < 10 ? 0 : d < 22 ? 1 : 2;
   }
 
-  private playerLook(): S.Look {
+  /**
+   * Ropa según el tiempo: con nieve, capa de abrigo con piel; con lluvia,
+   * capa encerada con capucha. Solo para quien no lleva ya una.
+   */
+  private dressed = new WeakMap<Appearance, { key: string; ap: Appearance }>();
+  private dress(ap: Appearance, wet: boolean, cold: boolean): Appearance {
+    if ((!wet && !cold) || ap.age < 6) return ap;
+    const key = `${wet}:${cold}`;
+    const c = this.dressed.get(ap);
+    if (c && c.key === key) return c.ap;
+    const o = ap.outfit;
+    const cloak = o.cloak ? { ...o.cloak, fur: o.cloak.fur || cold, hood: true } : { color: cold ? S.shade(o.topColor, 0.72) : '#5d5446', fur: cold, hood: true, clasp: '#8a7a5a' };
+    const out: Appearance = { ...ap, outfit: { ...o, cloak, hat: wet && o.hat === 'paja' ? undefined : o.hat } };
+    this.dressed.set(ap, { key, ap: out });
+    return out;
+  }
+
+  private apOf(f: Folk): Appearance {
+    const key = `${f.age < 16 ? 0 : f.age >= 58 ? 2 : 1}:${f.role}:${f.charId ?? ''}`;
+    const c = this.apCache.get(f.id);
+    if (c && c.key === key) return c.ap;
+    const ap = appearanceOf(this.w, f);
+    this.apCache.set(f.id, { key, ap });
+    return ap;
+  }
+
+  /** Aspecto de figurantes (soldados, refugiados, mensajeros, gentío). */
+  private extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance {
+    const key = `${regionId}:${role}`;
+    const c = this.apCache.get(id);
+    if (c && c.key === key) return c.ap;
+    if (this.apCache.size > 1600) this.apCache.clear();
+    const f: Folk = { id, name: id, regionId, role, age, born: 0, house: 0, alive: true, trust: 0.5, fear: 0, gratitude: 0, resentment: 0, honesty: 0.5, memories: [], lastMet: -1 };
+    const ap = appearanceOf(this.w, f);
+    mod?.(ap);
+    this.apCache.set(id, { key, ap });
+    return ap;
+  }
+
+  private playerAp(lantern: boolean): Appearance {
     const p = ensureLife(this.w).player;
-    const hairs = ['#3a2a1a', '#7a4a22', '#1a1410', '#a8743a', '#5a3a1e'];
-    return { body: '#2f5f63', skin: '#e0b48c', hair: p.age > 58 ? '#d8d4cc' : hairs[(p.generation - 1) % hairs.length], cape: '#c9902c', carry: darkness(ensureLife(this.w).clock) > 0.3 ? 'farol' : undefined };
+    const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${JSON.stringify(p.look ?? '')}`;
+    const c = this.apCache.get('@player');
+    if (c && c.key === key) return c.ap;
+    const ap = playerAppearance(p);
+    if (lantern) ap.outfit.item = 'farol';
+    this.apCache.set('@player', { key, ap });
+    return ap;
   }
 
-  private playerLookSmall(): S.Look {
-    return { body: '#6a5a40', skin: '#d4a57a', hair: '#3a2a1a', hat: 'sombrero' };
+  private entPose(id: string, e: Ent, f: Folk | undefined, sec: number, wet: boolean, cold: boolean): Pose {
+    const now = performance.now();
+    const react = e.react && e.react.until > now ? e.react : undefined;
+    let facing = e.facing;
+    let action: Action;
+    if (e.moving) {
+      facing = Math.abs(e.dy) > Math.abs(e.dx) * 1.3 ? (e.dy > 0 ? 'front' : 'back') : 'side';
+      action = 'walk';
+    } else if (id === this.converseId) {
+      action = Math.floor(sec / 1.8) % 3 === 2 ? 'nod' : 'talk';
+    } else if (react?.action) action = react.action;
+    else {
+      action = actionOf(e.act);
+      if (e.partner) {
+        // Dos que charlan: uno habla y gesticula, el otro escucha y asiente.
+        const turn = Math.floor(sec / 2.8 + (id < e.partner ? 0 : 1)) % 2 === 0;
+        action = turn ? (Math.floor(sec / 2.8) % 4 === 1 ? 'point' : 'talk') : Math.floor(sec / 0.9) % 5 === 0 ? 'nod' : 'listen';
+      } else if (action === 'talk') action = 'idle';
+      else if (action === 'idle' && Math.floor(sec / 4 + hash(id) * 9) % 6 === 0) action = 'look';
+    }
+    // Con lluvia, los que no pueden refugiarse se cubren con los brazos.
+    if (wet && !e.moving && (action === 'idle' || action === 'look')) action = 'cross';
+    const expr: Expr = react?.expr ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
+    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: wet, heavy: cold };
+  }
+
+  private playerPose(sec: number, wet: boolean, cold: boolean): Pose {
+    const conv = this.converseId ? this.ents.get(this.converseId) : undefined;
+    const me = ensureLife(this.w).player;
+    let fx = this.facing.x;
+    let fy = this.facing.y;
+    if (conv && !this.playerMoving) (fx = conv.x - me.x), (fy = conv.y - me.y);
+    const side = Math.abs(fx) > 0.45 || Math.abs(fx) > Math.abs(fy) * 0.8;
+    const facing: Facing = side ? 'side' : fy < 0 ? 'back' : 'front';
+    const action: Action = this.playerMoving ? (this.playerRun ? 'run' : 'walk') : conv ? 'listen' : 'idle';
+    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet, heavy: cold };
+  }
+
+  /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
+  private marchPose(dx: number, dy: number, phase: number, expr: Expr, px: number, py: number, slow: boolean): Pose {
+    const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
+    const weather = weatherOf(this.w, this.w.day);
+    return { facing, flip: dx < 0, phase: slow ? phase * 0.8 : phase, action: 'walk', t: phase, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
   }
 }
 

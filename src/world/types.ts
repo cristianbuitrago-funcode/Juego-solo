@@ -96,6 +96,8 @@ export interface Avatar {
   lineage: Ancestor[];
   inventory: { comida: number; hierbas: number; reliquias: number };
   pendingDeath: boolean;
+  /** Aspecto elegido por el jugador (capa, túnica, pelo…); lo interpreta el render. */
+  look?: { cloak: string; tunic: string; hair: string; hairColor: string; fem: boolean; beard: string; skin: number };
 }
 
 export interface TownState {

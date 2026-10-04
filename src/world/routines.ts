@@ -1,5 +1,5 @@
 import type { WorldState } from '../core/types';
-import { hourOf } from './clock';
+import { hourOf, weatherOf } from './clock';
 import { doorOf, getLayout, type Village } from './layout';
 import type { Folk } from './types';
 
@@ -28,8 +28,9 @@ const keyDoor = (v: Village, kind: string) => {
 };
 
 function plazaSpot(v: Village, f: Folk, salt: number) {
+  // Alrededor de la fuente, nunca dentro de ella.
   const a = hash(f.id, salt) * Math.PI * 2;
-  const d = hash(f.id, salt + 7) * (v.plazaR - 0.6);
+  const d = 2.6 + hash(f.id, salt + 7) * (v.plazaR - 3.2);
   return { x: v.cx + 0.5 + Math.cos(a) * d, y: v.cy + 0.5 + Math.sin(a) * d };
 }
 
@@ -42,10 +43,14 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
   const home = doorOf(houses[Math.min(f.house, houses.length - 1)] ?? v.keys[0]);
   const bucket = Math.floor(clock / 25);
   const atHome = (activity = 'descansa en casa'): RoutineTarget => ({ ...home, inside: true, activity });
-  const at = (p: { x: number; y: number }, activity: string): RoutineTarget => ({ x: p.x, y: p.y, inside: false, activity });
+  const at = (p: { x: number; y: number }, activity: string): RoutineTarget => shelter({ x: p.x, y: p.y, inside: false, activity });
   const hungry = !!r.flags.hambre;
   const war = !!r.flags.guerra;
   const night = h < 6 || h >= 21.5;
+  // Con lluvia o tormenta la gente busca refugio: el ocio al aire libre se suspende.
+  const weather = weatherOf(w, w.day);
+  const wet = weather === 'lluvia' || weather === 'tormenta';
+  const shelter = (t: RoutineTarget): RoutineTarget => (wet && !t.inside && /plaza|juega|sol|charla|vaga|pasea|explora/.test(t.activity) ? atHome('se refugia de la lluvia') : t);
 
   if (f.role === 'guardia') {
     // Patrulla: un círculo alrededor del pueblo; con tensión, más amplio.
@@ -84,7 +89,7 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       if (h >= 8 && h < 18) {
         if (h >= 15 && h < 16) return at(keyDoor(v, 'posada'), 'cierra tratos en la posada');
         const s = v.stalls[Math.floor(hash(f.id, 5) * v.stalls.length)] ?? { x: v.cx, y: v.cy };
-        return at({ x: s.x + 0.5, y: s.y + 1.2 }, hungry ? 'atiende un puesto casi vacío' : 'atiende su puesto');
+        return at({ x: s.x, y: s.y + 1.1 }, hungry ? 'atiende un puesto casi vacío' : 'atiende su puesto');
       }
       if (h >= 18 && h < 20) return at(keyDoor(v, 'posada'), 'bebe en la posada');
       return atHome('cuenta sus ganancias');
@@ -93,7 +98,12 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       if (h >= 8 && h < 19.5) return at(plazaSpot(v, f, bucket), hungry ? 'pide pan a los mayores' : 'juega por el pueblo');
       return atHome('duerme');
     case 'anciano':
-      if (h >= 9 && h < 12) return at(plazaSpot(v, f, 1), 'toma el sol en la plaza');
+      if (h >= 9 && h < 12) {
+        // Los mayores se sientan en los bancos de la plaza.
+        const benches = v.props.filter((p) => p.kind === 'banco');
+        const b = benches[Math.floor(hash(f.id, 11) * benches.length)];
+        return at(b ? { x: b.x + (hash(f.id, 12) - 0.5) * 0.9, y: b.y + 0.05 } : plazaSpot(v, f, 1), 'toma el sol en la plaza');
+      }
       if (h >= 15 && h < 19) return at(keyDoor(v, v.keys.some((k) => k.kind === 'templo') ? 'templo' : 'posada'), 'reza y recuerda');
       return atHome('descansa');
     case 'lider':

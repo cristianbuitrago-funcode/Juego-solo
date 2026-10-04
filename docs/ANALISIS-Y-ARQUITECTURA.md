@@ -84,3 +84,31 @@ HISTORY
 **EXPLORAR → OBSERVAR → DEDUCIR → DECIDIR → ESPERAR → VER CONSECUENCIAS → VOLVER A EXPLORAR**
 
 Cada decisión sigue pasando por `performAction` del motor, así que la memoria, los patrones, las consecuencias retardadas, las hipótesis y la crónica siguen funcionando igual. La diferencia es que ahora sus efectos son **visibles en el mundo**: mercados vacíos o llenos, caravanas por los caminos, casas quemadas, murallas nuevas, refugiados, guardias nerviosos y vecinos que te recuerdan.
+
+---
+
+## 3. Revisión visual (v3): análisis del render anterior
+
+| Elemento | Antes | Problema | Solución |
+| --- | --- | --- | --- |
+| Personas | `sprites.person()`: sprite cacheado de 18×30 px, cabeza de radio 3,6 (≈ 1/3,7 de la altura), sin rostro, color según el rol | Muñecos cabezones e idénticos | `render/human.ts`: figura humana vectorial de 48 px (cabeza ≈ 1/7), rostro con ojos, cejas, nariz, boca, orejas, barba y arrugas; animación por esqueleto simple; vistas de frente, espalda y perfil |
+| Apariencia | Rol → color | NPC clónicos | `render/appearance.ts`: rasgos únicos por persona (cara, piel, pelo, barba, edad, complexión) + vestuario por región (corte, materiales, accesorios, sombreros, capas, patrones) + clase social |
+| Expresiones | No existían | — | 10 expresiones derivadas de memoria, emociones, estado de la región, conversación y reacciones recientes |
+| Escala | Casa 32 px, árbol 34 px, persona 30 px | Casas del tamaño de una persona | Persona 48 px; casa 3–4 teselas (~80 px de alto); árboles 80–100 px; caballos > personas; pueblos más amplios con calles |
+| Suelo | Cuadrados de color por tesela | Cuadrícula visible | Mezcla bilineal entre teselas + ruido + relieve (sombreado por elevación) |
+| Cámara | Zoom fijo del usuario | No se aprecian caras | Zoom suave al acercarse a alguien y primer plano en las conversaciones |
+| Iluminación | Oscuridad nocturna con huecos | Plana | Gradación de color por hora (mañana, mediodía, tarde, noche), luces cálidas aditivas, faroles, ventanas, hogueras |
+| Clima | Lluvia, nieve, niebla | La gente no reacciona | Tormentas y viento; con lluvia la gente se refugia o se cubre; con nieve se abriga |
+| Rendimiento | Sprites cacheados para todo | — | Personas vectoriales con niveles de detalle (cercano / medio / lejano); edificios, árboles y suelo cacheados |
+
+El resto de la arquitectura (motor, capa de vida, rutinas, interacción) no cambia: la revisión visual reutiliza `WorldScene`, `ChunkCache`, `Layout` y las rutinas existentes.
+
+### Cómo se conectan las piezas
+
+- `appearanceOf(w, folk)` se calcula una vez por vecino y se cachea en la escena (se regenera al cambiar de etapa de la vida). Los figurantes (soldados, refugiados, mensajeros, gentío) usan la misma función con un vecino sintético, así que visten como su región.
+- `moodOf(w, folk)` lee solo datos que ya existían (`trust`, `fear`, `gratitude`, `resentment`, `memories`, banderas de la región). `actionOf(actividad)` traduce la actividad de la rutina a un gesto.
+- `WorldScene.social()` (cada 0,3 s) orienta a cada vecino: hacia el jugador si está cerca (con sorpresa, saludo u hostilidad según la relación) o hacia quien tiene al lado si está charlando; las parejas se turnan para hablar y escuchar.
+- `WorldScene.converse(id)` lo llama el diálogo de conversación: la cámara pasa a primer plano (`ZOOM.talk`) y encuadra a ambos por encima de la hoja del diálogo. Al cerrarse el diálogo, la escena vuelve sola al zoom de exploración.
+- Las luces nocturnas se recogen mientras se preparan los dibujables (ventanas encendidas, faroles de `Village.lamps`, hogueras, forjas, puestos fronterizos, tu farol) y se aplican en dos pasadas: huecos en la capa de oscuridad y halo cálido aditivo.
+- Clima: `weatherOf` añade `tormenta` y `viento`. Las rutinas mandan a casa a quien estaba de ocio al aire libre si llueve; la escena viste con capa y capucha a quien sigue fuera (`dress()`), y con piel en invierno.
+- Rendimiento: tres niveles de detalle por distancia (y por zoom); calidad gráfica `alta` / `media` / `baja` (resolución del lienzo, gentío, pájaros).

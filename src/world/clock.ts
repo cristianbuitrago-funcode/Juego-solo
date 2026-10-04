@@ -34,7 +34,7 @@ export function yearOf(day: number): number {
   return Math.floor((day - 1) / DAYS_PER_YEAR) + 1;
 }
 
-export type Weather = 'despejado' | 'nublado' | 'lluvia' | 'niebla' | 'nieve';
+export type Weather = 'despejado' | 'nublado' | 'lluvia' | 'tormenta' | 'viento' | 'niebla' | 'nieve';
 
 function hash(a: number, b: number): number {
   let h = Math.imul(a ^ 0x9e3779b9, 2654435761) ^ Math.imul(b + 0x85ebca6b, 2246822519);
@@ -49,9 +49,9 @@ export function weatherOf(w: WorldState, day: number): Weather {
   const s = seasonOf(day);
   const r = hash(w.seed, day);
   if (s === 'invierno') return r < 0.35 ? 'nieve' : r < 0.55 ? 'nublado' : r < 0.65 ? 'niebla' : 'despejado';
-  if (s === 'otoño') return r < 0.3 ? 'lluvia' : r < 0.45 ? 'niebla' : r < 0.65 ? 'nublado' : 'despejado';
-  if (s === 'primavera') return r < 0.25 ? 'lluvia' : r < 0.4 ? 'nublado' : 'despejado';
-  return r < 0.1 ? 'lluvia' : r < 0.2 ? 'nublado' : 'despejado';
+  if (s === 'otoño') return r < 0.22 ? 'lluvia' : r < 0.3 ? 'tormenta' : r < 0.42 ? 'viento' : r < 0.52 ? 'niebla' : r < 0.68 ? 'nublado' : 'despejado';
+  if (s === 'primavera') return r < 0.22 ? 'lluvia' : r < 0.32 ? 'viento' : r < 0.45 ? 'nublado' : 'despejado';
+  return r < 0.07 ? 'lluvia' : r < 0.13 ? 'tormenta' : r < 0.22 ? 'nublado' : 'despejado';
 }
 
 /** Oscuridad de la noche (0 día pleno, ~0.75 medianoche). */

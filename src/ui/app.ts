@@ -119,6 +119,7 @@ export class App {
       onTick: () => this.tick(),
     });
     this.scene.reduceMotion = this.settings.reduceMotion;
+    this.scene.setQuality(this.settings.quality);
     this.hud = h('header', { class: 'hud' });
     this.whisperBox = h('div', { class: 'whispers' });
     this.prompt = h('div', { class: 'prompt' });
@@ -144,7 +145,7 @@ export class App {
     saveSettings(this.settings);
     applySettings(this.settings);
     audio.setVolumes(this.settings.music, this.settings.sfx);
-    if (this.scene) this.scene.reduceMotion = this.settings.reduceMotion;
+    if (this.scene) (this.scene.reduceMotion = this.settings.reduceMotion), this.scene.setQuality(this.settings.quality);
     if (this.map) this.map.reduceMotion = this.settings.reduceMotion;
   }
 
@@ -261,7 +262,7 @@ export class App {
     if (!w || !this.hud) return;
     const life = ensureLife(w);
     const weather = weatherOf(w, w.day);
-    const wIcon = { despejado: hourOf(life.clock) > 20 || hourOf(life.clock) < 6 ? '🌙' : '☀', nublado: '☁', lluvia: '🌧', niebla: '🌫', nieve: '❄' }[weather];
+    const wIcon = { despejado: hourOf(life.clock) > 20 || hourOf(life.clock) < 6 ? '🌙' : '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' }[weather];
     const inv = life.player.inventory;
     const free = w.player.agents - w.missions.length - Object.values(w.intel).filter((i) => i.observerStationed).length;
     clear(this.hud).append(

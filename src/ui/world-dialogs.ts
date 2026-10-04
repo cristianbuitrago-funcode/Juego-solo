@@ -2,6 +2,9 @@ import { ACTIONS, answerPetition, freeAgents } from '../core/api';
 import { ROLES } from '../core/content/roles';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
+import { appearanceOf } from '../render/appearance';
+import { drawPortrait } from '../render/human';
+import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../world/encounters';
@@ -28,10 +31,10 @@ interface Choice {
 }
 
 /** Caja de diálogo al estilo de los juegos de rol. */
-export function dialogue(app: App, title: string, subtitle: string, lines: string[], choices: Choice[]): () => void {
+export function dialogue(app: App, title: string, subtitle: string, lines: string[], choices: Choice[], portrait?: HTMLCanvasElement): () => void {
   let close = () => {};
   close = app.modal(() => [
-    h('div', { class: 'dlg-head' }, h('h2', null, title), subtitle ? h('div', { class: 'tiny' }, subtitle) : null),
+    h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, title), subtitle ? h('div', { class: 'tiny' }, subtitle) : null)),
     ...lines.map((l) => h('p', { class: l.startsWith('«') || l.startsWith('—') ? 'quote' : '' }, l)),
     h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
   ], { cls: 'dialog' });
@@ -39,6 +42,30 @@ export function dialogue(app: App, title: string, subtitle: string, lines: strin
 }
 
 const folkOf = (w: WorldState, id: string) => ensureLife(w).folk.find((f) => f.id === id);
+
+/** Retrato del vecino con la expresión que le provoca lo que ha vivido. Parpadea mientras el diálogo está abierto. */
+function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefined {
+  const f = folkOf(w, folkId);
+  if (!f) return undefined;
+  const c = document.createElement('canvas');
+  c.className = 'portrait';
+  c.width = 176;
+  c.height = 176;
+  const ap = appearanceOf(w, f);
+  const expr = moodOf(w, f);
+  const t0 = performance.now();
+  let last = 0;
+  const tick = (now: number) => {
+    if (now - last > 80) {
+      last = now;
+      drawPortrait(c, ap, expr, (now - t0) / 1000);
+    }
+    if (c.isConnected || now - t0 < 500) requestAnimationFrame(tick);
+  };
+  drawPortrait(c, ap, expr, 0);
+  requestAnimationFrame(tick);
+  return c;
+}
 
 // ---------------------------------------------------------------------------
 // Botones de contexto (al acercarse a algo)
@@ -113,14 +140,15 @@ function talk(app: App, folkId: string): void {
   if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
   choices.push({ label: 'Despedirse', run: () => app.refresh() });
   const title = f.charId ? `${f.name}, ${ROLES[w.characters.find((c) => c.id === f.charId)?.role ?? '']?.title ?? ROLE_TITLE[f.role]}` : `${f.name}, ${ROLE_TITLE[f.role]}`;
-  dialogue(app, title, `${r.name}${f.origin !== undefined ? ` · llegado de ${w.regions[f.origin].name}` : ''}`, res.lines.map((l) => (l.startsWith('(') ? l : `«${l}»`)), choices);
+  app.scene?.converse(folkId);
+  dialogue(app, title, `${r.name}${f.origin !== undefined ? ` · llegado de ${w.regions[f.origin].name}` : ''}`, res.lines.map((l) => (l.startsWith('(') ? l : `«${l}»`)), choices, portraitOf(w, folkId));
   if (res.learned.length) for (const l of res.learned) app.whisper(`📝 ${l}`);
 }
 
 function observe(app: App, folkId: string): void {
   const w = app.w!;
   const lines = observeFolk(w, folkId);
-  dialogue(app, 'Observas', '', lines, [{ label: '💬 Hablarle', run: () => talk(app, folkId), primary: true }, { label: 'Seguir a lo tuyo', run: () => {} }]);
+  dialogue(app, 'Observas', '', lines, [{ label: '💬 Hablarle', run: () => talk(app, folkId), primary: true }, { label: 'Seguir a lo tuyo', run: () => {} }], portraitOf(w, folkId));
 }
 
 /** Con un líder se tratan los asuntos de gobierno: es aquí donde se decide en persona. */
@@ -329,7 +357,7 @@ function encounter(app: App, id: string, extra: string[] = []): void {
       if (res.done) dialogue(app, view.title, '', res.lines, [{ label: 'Seguir tu camino', run: () => app.refresh(), primary: true }]);
       else encounter(app, id, res.lines);
     },
-  })));
+  })), e.folkA ? portraitOf(w, e.folkA) : undefined);
 }
 
 // ---------------------------------------------------------------------------

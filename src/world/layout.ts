@@ -11,7 +11,16 @@ import { T, TH, TW, WORLD_SCALE } from './types';
  * Es determinista a partir de la semilla; lo que cambia con el tiempo
  * (qué casas existen, cuáles arden, murallas…) vive en `Life.towns`.
  */
-export type BuildingKind = 'casa' | 'salon' | 'almacen' | 'posada' | 'templo' | 'forja' | 'hogar';
+export type BuildingKind = 'casa' | 'salon' | 'almacen' | 'posada' | 'templo' | 'forja' | 'hogar' | 'establo' | 'granero';
+
+export type PropKindL = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
+
+export interface Prop {
+  kind: PropKindL;
+  x: number; // teselas (pies del objeto)
+  y: number;
+  v: number;
+}
 
 export interface Building {
   kind: BuildingKind;
@@ -32,6 +41,9 @@ export interface Village {
   fields: { x: number; y: number; w: number; h: number }[];
   stalls: { x: number; y: number }[];
   wallR: number;
+  props: Prop[]; // fuente, bancos, faroles, barriles, vallas, heno…
+  sign: { x: number; y: number }; // poste del cruce de caminos
+  lamps: { x: number; y: number }[]; // faroles que se encienden de noche
 }
 
 export interface Road {
@@ -125,7 +137,7 @@ function buildLayout(w: WorldState): Layout {
       }
     cx = best.x;
     cy = best.y;
-    const plazaR = r.isHome ? 4 : 3 + (r.population > 900 ? 1 : 0);
+    const plazaR = r.isHome ? 6 : 5 + (r.population > 900 ? 1 : 0);
     for (let j = -plazaR; j <= plazaR; j++)
       for (let i = -plazaR; i <= plazaR; i++) {
         if (i * i + j * j > plazaR * plazaR + 1 || !inside(cx + i, cy + j)) continue;
@@ -133,7 +145,7 @@ function buildLayout(w: WorldState): Layout {
         if (tiles[k] !== T.River) tiles[k] = T.Plaza;
       }
     // Claro del pueblo: la gente tala el bosque y drena la marisma alrededor de sus casas.
-    const clearR = plazaR + 18;
+    const clearR = plazaR + 36;
     for (let j = -clearR; j <= clearR; j++)
       for (let i = -clearR; i <= clearR; i++) {
         const x = cx + i;
@@ -144,21 +156,24 @@ function buildLayout(w: WorldState): Layout {
         const edge = i * i + j * j > (clearR - 4) * (clearR - 4) && terrain.variant[k] < 110;
         if ((tiles[k] === T.Forest && !edge) || (tiles[k] === T.Marsh && i * i + j * j < 100)) tiles[k] = T.Grass;
       }
-    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0 };
+    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0, props: [], sign: { x: cx + 0.5, y: cy + plazaR - 0.6 }, lamps: [] };
   });
 
   // 2) Edificios clave alrededor de la plaza y ranuras de casas.
   for (const v of villages) {
     const r = w.regions[v.regionId];
     const traits = CULTURES.find((c) => c.id === r.culture)?.traits;
-    const wanted: [BuildingKind, number, number][] = [['salon', 4, 3], ['almacen', 3, 3], ['posada', 3, 2]];
-    if (r.isHome) wanted.push(['hogar', 2, 2]);
-    if (!r.isHome && (traits?.spirituality ?? 0.5) >= 0.45) wanted.push(['templo', 3, 3]);
-    if (!r.isHome) wanted.push(['forja', 2, 2]);
+    // Tamaños en teselas: una persona mide 3 teselas; una casa, 5 × 3.
+    const wanted: [BuildingKind, number, number][] = [['salon', 8, 5], ['almacen', 6, 4], ['posada', 6, 4]];
+    if (r.isHome) wanted.push(['hogar', 5, 3]);
+    if (!r.isHome && (traits?.spirituality ?? 0.5) >= 0.45) wanted.push(['templo', 6, 6]);
+    if (!r.isHome) wanted.push(['forja', 5, 3]);
+    if (r.population > 500 || r.resource === 'lana' || r.resource === 'grano') wanted.push(['establo', 6, 3]);
+    if (r.resource === 'grano' || r.resource === 'lana' || r.isHome) wanted.push(['granero', 5, 4]);
     let angle = rng.next() * Math.PI * 2;
     for (const [kind, bw, bh] of wanted) {
       for (let tries = 0; tries < 60; tries++) {
-        const d = v.plazaR + 2 + Math.floor(tries / 12) * 2;
+        const d = v.plazaR + 3 + Math.floor(tries / 12) * 3;
         const a = angle + (tries % 12) * (Math.PI / 6);
         const x = Math.round(v.cx + Math.cos(a) * (d + bw / 2) - bw / 2);
         const y = Math.round(v.cy + Math.sin(a) * (d + bh / 2) - bh / 2);
@@ -171,15 +186,16 @@ function buildLayout(w: WorldState): Layout {
       }
     }
     // Ranuras de casas en anillos (de dentro hacia fuera: el pueblo crece hacia fuera).
-    for (let d = v.plazaR + 3; d < 30 && v.houses.length < 44; d += 3) {
-      const count = Math.floor((2 * Math.PI * d) / 4.2);
+    for (let d = v.plazaR + 7; d < 46 && v.houses.length < 40; d += 5.5) {
+      const count = Math.floor((2 * Math.PI * d) / 7.5);
       const off = rng.next() * Math.PI * 2;
       for (let k = 0; k < count; k++) {
         const a = off + (k / count) * Math.PI * 2;
-        const x = Math.round(v.cx + Math.cos(a) * d + rng.range(-0.8, 0.8) - 1);
-        const y = Math.round(v.cy + Math.sin(a) * d + rng.range(-0.8, 0.8) - 1);
-        if (!free(x, y, 2, 2, v.regionId)) continue;
-        const b: Building = { kind: 'casa', x, y, w: 2, h: 2, slot: v.houses.length };
+        const hw = rng.chance(0.35) ? 4 : 5;
+        const x = Math.round(v.cx + Math.cos(a) * d + rng.range(-0.8, 0.8) - hw / 2);
+        const y = Math.round(v.cy + Math.sin(a) * d + rng.range(-0.8, 0.8) - 1.5);
+        if (!free(x, y, hw, 3, v.regionId)) continue;
+        const b: Building = { kind: 'casa', x, y, w: hw, h: 3, slot: v.houses.length };
         v.houses.push(b);
         occupy(b);
       }
@@ -187,7 +203,7 @@ function buildLayout(w: WorldState): Layout {
     // Puestos de mercado en el borde de la plaza.
     for (let k = 0; k < 8; k++) {
       const a = (k / 8) * Math.PI * 2 + 0.3;
-      v.stalls.push({ x: Math.round(v.cx + Math.cos(a) * (v.plazaR - 1.2)), y: Math.round(v.cy + Math.sin(a) * (v.plazaR - 1.2)) });
+      v.stalls.push({ x: v.cx + 0.5 + Math.cos(a) * (v.plazaR - 1.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR - 1.6) });
     }
   }
 
@@ -210,13 +226,14 @@ function buildLayout(w: WorldState): Layout {
       for (let s = 0; s <= 1; s++) {
         const x0 = Math.round(p.x + ((q.x - p.x) * s) / 2);
         const y0 = Math.round(p.y + ((q.y - p.y) * s) / 2);
-        for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-          const x = x0 + dx - 1;
-          const y = y0 + dy - 1;
+        for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, -1], [1, -1], [-1, 1]]) {
+          const x = x0 + dx;
+          const y = y0 + dy;
           if (!inside(x, y)) continue;
           const k = idx(x, y);
           const t = tiles[k];
           if (t === T.River) tiles[k] = T.Bridge;
+          else if (t === T.Sea || t === T.Deep) continue;
           else if (t !== T.Plaza && t !== T.Sea && t !== T.Deep && t !== T.Bridge) tiles[k] = T.Road;
           if (!blocked[k]) continue;
           blocked[k] = 0; // un camino nunca queda tapado
@@ -230,9 +247,9 @@ function buildLayout(w: WorldState): Layout {
     const n = r.resource === 'grano' ? 12 : r.resource === 'lana' ? 5 : r.resource === 'hierro' || r.resource === 'sal' ? 3 : 6;
     for (let tries = 0; tries < 160 && v.fields.length < n; tries++) {
       const a = rng.next() * Math.PI * 2;
-      const d = rng.range(14, 34);
-      const fw = rng.int(5, 8);
-      const fh = rng.int(4, 6);
+      const d = rng.range(30, 54);
+      const fw = rng.int(7, 11);
+      const fh = rng.int(5, 7);
       const x = Math.round(v.cx + Math.cos(a) * d - fw / 2);
       const y = Math.round(v.cy + Math.sin(a) * d - fh / 2);
       let ok = true;
@@ -248,7 +265,17 @@ function buildLayout(w: WorldState): Layout {
       if (!ok) continue;
       for (let j = 0; j < fh; j++) for (let i = 0; i < fw; i++) tiles[idx(x + i, y + j)] = T.Field;
       v.fields.push({ x, y, w: fw, h: fh });
+      // Vallas alrededor del campo (con un hueco para entrar).
+      for (let i = 0; i < fw; i += 1.15) {
+        v.props.push({ kind: 'valla', x: x + i + 0.55, y: y - 0.1, v: 0 });
+        if (i < fw / 2 - 1 || i > fw / 2 + 0.5) v.props.push({ kind: 'valla', x: x + i + 0.55, y: y + fh + 0.1, v: 0 });
+      }
+      for (let j = 0; j < fh; j += 1.2) {
+        v.props.push({ kind: 'vallaV', x: x - 0.1, y: y + j + 1, v: 0 });
+        v.props.push({ kind: 'vallaV', x: x + fw + 0.1, y: y + j + 1, v: 0 });
+      }
     }
+    furnish(v, w.regions[v.regionId], tiles, blocked, rng);
   }
 
   // 5) Puestos fronterizos donde un camino cruza de una región a otra.
@@ -271,6 +298,67 @@ function buildLayout(w: WorldState): Layout {
     v.wallR = far + 3;
   }
   return { terrain, villages, roads, posts, places, blocked };
+}
+
+/**
+ * Mobiliario con función: fuente o pozo en la plaza, bancos donde se sientan
+ * los ancianos, faroles que se encienden de noche, barriles y cajas junto a
+ * la posada y el almacén, heno junto al granero, abrevadero en el establo,
+ * y calles que unen cada puerta con la plaza.
+ */
+function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: Uint8Array, blocked: Uint8Array, rng: Rng): void {
+  const add = (kind: Prop['kind'], x: number, y: number, block = false) => {
+    v.props.push({ kind, x, y, v: rng.int(0, 5) });
+    if (block) blocked[idx(Math.floor(x), Math.floor(y - 0.3))] = 1;
+  };
+  // Calles: de cada puerta a la plaza.
+  const street = (fx: number, fy: number, wide: boolean) => {
+    const steps = Math.ceil(Math.hypot(v.cx - fx, v.cy - fy) * 1.5);
+    for (let s = 0; s <= steps; s++) {
+      const x = Math.round(fx + ((v.cx - fx) * s) / steps);
+      const y = Math.round(fy + ((v.cy - fy) * s) / steps);
+      for (const [dx, dy] of wide ? [[0, 0], [1, 0], [0, 1]] : [[0, 0]]) {
+        if (!inside(x + dx, y + dy)) continue;
+        const k = idx(x + dx, y + dy);
+        if (tiles[k] === T.Plaza) return;
+        if (!blocked[k] && (tiles[k] === T.Grass || tiles[k] === T.Meadow || tiles[k] === T.Forest || tiles[k] === T.Clay || tiles[k] === T.Sand)) tiles[k] = T.Road;
+      }
+    }
+  };
+  for (const b of v.keys) street(b.x + b.w / 2, b.y + b.h + 0.6, true);
+  for (const b of v.houses) street(b.x + b.w / 2, b.y + b.h + 0.6, false);
+  // Plaza: fuente (o pozo), bancos y faroles.
+  add(r.population > 450 || r.isHome ? 'fuente' : 'pozo', v.cx + 0.5, v.cy + 1.6, false);
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked[idx(v.cx + dx, v.cy + dy)] = 1;
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+    add('banco', v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6), v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6));
+  }
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    const p = { x: v.cx + 0.5 + Math.cos(a) * (v.plazaR + 0.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR + 0.6) };
+    add('farol', p.x, p.y, true);
+    v.lamps.push({ x: p.x, y: p.y - 3 });
+  }
+  add('cartel', v.sign.x + 1.2, v.sign.y + 0.4);
+  for (const b of v.keys) {
+    const door = { x: b.x + b.w / 2, y: b.y + b.h + 0.6 };
+    if (b.kind === 'posada' || b.kind === 'almacen' || b.kind === 'forja') {
+      add('barril', b.x - 0.4, b.y + b.h - 0.1);
+      add('cajas', b.x + b.w + 0.6, b.y + b.h - 0.1);
+    }
+    if (b.kind === 'almacen') add('carro', b.x + b.w + 2.4, b.y + b.h + 1.6);
+    if (b.kind === 'granero') {
+      add('heno', b.x - 1.2, b.y + b.h + 0.4);
+      add('heno', b.x + b.w + 1.2, b.y + b.h + 0.8);
+    }
+    if (b.kind === 'establo') add('abrevadero', door.x + 3, door.y + 0.8);
+    if (b.kind === 'salon' || b.kind === 'templo' || b.kind === 'posada') {
+      add('farol', door.x - 2.4, door.y + 0.2, true);
+      v.lamps.push({ x: door.x - 2.4, y: door.y - 2.8 });
+    }
+  }
+  for (const b of v.houses) if (rng.chance(0.25)) add(rng.chance(0.5) ? 'lenya' : 'barril', b.x + b.w + 0.5, b.y + b.h - 0.2);
 }
 
 // ---------------------------------------------------------------------------
