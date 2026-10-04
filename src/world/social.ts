@@ -122,6 +122,12 @@ function updateEmotion(w: WorldState, f: Folk): void {
 
 function fadeAll(w: WorldState, f: Folk): void {
   fadeMemories(w, f);
+  // Redondeo: la partida guardada ocupa mucho menos y no cambia nada a la vista.
+  const p = f.p!;
+  for (const k of NEEDS) p.needs[k] = Math.round(p.needs[k] * 1000) / 1000;
+  for (const k of Object.keys(p.emo) as (keyof typeof p.emo)[]) p.emo[k] = Math.round(p.emo[k] * 1000) / 1000;
+  p.coins = Math.round(p.coins * 100) / 100;
+  for (const m of p.mem) m.i = Math.round(m.i * 1000) / 1000;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +156,7 @@ function mingle(w: WorldState, rng: Rng, people: Folk[], detail: number): void {
         if (Math.abs(t.aff) < 40) t.aff *= 0.995;
       }
       if (!t.kin && t.fam < 3 && Math.abs(t.aff) < 8) dropTie(w, t);
+      else (t.aff = Math.round(t.aff * 10) / 10), (t.fam = Math.round(t.fam * 10) / 10);
     }
 }
 

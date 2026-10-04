@@ -193,8 +193,8 @@ export function folkById(w: WorldState, id: string): Folk | undefined {
 /** Cambia el afecto entre dos personas (y lo que se tratan). */
 export function bond(w: WorldState, a: string, b: string, daff: number, dfam = 2): Tie {
   const t = ensureTie(w, a, b);
-  t.aff = Math.max(-100, Math.min(100, t.aff + daff));
-  t.fam = Math.max(0, Math.min(100, t.fam + dfam));
+  t.aff = Math.round(Math.max(-100, Math.min(100, t.aff + daff)) * 10) / 10;
+  t.fam = Math.round(Math.max(0, Math.min(100, t.fam + dfam)) * 10) / 10;
   t.last = w.day;
   return t;
 }

@@ -81,7 +81,7 @@ export function setupPrologue(w: WorldState, life: Life): void {
   };
   const kid = home.find((f) => f.role === 'nino') ?? take(() => true);
   used.add(kid.id);
-  const inn = take((f) => f.role === 'anciano');
+  const inn = home.some((f) => f.role === 'posadero' && f.age >= 16) ? take((f) => f.role === 'posadero') : take((f) => f.role === 'anciano');
   const merchant = take((f) => f.role === 'comerciante');
   const first = take((f) => f.role === 'campesino' || f.role === 'pastor');
   const artisan = take((f) => f.role === 'artesano');
