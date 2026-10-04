@@ -14,6 +14,7 @@ import { jobFor, work } from '../src/world/livelihood';
 import { findPath, passable } from '../src/world/path';
 import { examinePlace, listenTavern } from '../src/world/presence';
 import { roadPath } from '../src/world/roadnet';
+import { acequiaOptions, acequiaResolve, logDay, prologueBlocks, prologueChoose, prologueDawn, prologueItems, prologueOf, prologueScene, prologueTick, recap } from '../src/world/prologue';
 import { routineOf } from '../src/world/routines';
 import { giveTo, talkToFolk } from '../src/world/talk';
 import { idx } from '../src/world/terrain';
@@ -347,5 +348,131 @@ describe('despertar sin memoria y ganarse un lugar', () => {
     expect(life.identity!.mode).toBe('gobernante');
     expect(w.player.authority).toBeUndefined();
     expect(performAction(w, 'observar', { region: w.regions.find((r) => !r.isHome)!.id }).ok).toBe(true);
+  });
+});
+
+describe('el prólogo: los primeros días', () => {
+  const at = (day: number, hour: number) => (day - 1) * 1440 + (hour - 6) * 60;
+
+  it('prepara el despertar: mochila, cabaña y personas distintas', () => {
+    const w = world(401);
+    const p = prologueOf(w)!;
+    const me = w.life!.player;
+    expect(p.objective).toBe('Descubre dónde estás');
+    expect(Math.hypot(p.bag.x - me.x, p.bag.y - me.y)).toBeLessThan(4);
+    const ids = [p.first, p.inn, p.merchant, p.kid, p.artisan, p.a, p.b];
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(w.life!.identity!.latent.artesania).toBeGreaterThanOrEqual(1);
+    for (const c of prologueBlocks(w)) expect(Math.hypot(c.x - me.x, c.y - me.y)).toBeGreaterThan(2);
+    // Se llega andando: hay camino desde donde despiertas hasta el pueblo, y pasa por la primera persona.
+    const v = getLayout(w).villages[w.player.home];
+    expect(findPath(w, me.x, me.y, v.cx + 0.5, v.cy + 0.5).length).toBeGreaterThan(0);
+    expect(Math.hypot(v.cx - p.road.x, v.cy - p.road.y)).toBeGreaterThan(v.plazaR + 7);
+  });
+
+  it('la mochila que no recuerdas y la primera persona del camino', () => {
+    const w = world(402);
+    const p = prologueOf(w)!;
+    const life = w.life!;
+    const bag = prologueScene(w, { kind: 'item', id: 'mochila' })!;
+    expect(bag.lines.join(' ')).toMatch(/No recuerdas haberla visto antes/);
+    prologueChoose(w, 'bag', 'abrir');
+    expect(life.identity!.items).toEqual(expect.arrayContaining(['llave', 'cuaderno']));
+    expect(life.identity!.needs.coins).toBe(3);
+    expect(life.player.inventory.comida).toBe(2);
+    expect(prologueItems(w).some((i) => i.id === 'mochila')).toBe(false);
+    const f = life.folk.find((x) => x.id === p.first)!;
+    expect(routineOf(w, f, at(1, 8)).x).toBeCloseTo(p.road.x);
+    const s = prologueScene(w, { kind: 'folk', id: f.id })!;
+    expect(s.lines[0]).toMatch(/¿Te encuentras bien\?/);
+    const next = prologueChoose(w, s.id, 'no')!;
+    expect(next.lines[0]).toMatch(/¿No recuerdas\?/);
+    prologueChoose(w, next.id, 'ok');
+    expect(p.met).toBe(true);
+    expect(p.objective).toMatch(/Sigue el camino/);
+  });
+
+  it('llegar al pueblo a pie lo descubre; las manos recuerdan cómo reparar', () => {
+    const w = world(403);
+    const p = prologueOf(w)!;
+    const v = getLayout(w).villages[w.player.home];
+    expect(prologueTick(w, v.cx, v.cy + 2, at(1, 8)).banner?.[1]).toBe(w.regions[w.player.home].name);
+    expect(p.arrived).toBe(true);
+    const s0 = prologueScene(w, { kind: 'folk', id: p.artisan })!;
+    const s1 = prologueChoose(w, s0.id, 'probar')!;
+    expect(s1.lines[0]).toMatch(/No estás seguro/);
+    const s2 = prologueChoose(w, s1.id, 'mirar')!;
+    const flash = prologueChoose(w, s2.id, 'probar')!;
+    expect(flash.flash).toBe(true);
+    expect(flash.notes!.some((n) => /extrañamente familiar.*Reparación básica/.test(n.text))).toBe(true);
+    expect(w.life!.identity!.skills.artesania.level).toBeGreaterThanOrEqual(1);
+    const after = prologueChoose(w, flash.id, 'ok')!;
+    expect(after.lines.join(' ')).toMatch(/No sabes quién era esa persona/);
+  });
+
+  it('la caja perdida: venderla tiene consecuencias al día siguiente', () => {
+    const w = world(404);
+    const p = prologueOf(w)!;
+    const v = getLayout(w).villages[w.player.home];
+    prologueTick(w, v.cx, v.cy, at(1, 8));
+    prologueTick(w, v.cx, v.cy, at(1, 10));
+    expect(p.crate).toBe('lost');
+    expect(prologueItems(w).some((i) => i.id === 'caja')).toBe(true);
+    prologueChoose(w, 'crate', 'vender');
+    expect(p.crate).toBe('sold');
+    w.day = 2;
+    const news = prologueDawn(w);
+    expect(news.join(' ')).toMatch(/Sabe quién los vendió/);
+    const m = w.life!.folk.find((f) => f.id === p.merchant)!;
+    expect(m.memories.some((x) => x.kind === 'robo')).toBe(true);
+  });
+
+  it('la acequia: investigar ayuda a mediar, y el acuerdo se nota después', () => {
+    const w = world(405);
+    const p = prologueOf(w)!;
+    const life = w.life!;
+    const v = getLayout(w).villages[w.player.home];
+    prologueTick(w, v.cx, v.cy, at(1, 8));
+    w.day = 2;
+    prologueTick(w, v.cx, v.cy, at(2, 9));
+    expect(p.water).toBe('active');
+    const enc = life.encounters.find((e) => e.id === p.encId)!;
+    expect(enc.kind).toBe('p_acequia');
+    const A = life.folk.find((f) => f.id === p.a)!;
+    expect(routineOf(w, A, at(2, 10)).activity).toMatch(/acequia/);
+    expect(acequiaOptions(w).map((o) => o.id)).toEqual(expect.arrayContaining(['a', 'b', 'mediar', 'mentir', 'irse', 'zanja', 'vecinos']));
+    acequiaResolve(w, 'zanja');
+    acequiaResolve(w, 'vecinos');
+    expect(acequiaResolve(w, 'mediar').done).toBe(true);
+    expect(p.water).toBe('mediated');
+    expect(enc.resolved).toBe(true);
+    w.day = 3;
+    expect(prologueDawn(w).join(' ')).toMatch(/arreglado juntos/);
+  });
+
+  it('al final llega una pista: una carta con el símbolo del colgante', () => {
+    const w = world(406);
+    const p = prologueOf(w)!;
+    Object.assign(p, { arrived: true, repair: 3, crate: 'returned', water: 'a' });
+    w.day = 2;
+    const t = prologueTick(w, 0, 0, at(2, 12));
+    expect(p.clue).toBe('ready');
+    expect(t.whispers.join(' ')).toMatch(/algo para ti/);
+    const s = prologueScene(w, { kind: 'posada' })!;
+    const letter = prologueChoose(w, s.id, 'abrir')!;
+    expect(letter.letter).toBe(true);
+    expect(letter.lines.join(' ')).toContain(w.regions[w.life!.identity!.past!.origin].name);
+    expect(letter.lines.at(-1)).toBe('¿Por qué conozco esto?');
+    expect(w.life!.identity!.items).toContain('carta');
+  });
+
+  it('el resumen del día y el guardado conservan el prólogo', () => {
+    const w = world(407);
+    prologueChoose(w, 'bag', 'abrir');
+    logDay(w, 'decision', 'Algo.');
+    const lines = recap(w, 1);
+    expect(lines.join(' ')).toMatch(/decisión/);
+    const back = importGame(exportGame(w))!;
+    expect(back.life!.prologue!.bag.opened).toBe(true);
   });
 });

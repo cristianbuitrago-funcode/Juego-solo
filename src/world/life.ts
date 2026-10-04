@@ -9,6 +9,9 @@ import { PLAYER_CULTURE } from '../core/content/cultures';
 import { personName } from '../core/content/names';
 import { dayOf, yearOf } from './clock';
 import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember } from './folk';
+import { setupPrologue } from './prologue';
+import { walkable } from './terrain';
+import { findPath } from './path';
 import { createIdentity, legacyIdentity, story, syncAuthority, updateStanding, type Identity } from './identity';
 import { getLayout, nearestWalkable } from './layout';
 import type { Avatar, Folk, Life, TownState } from './types';
@@ -38,16 +41,33 @@ function wakeSpot(w: WorldState, rng: Rng): { x: number; y: number } {
   const layout = getLayout(w);
   const v = layout.villages[w.player.home];
   const { tiles, region } = layout.terrain;
-  for (let k = 0; k < 400; k++) {
+  const green = (t: number) => t === T.Grass || t === T.Meadow;
+  // Se busca un claro verde, sin casas cerca y con el pueblo a una caminata:
+  // el primer paisaje que ve el jugador tiene que invitar a explorar.
+  const cands: { x: number; y: number; score: number }[] = [];
+  for (let k = 0; k < 900; k++) {
     const a = rng.range(0, Math.PI * 2);
-    const d = rng.range(22, 32);
+    const d = rng.range(20, 56);
     const x = Math.round(v.cx + Math.cos(a) * d);
     const y = Math.round(v.cy + Math.sin(a) * d);
-    if (x < 2 || y < 2 || x >= TW - 2 || y >= TH - 2) continue;
+    if (x < 8 || y < 8 || x >= TW - 8 || y >= TH - 8) continue;
     const i = y * TW + x;
-    const t = tiles[i];
-    if ((t === T.Grass || t === T.Meadow) && !layout.blocked[i] && region[i] === w.player.home) return nearestWalkable(layout, x + 0.5, y + 0.5);
+    if (!walkable(tiles[i]) || tiles[i] === T.Road || layout.blocked[i]) continue;
+    // Lejos del pueblo cuenta en contra: la caminata no debe ser eterna.
+    let score = (region[i] === w.player.home ? 6 : 0) + (green(tiles[i]) ? 8 : 0) - Math.max(0, d - 32) * 0.8;
+    for (let dy = -6; dy <= 6; dy++)
+      for (let dx = -6; dx <= 6; dx++) {
+        const j = (y + dy) * TW + x + dx;
+        const t = tiles[j];
+        if (layout.blocked[j]) score -= 6;
+        else if (t === T.Mountain) score -= 0.6;
+        else if (Math.abs(dx) <= 4 && Math.abs(dy) <= 4) score += green(t) ? 1 : t === T.Forest ? 0.6 : t === T.River || t === T.Field ? 0.4 : -0.6;
+      }
+    cands.push({ x, y, score });
   }
+  cands.sort((a, b) => b.score - a.score);
+  for (const c of cands.slice(0, 6)) if (findPath(w, c.x + 0.5, c.y + 0.5, v.cx + 0.5, v.cy + 0.5).length) return nearestWalkable(layout, c.x + 0.5, c.y + 0.5);
+  if (cands.length) return nearestWalkable(layout, cands[0].x + 0.5, cands[0].y + 0.5);
   return nearestWalkable(layout, v.cx + 0.5, v.cy + v.plazaR + 20);
 }
 
@@ -101,6 +121,7 @@ export function createLife(w: WorldState): Life {
   life.visited = {};
   story(w, 'Despertó junto a un camino, sin recordar quién era ni cómo había llegado allí.', 'despertar');
   syncAuthority(w);
+  setupPrologue(w, life);
   return life;
 }
 

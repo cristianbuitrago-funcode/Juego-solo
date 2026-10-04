@@ -21,6 +21,7 @@ import { renderChronicle } from './screens/chronicle';
 import { renderDecisions } from './screens/decisions';
 import { showEnd } from './screens/dawn';
 import { renderHypotheses } from './screens/hypotheses';
+import { prologueDawn, prologueOf, prologueQuiet, prologueTick, recap } from '../world/prologue';
 import { renderMenu, objectivesDialog, renderSettingsInline, savesDialog } from './screens/menu';
 import { openRegionSheet } from './screens/region';
 import { renderResearch } from './screens/research';
@@ -186,6 +187,7 @@ export class App {
     const w = this.w!;
     const life = ensureLife(w);
     const next = w.day * DAY_MINUTES + 30;
+    const ended = w.day;
     this.sleeping = true;
     this.passTime(Math.max(0, next - life.clock));
     this.sleeping = false;
@@ -194,8 +196,27 @@ export class App {
     const o = sleepOutcome(w, where === 'templo' ? 'casa' : where === 'raso' ? 'raso' : 'casa');
     if (where === 'templo' && id) id.needs.fatigue = 0.2;
     this.notes(o.notes);
+    const p = prologueOf(w);
+    if (p && ended <= 3 && p.recapDay < ended) {
+      p.recapDay = ended;
+      this.dayCard(ended, recap(w, ended), o.lines[0], () => o.fragment && showFragment(this, o.fragment));
+      return;
+    }
     this.toast(o.lines[0] ?? `Duermes. Amanece el día ${w.day}.`);
     if (o.fragment) window.setTimeout(() => showFragment(this, o.fragment!), 400);
+  }
+
+  /** Al dormir los primeros días: un respiro y un pequeño resumen de lo vivido. */
+  private dayCard(day: number, lines: string[], waking: string | undefined, then: () => void): void {
+    if (!this.stage) return then();
+    this.pause(true);
+    const el = h('div', { class: 'awaken daycard' },
+      h('h2', null, `Día ${day}`),
+      ...lines.map((l) => h('p', null, l)),
+      waking ? h('p', { class: 'tiny' }, waking) : null,
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.renderHud(); then(); } }, 'Despertar'),
+    );
+    this.stage.append(el);
   }
 
   /** Lo que aprendes: lo pequeño se susurra; lo importante se anuncia. */
@@ -250,7 +271,7 @@ export class App {
       h('p', null, 'Abres los ojos. El cielo empieza a clarear. No sabes dónde estás.'),
       h('p', null, 'Intentas recordar cómo llegaste aquí. Tu nombre. Cualquier cosa.'),
       h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
-      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.'); this.renderHud(); } }, 'Levantarte'),
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.'); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
     );
     this.stage.append(el);
   }
@@ -290,6 +311,8 @@ export class App {
     if (report.newPetitions) this.whispers.unshift(`Un mensajero te espera ante el salón del consejo.`);
     const inbox = ensureLife(w).identity?.inbox;
     if (inbox?.length) this.whispers.unshift(...inbox.splice(0));
+    // Lo que hiciste ayer se nota hoy.
+    this.whispers.unshift(...prologueDawn(w));
     this.unread += report.entries.length;
     this.banner(`Día ${w.day}`, `${seasonOf(w.day)} del año ${yearOf(w.day)}`);
     saveGame(w, 'auto');
@@ -324,13 +347,17 @@ export class App {
         this.scene.waypoint = null;
       } else this.scene.waypoint = { x: v.cx + 0.5, y: v.cy + 0.5, label: w.intel[this.waypoint].level ? w.regions[this.waypoint].name : '¿?' };
     } else this.scene.waypoint = null;
+    const pt = prologueTick(w, me.x, me.y, life.clock);
+    if (pt.banner) (audio.sfx('descubrimiento'), this.banner(pt.banner[0], pt.banner[1]));
+    for (const m of pt.whispers) this.whisper(m, true);
+    if (pt.banner || pt.whispers.length) this.renderHud();
     const place = discoverNear(w, me.x, me.y);
     if (place) {
       audio.sfx('descubrimiento');
       this.banner('Descubrimiento', place.name);
     }
     this.spawnTimer++;
-    if (this.spawnTimer > 16) {
+    if (this.spawnTimer > 16 && !prologueQuiet(w)) {
       this.spawnTimer = 0;
       const facing = { x: Math.cos(life.clock), y: Math.sin(life.clock) };
       const msg = maybeSpawn(w, facing);
@@ -383,7 +410,7 @@ export class App {
     const needs = id && id.mode === 'forastero' ? id.needs : null;
     clear(this.hud).append(
       h('button', { class: 'icon-btn', 'aria-label': 'Diario', onclick: () => this.setView(this.diaryView) }, '☰'),
-      h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` }))),
+      h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` })), life.prologue?.objective ? h('small', { class: 'objective' }, life.prologue.objective) : null),
       h('div', { class: 'stats' },
         auth >= 5 ? h('span', { class: 'chip', title: 'Provisiones del pueblo' }, '🌾', String(Math.round(w.player.reserves))) : null,
         needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(needs.coins)) : null,

@@ -7,11 +7,15 @@ import { drawPortrait } from '../render/human';
 import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';
+import { hourOf } from '../world/clock';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../world/encounters';
 import { doorOf, getLayout, nearestWalkable } from '../world/layout';
 import { answerOffer, chooseFragment, hasTalent, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
 import { ensureLife, heirs, succeed } from '../world/life';
 import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
+import { acequiaOptions, acequiaResolve, acequiaView, noteMeeting, prologueChoose, prologueOf, prologueScene, type PScene, type PTarget } from '../world/prologue';
+import { emblem } from '../render/sprites';
+import { SYMBOLS } from '../world/identity';
 import { checkRumorInPerson, examinePlace, listenTavern, templeElders } from '../world/presence';
 import { roadPath } from '../world/roadnet';
 import { giveTo, observeFolk, talkToFolk } from '../world/talk';
@@ -66,6 +70,43 @@ function outcome(app: App, title: string, o: Outcome, then?: () => void): void {
   if (o.fragment) return showFragment(app, o.fragment);
   if (o.lines.length) dialogue(app, title, '', o.lines, [{ label: 'Seguir', run: () => (then ? then() : app.refresh()), primary: true }]);
   else app.refresh();
+}
+
+/**
+ * Escenas del prólogo: una conversación o un momento que se encadena según
+ * lo que respondas. Los recuerdos aparecen borrosos; la carta enseña el emblema.
+ */
+export function runPrologue(app: App, s: PScene | null): void {
+  const w = app.w!;
+  if (s?.minutes) app.passTime(s.minutes);
+  if (s?.notes?.length) app.notes(s.notes);
+  if (!s) return app.refresh();
+  if (s.flash) audio.sfx('descubrimiento');
+  else audio.sfx('tap');
+  const portrait = s.folk ? portraitOf(w, s.folk) : undefined;
+  const past = ensureLife(w).identity?.past;
+  const art = s.letter && past ? emblem(Math.max(0, SYMBOLS.indexOf(past.symbol)), 5) : null;
+  if (art) art.className = 'emblem';
+  let close = () => {};
+  const pick = (id: string) => {
+    close();
+    if (s.id === 'hut' && id === 'dormir') return app.sleep('raso');
+    runPrologue(app, prologueChoose(w, s.id, id));
+  };
+  close = app.modal(() => [
+    h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, s.title), s.sub ? h('div', { class: 'tiny' }, s.sub) : null)),
+    art,
+    ...s.lines.map((l, i) => h('p', { class: `${l.startsWith('«') || l.startsWith('—') ? 'quote' : ''} ${s.flash ? 'flash-line' : ''}`, style: s.flash ? `animation-delay:${i * 0.9}s` : '' }, l)),
+    h('div', { class: 'dlg-choices' }, ...s.choices.map((c, i) => h('button', { class: `btn ${i === 0 ? 'teal' : ''}`, onclick: () => pick(c.id) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+  ], { cls: `dialog ${s.flash ? 'fragment-modal flash-modal' : ''} ${s.letter ? 'letter-modal' : ''}` });
+}
+
+/** Si el prólogo tiene algo que decir aquí, lo dice; si no, sigue lo normal. */
+function prologueAt(app: App, t: PTarget): boolean {
+  const s = prologueScene(app.w!, t);
+  if (!s) return false;
+  runPrologue(app, s);
+  return true;
 }
 
 /** Visitar un edificio puede despertar un recuerdo. */
@@ -141,6 +182,8 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       return [b('📨 Escuchar al mensajero', () => arrive(app, t), true)];
     case 'signpost':
       return [b('🧭 Viajar', () => arrive(app, t), true)];
+    case 'item':
+      return [b(t.id === 'mochila' ? '🎒 Mirar' : t.id === 'caja' ? '📦 Mirar' : t.id === 'cabana' ? '🚪 Entrar' : '🔎 Examinar', () => arrive(app, t), true)];
   }
 }
 
@@ -167,6 +210,10 @@ export function arrive(app: App, t: Target): void {
     case 'signpost':
       if (visit(app, 'cruce', t.regionId)) return;
       return travel(app, t.regionId);
+    case 'item':
+      if (t.id === 'cabana') return hut(app);
+      prologueAt(app, { kind: 'item', id: t.id });
+      return;
   }
 }
 
@@ -179,6 +226,8 @@ function talk(app: App, folkId: string): void {
   if (!f) return;
   const busy = ensureLife(w).encounters.find((e) => !e.resolved && (e.folkA === folkId || e.folkB === folkId));
   if (busy) return encounter(app, busy.id);
+  noteMeeting(w, f);
+  if (prologueAt(app, { kind: 'folk', id: folkId })) return;
   const r = w.regions[f.regionId];
   const res = talkToFolk(w, folkId);
   const life = ensureLife(w);
@@ -333,6 +382,7 @@ function building(app: App, regionId: number, kind: string): void {
         { label: 'Salir', run: () => {} },
       ]);
     case 'posada':
+      if (w.regions[regionId].isHome && prologueAt(app, { kind: 'posada' })) return;
       return tavern(app, regionId);
     case 'templo':
       return void dialogue(app, `Templo de ${r.name}`, '', templeElders(w, regionId), [
@@ -430,11 +480,42 @@ function tavern(app: App, regionId: number): void {
     ...(forastero ? [
       { label: `🍲 Comer algo caliente (${priceOf(w, regionId, 1)} 🪙)`, primary: id.needs.hunger >= 0.5, run: () => outcome(app, 'La posada', buyMeal(w, regionId)) },
       { label: `🛏 Dormir aquí (${priceOf(w, regionId, 2)} 🪙)`, run: () => { const o = rentBed(w, regionId); if (o.lines[0].startsWith('Una cama de paja')) app.sleep('posada'); else outcome(app, 'La posada', o); } },
+      ...loft(app, regionId),
     ] : []),
     ...aboutHere.map((ru) => ({ label: `🔎 Comprobar en persona: «${ru.text.slice(0, 40)}…»`, run: () => dialogue(app, 'Lo compruebas tú mismo', '', [checkRumorInPerson(w, ru.id)], [{ label: 'Seguir', run: () => app.refresh() }]) })),
     ...(hasAuthority(w, 'difundir') ? [{ label: `${ACTIONS.difundir.icon} Hacer correr un rumor`, run: () => openAction(app, 'difundir', { region: regionId, inPerson: 1 }), hint: ACTIONS.difundir.hint }] : []),
     { label: 'Salir', run: () => {} },
   ]);
+}
+
+/** Si te has ganado a alguien, la posadera te deja el pajar sin cobrar. */
+function loft(app: App, regionId: number): Choice[] {
+  const w = app.w!;
+  const p = prologueOf(w);
+  const id = ensureLife(w).identity!;
+  if (!p || !w.regions[regionId].isHome || id.housed) return [];
+  const inn = folkOf(w, p.inn);
+  const why = p.crate === 'returned' || p.crate === 'covered' ? 'Ya me han contado lo de la caja.' : p.repair === 3 ? `${folkOf(w, p.artisan)?.name ?? 'El artesano'} dice que tienes buenas manos.` : null;
+  const owed = (inn?.memories ?? []).some((m) => m.kind === 'robo' || m.kind === 'mentira');
+  if (!why || owed) return [];
+  return [{
+    label: '🌾 Preguntar por el pajar',
+    hint: 'Gratis, si te lo has ganado',
+    run: () => dialogue(app, inn?.name ?? 'La posada', '', [`«${why} El pajar está detrás. No es una cama, pero está seco.»`], [{ label: 'Dormir en el pajar', primary: true, run: () => { story(w, `${inn?.name ?? 'La posadera'} le dejó dormir gratis en el pajar.`, 'relacion'); app.sleep('posada'); } }, { label: 'Ahora no', run: () => {} }], inn ? portraitOf(w, inn.id) : undefined),
+  }];
+}
+
+/** La cabaña vacía junto al camino donde despertaste. */
+function hut(app: App): void {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const hr = hourOf(life.clock);
+  runPrologue(app, {
+    id: 'hut',
+    title: 'Una cabaña vacía',
+    lines: ['La puerta cede con un quejido. Dentro: polvo, un camastro de paja y una mesa con una taza volcada.', 'Nadie vive aquí desde hace tiempo. Pero alguien barrió un rincón no hace mucho.'],
+    choices: [...(hr >= 19 || hr < 5 || life.identity!.needs.fatigue > 0.7 ? [{ id: 'dormir', label: '🌙 Dormir aquí', hint: 'Gratis. Frío, pero a cubierto.' }] : []), { id: 'salir', label: 'Salir' }],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +559,7 @@ function encounter(app: App, id: string, extra: string[] = []): void {
   const w = app.w!;
   const e = ensureLife(w).encounters.find((x) => x.id === id);
   if (!e) return;
+  if (e.kind === 'p_acequia') return acequia(app, extra);
   const view = describeEncounter(w, e);
   const opts = encounterOptions(w, e);
   dialogue(app, view.title, w.regions[e.regionId].name, [view.scene, ...extra], opts.map((o, i) => ({
@@ -490,6 +572,23 @@ function encounter(app: App, id: string, extra: string[] = []): void {
       else encounter(app, id, res.lines);
     },
   })), e.folkA ? portraitOf(w, e.folkA) : undefined);
+}
+
+/** Dos vecinos se pelean por el agua. No hay una respuesta buena. */
+function acequia(app: App, extra: string[]): void {
+  const w = app.w!;
+  const p = prologueOf(w)!;
+  const view = acequiaView(w);
+  dialogue(app, view.title, w.regions[w.player.home].name, [view.scene, ...extra], acequiaOptions(w).map((o, i) => ({
+    label: o.label,
+    primary: i === 0,
+    run: () => {
+      const res = acequiaResolve(w, o.id);
+      app.notes(res.notes);
+      if (res.done) dialogue(app, view.title, '', res.lines, [{ label: 'Seguir tu camino', run: () => app.refresh(), primary: true }]);
+      else acequia(app, res.lines);
+    },
+  })), portraitOf(w, p.a));
 }
 
 // ---------------------------------------------------------------------------

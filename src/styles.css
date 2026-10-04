@@ -282,3 +282,22 @@ body[data-motion='reduced'] .banner { animation: none; }
 body[data-motion="reduced"] .awaken p, body[data-motion="reduced"] .awaken button { animation: none; opacity: 1; }
 .quick-btn { position: absolute; right: 14px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%; border: 2px solid rgba(243,232,207,0.5); background: rgba(30,25,20,0.55); color: #f3e8cf; font-size: 22px; z-index: 5; }
 .hud .chip.warn { background: rgba(160,50,30,0.75); }
+
+/* Prólogo */
+.clock .objective { display: block; color: #f4cf6a; font-style: italic; margin-top: 2px; }
+.modal.flash-modal { background: radial-gradient(ellipse at 50% 40%, #3a322a, #0d0b09 75%); color: #e9dcc0; box-shadow: 0 0 60px 20px rgba(0,0,0,0.6) inset; }
+.modal.flash-modal h2 { color: #c9b48a; letter-spacing: 6px; }
+.modal.flash-modal p, .modal.flash-modal p.quote { color: #e9dcc0; opacity: 0; animation: flash-in 1.4s forwards; filter: blur(0.4px); }
+.flash-modal .dlg-choices { opacity: 0; animation: flash-in 0.8s 3.4s forwards; }
+@keyframes flash-in { 0% { opacity: 0; filter: blur(6px); } 60% { opacity: 0.9; filter: blur(1.5px); } 100% { opacity: 1; filter: blur(0.3px); } }
+.letter-modal .emblem { display: block; align-self: center; margin: 6px auto 10px; image-rendering: pixelated; width: 130px; height: 130px; }
+.daycard h2 { font-size: 2.2em; font-variant: small-caps; letter-spacing: 3px; text-align: center; opacity: 0; animation: awaken-in 1.2s forwards; }
+.daycard p { text-align: center; }
+.daycard p:nth-of-type(1) { animation-delay: 0.9s; }
+.daycard p:nth-of-type(2) { animation-delay: 1.5s; }
+.daycard p:nth-of-type(3) { animation-delay: 2.1s; }
+.daycard p:nth-of-type(4) { animation-delay: 2.7s; }
+.daycard p:nth-of-type(5) { animation-delay: 3.3s; }
+.daycard button { animation-delay: 3.6s; }
+body[data-motion="reduced"] .flash-modal p, body[data-motion="reduced"] .flash-modal .dlg-choices, body[data-motion="reduced"] .daycard h2 { animation: none; opacity: 1; filter: none; }
+.modal.flash-modal .close-x { background: rgba(233,220,192,0.12); color: #e9dcc0; }

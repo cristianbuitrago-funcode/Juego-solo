@@ -116,7 +116,7 @@ export const ROLE_OBJECT: Record<PastRole, string> = {
   espia: 'posada',
 };
 
-const SYMBOLS = ['dos líneas cruzadas sobre un círculo', 'un ojo abierto dentro de un triángulo', 'una espiga partida', 'tres olas superpuestas', 'una torre con una estrella encima', 'una mano abierta con una llave', 'un ciervo con la cornamenta en llamas'];
+export const SYMBOLS = ['dos líneas cruzadas sobre un círculo', 'un ojo abierto dentro de un triángulo', 'una espiga partida', 'tres olas superpuestas', 'una torre con una estrella encima', 'una mano abierta con una llave', 'un ciervo con la cornamenta en llamas'];
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -331,7 +331,7 @@ export function gain(w: WorldState, key: SkillId | `k:${KnowId}`, amount: number
       delete id.latent[key];
       fragmentFromSkill(w, key);
     } else {
-      notes.push({ text: `${isKnow ? 'Conocimiento' : 'Habilidad'} nueva: ${name}.` });
+      notes.push({ text: `Has adquirido conocimientos básicos de ${name.toLowerCase()}.` });
       if (!isKnow) story(w, `Empezó a aprender ${name.toLowerCase()}.`, 'habilidad');
     }
   } else if (lv > before) {

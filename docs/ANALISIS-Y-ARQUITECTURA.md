@@ -141,3 +141,16 @@ Dirección artística: RPG de pixel art de alta calidad (referencias de estilo y
 | `world/livelihood.ts` | Trabajar con cada oficio (tiempo, paga, aprendizaje, memoria del vecino, reputación), preguntar por uno mismo, convencer, mentir, comer, dormir, comprar, vender, pedir, buscar comida, estudiar (templo, posada, salón, mercado), escuchar tras la puerta, atender una fiebre, aprendizaje en encuentros y al explorar. |
 | Vida y generaciones | `createLife` despierta al personaje a las afueras, sin familia ni provisiones; elige su pasado (oficio, tierra de origen, nombre verdadero, un hecho bueno o terrible y alguien que le conoció). Los hijos solo llegan si ha echado raíces. El heredero tiene carácter y habilidades propias y puede honrar o rechazar el legado. |
 | Interfaz | Escena de despertar sin explicaciones; HUD con monedas, mochila, hambre y cansancio; botón ✋ (comer, buscar comida, descansar, dormir al raso, mirar el colgante); diario que se amplía con el cargo; pantalla «Quién soy»; crónica «Tu historia»; edificios y conversaciones que cambian según quién eres en cada pueblo. |
+
+## 6. Fase 1: el prólogo jugable
+
+**Objetivo:** que los primeros 10–20 minutos demuestren exploración + mundo vivo + memoria + aprendizaje + decisiones + consecuencias + misterio, sin misión lineal ni tutorial.
+
+| Pieza | Diseño |
+| --- | --- |
+| Estado (`life.prologue`) | Solo en partidas nuevas (`setupPrologue` desde `createLife`). Guarda los lugares (despertar, mochila, cabaña, camino, caja, acequia), los vecinos con papel (primera persona, posadera, comerciante, crío, artesano, dos vecinos), el estado de cada situación, efectos pendientes por día y un registro del día para el resumen. |
+| Despertar | `wakeSpot` puntúa candidatos: prado verde, sin casas cerca, a una caminata del pueblo y con camino transitable hasta él. La cabaña se coloca en un hueco libre y bloquea sus casillas. |
+| Rutinas | `prologueRoutine` adelanta a la rutina normal solo en sus momentos: la primera persona recoge leña en el camino la mañana del día 1; la posadera atiende la puerta; el comerciante busca su caja; los vecinos discuten junto a la acequia. |
+| Escenas | `prologueScene` / `prologueChoose`: un pequeño motor de escenas (líneas, opciones, retrato, recuerdo borroso, carta con emblema). Si no hay escena, el juego sigue con la conversación normal. |
+| Tiempo | `prologueTick` (llegada al pueblo, la caja a media mañana, la acequia el día 2, el aviso de la noche, la pista final) y `prologueDawn` (consecuencias al amanecer, algunas encadenadas varios días). Los encuentros al azar se silencian los dos primeros días. |
+| Interfaz | Objetivo suave bajo el reloj, objetos interactuables en el mundo (`Target` `item`), recuerdo en pantalla oscura y borrosa, tarjeta «Día N» con resumen al dormir, pajar gratuito si te lo has ganado, carta con el símbolo del colgante en pixel art. |

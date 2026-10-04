@@ -157,6 +157,8 @@ export interface Life {
   seq: number;
   /** Quién es el protagonista: habilidades, pasado, reputación, crónica personal. */
   identity?: import('./identity').Identity;
+  /** Los primeros días: el prólogo jugable (solo en partidas nuevas). */
+  prologue?: import('./prologue').Prologue;
 }
 
 export const DAY_MINUTES = 1440;
