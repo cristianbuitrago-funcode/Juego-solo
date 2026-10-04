@@ -11,6 +11,7 @@ import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
 import { CHUNK, ChunkCache, type StaticObject } from './chunks';
 import { drawHuman, type Action, type Expr, type Facing, type Pose } from './human';
+import { drawFire, drawFlame, drawPuff, WeatherFx } from './fx';
 import { actionOf, moodOf } from './mood';
 import * as S from './sprites';
 
@@ -129,7 +130,6 @@ export class WorldScene {
   private extras = new Map<string, Extra>();
   private birds: { x: number; y: number; vx: number; ph: number }[] = [];
   private lights: Light[] = [];
-  private flash = 0;
   private socialAcc = 0;
   private folkById = new Map<string, Folk>();
   private dpr = 1;
@@ -138,7 +138,8 @@ export class WorldScene {
   private ents = new Map<string, Ent>();
   private animals = new Map<number, Animal[]>();
   private particles: Particle[] = [];
-  private weatherP: { x: number; y: number; s: number }[] = [];
+  private wfx = new WeatherFx();
+  private lastDraw = 0;
   private raf = 0;
   private last = performance.now();
   private tickAcc = 0;
@@ -982,6 +983,13 @@ export class WorldScene {
     this.drawParticles(g, t);
     this.drawBirds(g);
     this.drawMarkers(g, t);
+    // Lluvia, nieve y viento en la misma rejilla de píxeles que el mundo.
+    {
+      const dt = this.lastDraw ? Math.min(0.1, (t - this.lastDraw) / 1000) : 1 / 60;
+      this.lastDraw = t;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      this.wfx.draw(g, weather, bw, bh, t, this.paused && !this.converseId ? 0 : dt, this.reduceMotion);
+    }
 
     // Ampliación a pantalla (vecino más próximo) con el resto de subpíxel para un desplazamiento suave.
     const sg = this.screen;
@@ -1210,12 +1218,34 @@ export class WorldScene {
     // Hoguera de la plaza al anochecer.
     const hh = hourOf(life.clock);
     if ((hh > 19 || hh < 1) && !r.abandoned && weatherOf(w, w.day) !== 'lluvia' && weatherOf(w, w.day) !== 'tormenta') {
-      const px = (v.cx + 0.5 - (v.plazaR - 2.4)) * TILE;
-      const py = (v.cy + 1) * TILE;
+      const spot = this.fireSpot(regionId);
+      const px = spot.x * TILE;
+      const py = spot.y * TILE;
       this.lights.push({ x: px, y: py - 8, r: 70, k: 1 });
       items.push({ y: py, draw: () => this.fire(px, py, t, 1.2) });
       if (!this.reduceMotion && Math.random() < 0.05) this.puff(px, py - 26, 'rgba(120,110,100,', 1);
     }
+  }
+
+  /** Hueco más despejado de la plaza para la hoguera (lejos de puestos, bancos y fuente). */
+  private fireSpots = new Map<number, { x: number; y: number }>();
+  private fireSpot(regionId: number): { x: number; y: number } {
+    const hit = this.fireSpots.get(regionId);
+    if (hit) return hit;
+    const v = this.l.villages[regionId];
+    const obstacles = [...v.stalls, ...v.props.map((p) => ({ x: p.x, y: p.y })), { x: v.cx + 0.5, y: v.cy + 1.6 }];
+    let best = { x: v.cx + 0.5 - (v.plazaR - 2.4), y: v.cy + 1 };
+    let bd = -1;
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      for (const r of [v.plazaR - 2.6, v.plazaR - 3.4]) {
+        const p = { x: v.cx + 0.5 + Math.cos(a) * r, y: v.cy + 0.5 + Math.sin(a) * r * 0.9 };
+        const d = Math.min(...obstacles.map((o) => Math.hypot(o.x - p.x, (o.y - p.y) * 1.4)));
+        if (d > bd) (bd = d), (best = p);
+      }
+    }
+    this.fireSpots.set(regionId, best);
+    return best;
   }
 
   private postDrawables(p: { routeId: number; a: number; b: number; x: number; y: number; pathIndex: number }, items: Drawable[], t: number): void {
@@ -1363,36 +1393,7 @@ export class WorldScene {
   }
 
   private fire(px: number, py: number, t: number, scale = 1): void {
-    const g = this.g;
-    if (scale !== 1) {
-      g.save();
-      g.translate(px, py);
-      g.scale(scale, scale);
-      this.fire(0, 0, t);
-      g.restore();
-      return;
-    }
-    // Piedras alrededor de la hoguera.
-    for (let k = 0; k < 7; k++) {
-      const a = (k / 7) * Math.PI * 2;
-      g.fillStyle = k % 2 ? '#6a645c' : '#857d72';
-      g.beginPath();
-      g.ellipse(px + Math.cos(a) * 7.5, py + Math.sin(a) * 2.6, 2.2, 1.5, 0, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.fillStyle = '#4a3626';
-    g.fillRect(px - 6, py - 2, 12, 3);
-    const f = this.reduceMotion ? 0 : Math.sin(t / 90) * 1.5;
-    g.fillStyle = '#e8743a';
-    g.beginPath();
-    g.moveTo(px - 5, py);
-    g.quadraticCurveTo(px, py - 14 - f, px + 5, py);
-    g.fill();
-    g.fillStyle = '#f6c45a';
-    g.beginPath();
-    g.moveTo(px - 2.5, py);
-    g.quadraticCurveTo(px, py - 8 + f, px + 2.5, py);
-    g.fill();
+    drawFire(this.g, px, py, t, scale >= 1.15, this.reduceMotion);
   }
 
   private puff(x: number, y: number, color: string, size: number): void {
@@ -1408,10 +1409,7 @@ export class WorldScene {
       p.x += p.vx + Math.sin(p.life / 20) * 0.1;
       p.y += p.vy;
       p.r += 0.05;
-      g.fillStyle = `${p.color}${(0.5 * (1 - p.life / p.max)).toFixed(3)})`;
-      g.beginPath();
-      g.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      g.fill();
+      drawPuff(g, p.x, p.y, p.r, p.color, 0.5 * (1 - p.life / p.max));
     }
   }
 
@@ -1642,17 +1640,7 @@ export class WorldScene {
 
   /** Llama de farol o de antorcha. */
   private flame(x: number, y: number, t: number): void {
-    const g = this.g;
-    const f = this.reduceMotion ? 0 : Math.sin(t / 110 + x) * 0.6;
-    const grad = g.createRadialGradient(x, y, 0, x, y, 9);
-    grad.addColorStop(0, 'rgba(255,230,160,0.9)');
-    grad.addColorStop(1, 'rgba(255,170,60,0)');
-    g.fillStyle = grad;
-    g.fillRect(x - 9, y - 9, 18, 18);
-    g.fillStyle = '#ffd36a';
-    g.beginPath();
-    g.ellipse(x, y - f * 0.4, 2, 3 + f, 0, 0, Math.PI * 2);
-    g.fill();
+    drawFlame(this.g, x, y, t, this.reduceMotion);
   }
 
   private drawBirds(g: CanvasRenderingContext2D): void {
@@ -1682,80 +1670,20 @@ export class WorldScene {
       g.fillRect(0, 0, this.vw, this.vh);
       return;
     }
-    const storm = weather === 'tormenta';
-    const n = this.reduceMotion ? 30 : storm ? 170 : weather === 'lluvia' ? 100 : weather === 'viento' ? 26 : 80;
-    if (this.weatherP.length > n) this.weatherP.length = n;
-    while (this.weatherP.length < n) this.weatherP.push({ x: Math.random() * this.vw, y: Math.random() * this.vh, s: 0.5 + Math.random() });
-    if (weather === 'viento') {
-      // Hojas y briznas arrastradas; ráfagas que pasan.
-      const gust = 0.6 + Math.sin(t / 1400) * 0.4;
-      g.strokeStyle = 'rgba(240,240,230,0.22)';
-      g.lineWidth = 1;
-      g.beginPath();
-      for (let i = 0; i < 7; i++) {
-        const y = ((i * 97 + t * 0.02) % this.vh);
-        const x = ((t * 0.9 * gust + i * 233) % (this.vw + 200)) - 100;
-        g.moveTo(x, y);
-        g.quadraticCurveTo(x + 30, y - 4, x + 70, y + 1);
-      }
-      g.stroke();
-      for (const [i, p] of this.weatherP.entries()) {
-        p.x += (5 + p.s * 4) * gust;
-        p.y += Math.sin(t / 300 + i) * 1.2 + 0.4;
-        if (p.x > this.vw + 10) (p.x = -10), (p.y = Math.random() * this.vh);
-        g.fillStyle = ['#b8863a', '#8a6a2a', '#7a9a4a', '#c99a3a'][i % 4];
-        g.beginPath();
-        g.ellipse(p.x, p.y, 2.6 * p.s, 1.2 * p.s, t / 200 + i, 0, Math.PI * 2);
-        g.fill();
-      }
-      return;
-    }
-    if (weather === 'lluvia' || storm) {
-      g.fillStyle = storm ? 'rgba(20,26,44,0.22)' : 'rgba(40,50,70,0.12)';
+    // Las gotas, copos y hojas se dibujan en el lienzo del mundo (pixel art);
+    // aquí solo queda el tono del cielo y el relámpago.
+    if (weather === 'lluvia' || weather === 'tormenta') {
+      g.fillStyle = weather === 'tormenta' ? 'rgba(20,26,44,0.22)' : 'rgba(40,50,70,0.12)';
       g.fillRect(0, 0, this.vw, this.vh);
-      g.strokeStyle = storm ? 'rgba(200,215,235,0.6)' : 'rgba(200,215,235,0.5)';
-      g.lineWidth = 1;
-      g.beginPath();
-      const slant = storm ? 6 : 2;
-      for (const p of this.weatherP) {
-        p.y += (storm ? 20 : 14) * p.s;
-        p.x -= slant * p.s;
-        if (p.y > this.vh) (p.y = -10), (p.x = Math.random() * (this.vw + 80));
-        g.moveTo(p.x, p.y);
-        g.lineTo(p.x - slant * 1.5, p.y + (storm ? 14 : 10));
+      if (this.wfx.flash > 0) {
+        g.fillStyle = `rgba(235,240,255,${(this.wfx.flash * 0.55).toFixed(3)})`;
+        g.fillRect(0, 0, this.vw, this.vh);
       }
-      g.stroke();
-      // Salpicaduras en el suelo.
-      if (!this.reduceMotion) {
-        g.strokeStyle = 'rgba(210,225,240,0.35)';
-        g.beginPath();
-        for (let i = 0; i < (storm ? 26 : 14); i++) {
-          const x = (i * 131 + Math.floor(t / 120) * 53) % this.vw;
-          const y = (i * 197 + Math.floor(t / 120) * 29) % this.vh;
-          g.moveTo(x - 2.5, y);
-          g.quadraticCurveTo(x, y - 2.5, x + 2.5, y);
-        }
-        g.stroke();
-      }
-      if (storm && !this.reduceMotion) {
-        if (this.flash <= 0 && Math.random() < 0.004) this.flash = 1;
-        if (this.flash > 0) {
-          g.fillStyle = `rgba(235,240,255,${(this.flash * 0.55).toFixed(3)})`;
-          g.fillRect(0, 0, this.vw, this.vh);
-          this.flash -= 0.06;
-        }
-      }
-    } else {
-      g.fillStyle = 'rgba(255,255,255,0.9)';
-      for (const p of this.weatherP) {
-        p.y += 1.2 * p.s;
-        p.x += Math.sin(t / 900 + p.s * 10) * 0.5;
-        if (p.y > this.vh) (p.y = -5), (p.x = Math.random() * this.vw);
-        g.beginPath();
-        g.arc(p.x, p.y, 1.5 * p.s, 0, Math.PI * 2);
-        g.fill();
-      }
+    } else if (weather === 'nieve') {
+      g.fillStyle = 'rgba(200,215,235,0.08)';
+      g.fillRect(0, 0, this.vw, this.vh);
     }
+    void t;
   }
 
   // -------------------------------------------------------------------------
