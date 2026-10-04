@@ -1,3 +1,4 @@
+import { prologueRoutine } from './prologue';
 import type { WorldState } from '../core/types';
 import { hourOf, weatherOf } from './clock';
 import { doorOf, getLayout, type Village } from './layout';
@@ -35,6 +36,8 @@ function plazaSpot(v: Village, f: Folk, salt: number) {
 }
 
 export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget {
+  const special = prologueRoutine(w, f, clock);
+  if (special) return special;
   const l = getLayout(w);
   const v = l.villages[f.regionId];
   const r = w.regions[f.regionId];

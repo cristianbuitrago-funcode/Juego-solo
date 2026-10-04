@@ -6,6 +6,7 @@ import { ensureLife, explore, housesFor } from '../world/life';
 import { findPath, passable } from '../world/path';
 import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
+import { prologueBlocks, prologueItems } from '../world/prologue';
 import { idx, speedOf } from '../world/terrain';
 import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
@@ -31,7 +32,8 @@ export type Target =
   | { kind: 'place'; id: string; label: string }
   | { kind: 'encounter'; id: string; label: string }
   | { kind: 'messenger'; petitionId: string; label: string }
-  | { kind: 'signpost'; regionId: number; label: string };
+  | { kind: 'signpost'; regionId: number; label: string }
+  | { kind: 'item'; id: string; label: string };
 
 export interface SceneCallbacks {
   advance(minutes: number): void;
@@ -164,6 +166,8 @@ export class WorldScene {
   timeScale = 1;
   running = false; // correr
   reduceMotion = false;
+  /** Multiplicador de velocidad del personaje (hambre, cansancio). */
+  speed: () => number = () => 1;
   private quality: 'alta' | 'media' | 'baja' = 'media';
 
   /** Calidad gráfica: resolución del lienzo, gentío y detalle de las figuras. */
@@ -181,6 +185,7 @@ export class WorldScene {
     this.screen = this.canvas.getContext('2d')!;
     this.g = this.buf.getContext('2d')!;
     this.l = getLayout(w);
+    for (const c of prologueBlocks(w)) this.l.blocked[idx(c.x, c.y)] = 1;
     this.chunks = new ChunkCache(w, this.l);
     const life = ensureLife(w);
     this.cam.x = life.player.x * TILE;
@@ -487,14 +492,21 @@ export class WorldScene {
     if (!this.playerMoving) return;
     this.facing = { x: dx, y: dy };
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
-    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * dt;
+    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed() * dt;
     const nx = me.x + dx * speed;
     const ny = me.y + dy * speed;
     const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
     else if (ok(me.x, ny)) me.y = ny;
-    else if (this.path.length) this.path.shift();
+    else if (this.path.length) {
+      // Atascado: si ya está al lado de lo que buscaba, cuenta como llegar.
+      this.path.shift();
+      const t = this.pending;
+      const at = t && !this.path.length ? this.targetPos(t) : undefined;
+      this.pending = this.path.length ? this.pending : null;
+      if (t && at && Math.hypot(at.x - me.x, at.y - me.y) < 2.5) this.cb.onArrive(t);
+    }
     this.playerAnim += dt * (run ? 16 : 11);
   }
 
@@ -809,6 +821,8 @@ export class WorldScene {
         return this.messengers().find((m) => m.id === t.petitionId);
       case 'signpost':
         return this.l.villages[t.regionId].sign;
+      case 'item':
+        return prologueItems(w).find((x) => x.id === t.id);
     }
   }
 
@@ -841,11 +855,14 @@ export class WorldScene {
       for (const b of v.keys) {
         if (!this.buildingExists(v.regionId, b.kind)) continue;
         const d = doorOf(b);
-        consider({ kind: 'building', regionId: v.regionId, building: b.kind, label: BUILDING_LABEL[b.kind] }, d.x, d.y, radius * 0.9);
+        const id = life.identity;
+        const label = b.kind === 'hogar' && id?.mode === 'forastero' && !id.housed ? 'Casa vacía' : BUILDING_LABEL[b.kind];
+        consider({ kind: 'building', regionId: v.regionId, building: b.kind, label }, d.x, d.y, radius * 0.9);
       }
       consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
+    for (const it of prologueItems(w)) if (it.label) consider({ kind: 'item', id: it.id, label: it.label }, it.x, it.y, radius * 1.1);
     for (const p of this.l.places) if (life.places[p.id]?.discovered) consider({ kind: 'place', id: p.id, label: p.name }, p.x + 0.5, p.y + 0.5, radius * 1.3);
     // Los encuentros tienen prioridad sobre las personas que participan en ellos.
     for (const e of life.encounters) {
@@ -937,6 +954,14 @@ export class WorldScene {
       if (!inView(p.x * TILE, p.y * TILE)) continue;
       const known = life.places[p.id]?.discovered;
       items.push({ y: p.y * TILE + 16, draw: () => S.drawSprite(g, S.placeSprite(p.kind), p.x * TILE + 8, p.y * TILE + 16, known ? 1 : 0.9) });
+    }
+    // Lo que dejó el prólogo por el mundo: la cabaña, la mochila, la caja.
+    for (const it of prologueItems(w)) {
+      if (!inView(it.x * TILE, it.y * TILE)) continue;
+      if (it.id === 'cabana') {
+        const st = this.styleOf(w.player.home);
+        items.push({ y: (it.y + 1) * TILE, draw: () => S.drawSprite(g, S.house(st, 'abandonada', 1, 4), it.x * TILE, (it.y + 1) * TILE) });
+      } else items.push({ y: it.y * TILE, draw: () => S.drawSprite(g, S.prologueProp(it.id as 'mochila'), it.x * TILE, it.y * TILE) });
     }
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
     this.roadTraffic(items, inView, t);

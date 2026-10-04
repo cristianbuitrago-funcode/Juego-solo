@@ -19,6 +19,7 @@ import type { Folk } from './types';
 export interface TalkResult {
   lines: string[];
   learned: string[]; // lo que aprendiste (para el diario)
+  lied?: boolean; // te ha mentido (solo lo notas con ojo para ello)
 }
 
 const ROLE_GREET: Partial<Record<string, string[]>> = {
@@ -56,6 +57,7 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
   const gen = life.player.generation;
   const lines: string[] = [];
   const learned: string[] = [];
+  let lied = false;
   const open = openness(f, w);
   const daysAway = f.lastMet >= 0 ? w.day - f.lastMet : -1;
 
@@ -83,6 +85,7 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
     learned.push(`En ${r.name} la gente evita hablar contigo.`);
   } else {
     const liar = ctx.rng.next() > f.honesty && f.resentment > 0.4;
+    lied = liar;
     lines.push(situation(ctx, f, liar));
     hearsay(ctx, r, 'alimento', liar ? 0.75 : 0.2);
     hearsay(ctx, r, 'tension', liar ? 0.7 : 0.25);
@@ -111,7 +114,7 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
   life.visited[r.id] = w.day;
   if (!r.isHome) r.lastAttention = Math.max(r.lastAttention, w.day - (f.role === 'lider' ? 0 : 5));
   commitCtx(ctx);
-  return { lines, learned };
+  return { lines, learned, lied };
 }
 
 function situation(ctx: Ctx, f: Folk, liar: boolean): string {

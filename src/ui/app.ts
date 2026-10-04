@@ -9,7 +9,9 @@ import { clockText, dayOf, hourOf, seasonOf, weatherOf, yearOf } from '../world/
 import { wireWorld } from '../world';
 import { maybeSpawn } from '../world/encounters';
 import { getLayout } from '../world/layout';
+import { addScore, eat, rest, speedFactor, story, tickNeeds, tryFragment, type GainNote } from '../world/identity';
 import { ensureLife, syncClock } from '../world/life';
+import { exploreLearning, forage, sleepOutcome } from '../world/livelihood';
 import { discoverNear, presenceTick } from '../world/presence';
 import { DAY_MINUTES } from '../world/types';
 import { clear, h, vibrate } from './dom';
@@ -18,13 +20,13 @@ import { applySettings, loadSettings, saveSettings, type Settings } from './sett
 import { renderChronicle } from './screens/chronicle';
 import { renderDecisions } from './screens/decisions';
 import { showEnd } from './screens/dawn';
-import { showHelp } from './screens/help';
 import { renderHypotheses } from './screens/hypotheses';
+import { prologueDawn, prologueOf, prologueQuiet, prologueTick, recap } from '../world/prologue';
 import { renderMenu, objectivesDialog, renderSettingsInline, savesDialog } from './screens/menu';
 import { openRegionSheet } from './screens/region';
 import { renderResearch } from './screens/research';
 import { renderFamily } from './screens/family';
-import { arrive, focusButtons, succession } from './world-dialogs';
+import { arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
 
 export type View = 'mapa' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
@@ -38,7 +40,7 @@ export class App {
   settings: Settings = loadSettings();
   scene: WorldScene | null = null;
   lastReport: DayReport | null = null;
-  chronicleTab: 'dias' | 'cadenas' = 'dias';
+  chronicleTab: 'vida' | 'dias' | 'cadenas' = 'vida';
   waypoint: number | null = null;
   private stage: HTMLElement | null = null;
   private hud: HTMLElement | null = null;
@@ -52,6 +54,8 @@ export class App {
   private whispers: string[] = [];
   private whisperTimer = 0;
   private lastHour = -1;
+  private sleeping = false;
+  private fainting = false;
   private hudTimer = 0;
   private unread = 0;
   private spawnTimer = 0;
@@ -86,7 +90,7 @@ export class App {
     this.loading(() => {
       const w = createWorld(seed, { eraLength, legacy: loadLegacy() });
       this.start(w);
-      if (this.settings.tutorial) showHelp(this);
+      this.awaken();
     });
   }
 
@@ -128,7 +132,9 @@ export class App {
       this.whisperBox,
       this.prompt,
       h('button', { class: 'run-btn', 'aria-label': 'Correr', onclick: (e: Event) => this.toggleRun(e.currentTarget as HTMLElement) }, '🏃'),
+      h('button', { class: 'quick-btn', 'aria-label': 'Acciones', onclick: () => this.quickActions() }, '✋'),
     );
+    this.scene.speed = () => speedFactor(ensureLife(w).identity);
     this.renderHud();
     audio.setMood(w.mood);
     saveGame(w, 'auto');
@@ -158,6 +164,11 @@ export class App {
     const life = ensureLife(w);
     life.clock += minutes;
     while (dayOf(life.clock) > w.day && !w.ended) this.dawn();
+    if (!this.sleeping && life.identity) {
+      const n = tickNeeds(life.identity, minutes);
+      for (const t of n.notes) this.whisper(t);
+      if (n.faint && !this.fainting) this.faint();
+    }
     this.hudTimer += minutes;
     if (this.hudTimer > 10) {
       this.hudTimer = 0;
@@ -171,13 +182,119 @@ export class App {
     this.renderHud();
   }
 
-  /** Dormir hasta el próximo amanecer. */
-  sleep(): void {
+  /** Dormir hasta el próximo amanecer: en casa, en la posada, en el templo o al raso. */
+  sleep(where: 'casa' | 'posada' | 'templo' | 'raso' = 'casa'): void {
     const w = this.w!;
     const life = ensureLife(w);
     const next = w.day * DAY_MINUTES + 30;
+    const ended = w.day;
+    this.sleeping = true;
     this.passTime(Math.max(0, next - life.clock));
-    this.toast(`Duermes. Amanece el día ${w.day}.`);
+    this.sleeping = false;
+    const id = life.identity;
+    if (id) id.needs.hunger = Math.min(1, id.needs.hunger + 0.15);
+    const o = sleepOutcome(w, where === 'templo' ? 'casa' : where === 'raso' ? 'raso' : 'casa');
+    if (where === 'templo' && id) id.needs.fatigue = 0.2;
+    this.notes(o.notes);
+    const p = prologueOf(w);
+    if (p && ended <= 3 && p.recapDay < ended) {
+      p.recapDay = ended;
+      this.dayCard(ended, recap(w, ended), o.lines[0], () => o.fragment && showFragment(this, o.fragment));
+      return;
+    }
+    this.toast(o.lines[0] ?? `Duermes. Amanece el día ${w.day}.`);
+    if (o.fragment) window.setTimeout(() => showFragment(this, o.fragment!), 400);
+  }
+
+  /** Al dormir los primeros días: un respiro y un pequeño resumen de lo vivido. */
+  private dayCard(day: number, lines: string[], waking: string | undefined, then: () => void): void {
+    if (!this.stage) return then();
+    this.pause(true);
+    const el = h('div', { class: 'awaken daycard' },
+      h('h2', null, `Día ${day}`),
+      ...lines.map((l) => h('p', null, l)),
+      waking ? h('p', { class: 'tiny' }, waking) : null,
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.renderHud(); then(); } }, 'Despertar'),
+    );
+    this.stage.append(el);
+  }
+
+  /** Lo que aprendes: lo pequeño se susurra; lo importante se anuncia. */
+  notes(list: GainNote[]): void {
+    for (const n of list) {
+      if (n.big) {
+        audio.sfx('descubrimiento');
+        this.banner('Descubres algo de ti', n.text.split('.').slice(-2, -1)[0]?.trim() || n.text);
+      }
+      this.whisper(n.text);
+    }
+    if (list.length) this.renderHud();
+  }
+
+  /** El protagonista se desploma de hambre o cansancio: despierta donde alguien le recogió. */
+  private faint(): void {
+    const w = this.w!;
+    const life = ensureLife(w);
+    const id = life.identity!;
+    this.fainting = true;
+    const l = getLayout(w);
+    const me = life.player;
+    const reg = l.terrain.region[Math.floor(me.y) * 500 + Math.floor(me.x)];
+    const v = l.villages[reg >= 0 ? reg : w.player.home];
+    const hunger = id.needs.hunger >= 1;
+    const lost = Math.ceil(id.needs.coins / 2);
+    id.needs.coins -= lost;
+    this.sleeping = true;
+    this.passTime(Math.max(0, w.day * DAY_MINUTES + 30 - life.clock));
+    this.sleeping = false;
+    id.needs.hunger = hunger ? 0.55 : id.needs.hunger;
+    rest(id, true);
+    eat(id, 0);
+    const temple = v.keys.find((k) => k.kind === 'templo') ?? v.keys[0];
+    const spot = { x: temple.x + temple.w / 2, y: temple.y + temple.h + 1.2 };
+    this.scene?.teleport(spot.x, spot.y);
+    story(w, `Se desplomó ${hunger ? 'de hambre' : 'de agotamiento'} cerca de ${w.regions[v.regionId].name}. Alguien le recogió.`, 'error');
+    addScore(w, v.regionId, -1);
+    this.fainting = false;
+    dialogue(this, 'Todo se vuelve negro', '', [hunger ? 'Las piernas no te sostienen. Caes de rodillas y luego de bruces.' : 'Los ojos se te cierran solos. Caes donde estás.', `Despiertas en un banco del templo de ${w.regions[v.regionId].name}, con una manta encima. ${lost ? `Te faltan ${lost} monedas.` : ''}`, '«Tienes que cuidarte», te dice alguien. No sabes quién te trajo.'], [{ label: 'Levantarte', run: () => this.refresh(), primary: true }]);
+  }
+
+  /** Despertar: la primera escena. Sin explicaciones: preguntas. */
+  awaken(): void {
+    if (!this.stage) return;
+    const w = this.w!;
+    const id = ensureLife(w).identity;
+    if (!id || id.mode !== 'forastero') return;
+    this.pause(true);
+    const el = h('div', { class: 'awaken' },
+      h('p', null, 'Frío. Hierba mojada bajo la mejilla.'),
+      h('p', null, 'Abres los ojos. El cielo empieza a clarear. No sabes dónde estás.'),
+      h('p', null, 'Intentas recordar cómo llegaste aquí. Tu nombre. Cualquier cosa.'),
+      h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.'); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
+    );
+    this.stage.append(el);
+  }
+
+  /** Acciones rápidas del cuerpo: comer de la mochila, buscar comida, descansar, mirar el colgante. */
+  quickActions(): void {
+    const w = this.w;
+    if (!w) return;
+    const life = ensureLife(w);
+    const id = life.identity!;
+    const me = life.player;
+    const l = getLayout(w);
+    const reg = l.terrain.region[Math.floor(me.y) * 500 + Math.floor(me.x)];
+    const v = reg >= 0 ? l.villages[reg] : null;
+    const inVillage = !!v && Math.hypot(v.cx - me.x, v.cy - me.y) < v.plazaR + 22;
+    const choices: { label: string; run: () => void; hint?: string; primary?: boolean }[] = [];
+    if (life.player.inventory.comida > 0) choices.push({ label: `🍞 Comer de la mochila (${life.player.inventory.comida})`, primary: id.needs.hunger > 0.4, run: () => { life.player.inventory.comida--; eat(id); this.toast('Comes despacio. Te sienta bien.'); this.refresh(); } });
+    if (!inVillage) choices.push({ label: '🧺 Buscar comida por aquí', hint: '1 hora', run: () => { const o = forage(w, me.x, me.y); this.passTime(o.minutes); this.notes(o.notes); this.toast(o.lines[0]); this.refresh(); } });
+    choices.push({ label: '⏳ Descansar un rato', hint: '2 horas', run: () => { this.sleeping = true; this.passTime(120); this.sleeping = false; rest(id, false); this.toast('Te sientas a recuperar el aliento.'); this.refresh(); } });
+    if (hourOf(life.clock) >= 20 || hourOf(life.clock) < 5 || id.needs.fatigue > 0.7) choices.push({ label: '🌙 Dormir al raso', hint: 'Gratis, pero se descansa mal', run: () => this.sleep('raso') });
+    if (id.items.includes('colgante')) choices.push({ label: '🔱 Mirar el colgante', run: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(this, ev); } });
+    choices.push({ label: 'Nada', run: () => {} });
+    dialogue(this, 'Tú', `🍞 ${Math.round(id.needs.hunger * 100)}% hambre · 💤 ${Math.round(id.needs.fatigue * 100)}% cansancio · 🪙 ${id.needs.coins}`, [], choices);
   }
 
   private dawn(): void {
@@ -192,6 +309,10 @@ export class App {
     const results = w.hypotheses.filter((x) => x.result && x.dueDay === w.day);
     for (const hy of results) this.whispers.unshift(`🧪 Hipótesis ${hy.result}: ${hy.text}`);
     if (report.newPetitions) this.whispers.unshift(`Un mensajero te espera ante el salón del consejo.`);
+    const inbox = ensureLife(w).identity?.inbox;
+    if (inbox?.length) this.whispers.unshift(...inbox.splice(0));
+    // Lo que hiciste ayer se nota hoy.
+    this.whispers.unshift(...prologueDawn(w));
     this.unread += report.entries.length;
     this.banner(`Día ${w.day}`, `${seasonOf(w.day)} del año ${yearOf(w.day)}`);
     saveGame(w, 'auto');
@@ -216,6 +337,7 @@ export class App {
       const v = l.villages[region];
       const near = Math.hypot(v.cx - me.x, v.cy - me.y) < v.wallR + 12;
       for (const n of presenceTick(w, region, near)) this.whisper(n);
+      if (!near) this.notes(exploreLearning(w, false));
     }
     // Destino marcado.
     if (this.waypoint !== null) {
@@ -225,13 +347,17 @@ export class App {
         this.scene.waypoint = null;
       } else this.scene.waypoint = { x: v.cx + 0.5, y: v.cy + 0.5, label: w.intel[this.waypoint].level ? w.regions[this.waypoint].name : '¿?' };
     } else this.scene.waypoint = null;
+    const pt = prologueTick(w, me.x, me.y, life.clock);
+    if (pt.banner) (audio.sfx('descubrimiento'), this.banner(pt.banner[0], pt.banner[1]));
+    for (const m of pt.whispers) this.whisper(m, true);
+    if (pt.banner || pt.whispers.length) this.renderHud();
     const place = discoverNear(w, me.x, me.y);
     if (place) {
       audio.sfx('descubrimiento');
       this.banner('Descubrimiento', place.name);
     }
     this.spawnTimer++;
-    if (this.spawnTimer > 16) {
+    if (this.spawnTimer > 16 && !prologueQuiet(w)) {
       this.spawnTimer = 0;
       const facing = { x: Math.cos(life.clock), y: Math.sin(life.clock) };
       const msg = maybeSpawn(w, facing);
@@ -248,10 +374,24 @@ export class App {
   private enterRegion(id: number, prev: number): void {
     const w = this.w!;
     const r = w.regions[id];
-    if (prev >= 0) this.banner(r.isHome ? 'Vuelves a casa' : 'Has entrado en', r.name);
     const life = ensureLife(w);
+    const ident = life.identity;
+    const first = life.visited[id] === undefined;
+    const homey = r.isHome && (ident?.mode === 'gobernante' || ident?.housed);
+    // Al despertar no sabes ni dónde estás: el nombre del lugar se descubre al llegar al pueblo.
+    if (prev < 0 && ident?.mode === 'forastero' && w.day === 1 && !ident.story.some((e) => e.kind === 'lugar')) {
+      life.visited[id] = w.day;
+      return;
+    }
+    if (prev >= 0 || first) this.banner(homey ? 'Vuelves a casa' : first ? 'Llegas a' : 'Has entrado en', r.name);
+    if (first) {
+      life.visited[id] = w.day;
+      if (prev >= 0 || ident?.mode !== 'forastero') this.notes(exploreLearning(w, true));
+      story(w, `Llegó por primera vez a ${r.name}.`, 'lugar');
+    }
+    const memory = tryFragment(w, { kind: 'region', regionId: id });
+    if (memory) window.setTimeout(() => showFragment(this, memory), 1200);
     for (const n of presenceTick(w, id, false)) this.whisper(n);
-    void life;
   }
 
   // -------------------------------------------------------------------------
@@ -265,13 +405,19 @@ export class App {
     const wIcon = { despejado: hourOf(life.clock) > 20 || hourOf(life.clock) < 6 ? '🌙' : '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' }[weather];
     const inv = life.player.inventory;
     const free = w.player.agents - w.missions.length - Object.values(w.intel).filter((i) => i.observerStationed).length;
+    const id = life.identity;
+    const auth = w.player.authority ?? 6;
+    const needs = id && id.mode === 'forastero' ? id.needs : null;
     clear(this.hud).append(
       h('button', { class: 'icon-btn', 'aria-label': 'Diario', onclick: () => this.setView(this.diaryView) }, '☰'),
-      h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` }))),
+      h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` })), life.prologue?.objective ? h('small', { class: 'objective' }, life.prologue.objective) : null),
       h('div', { class: 'stats' },
-        h('span', { class: 'chip', title: 'Provisiones de tu gente' }, '🌾', String(Math.round(w.player.reserves))),
+        auth >= 5 ? h('span', { class: 'chip', title: 'Provisiones del pueblo' }, '🌾', String(Math.round(w.player.reserves))) : null,
+        needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(needs.coins)) : null,
         h('span', { class: 'chip', title: 'Tu mochila' }, '🎒', `${inv.comida}·${inv.hierbas}`),
-        h('span', { class: 'chip', title: 'Emisarios libres' }, '🧭', `${Math.max(0, free)}`),
+        needs && needs.hunger >= 0.6 ? h('span', { class: `chip ${needs.hunger >= 0.8 ? 'warn' : ''}`, title: 'Hambre' }, '🍞') : null,
+        needs && needs.fatigue >= 0.65 ? h('span', { class: `chip ${needs.fatigue >= 0.85 ? 'warn' : ''}`, title: 'Cansancio' }, '💤') : null,
+        auth >= 4 ? h('span', { class: 'chip', title: 'Emisarios libres' }, '🧭', `${Math.max(0, free)}`) : null,
         this.unread ? h('button', { class: 'chip news', onclick: () => ((this.unread = 0), this.setView('cronica')) }, '📜', String(this.unread)) : null,
       ),
     );
@@ -331,7 +477,20 @@ export class App {
   private renderDiary(): void {
     const w = this.w;
     if (!w || !this.diary) return;
-    const tabs: [View, string][] = [['mapa', '🗺 Mapa'], ['cronica', '📜 Crónica'], ['hipotesis', '🧪 Hipótesis'], ['investigar', '🔎 Investigación'], ['decisiones', '⚖ Consejo'], ['objetivos', '★ Objetivos'], ['familia', '🌳 Linaje'], ['ajustes', '⚙ Ajustes']];
+    // El diario crece con la vida del personaje: al principio solo hay mapa, crónica y quién eres.
+    const auth = w.player.authority ?? 6;
+    const id = ensureLife(w).identity;
+    const curious = !!id && (id.know.politica.level > 0 || id.skills.investigacion.level > 0);
+    const tabs: [View, string][] = [
+      ['mapa', '🗺 Mapa'],
+      ['familia', '🪞 Quién soy'],
+      ['cronica', '📜 Crónica'],
+      ...((auth >= 4 || curious ? [['investigar', '🔎 Investigación']] : []) as [View, string][]),
+      ...((auth >= 4 ? [['hipotesis', '🧪 Hipótesis'], ['decisiones', '⚖ Consejo']] : []) as [View, string][]),
+      ...((auth >= 5 ? [['objetivos', '★ Objetivos']] : []) as [View, string][]),
+      ['ajustes', '⚙ Ajustes'],
+    ];
+    if (!tabs.some(([v]) => v === this.diaryView)) this.diaryView = 'mapa';
     const scrollEl = this.diary.querySelector('.diary-body') as HTMLElement | null;
     const scroll = scrollEl?.dataset.view === this.diaryView ? scrollEl.scrollTop : 0;
     this.map?.destroy();

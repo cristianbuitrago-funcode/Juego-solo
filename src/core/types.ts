@@ -326,6 +326,11 @@ export interface Player {
   patterns: Partial<Record<Method, number>>;
   actionsToday: number;
   guardReady: number; // día en que la guardia vuelve a estar disponible
+  /**
+   * Autoridad del protagonista en su comunidad (0 forastero … 6 líder). Sin
+   * definir: partidas antiguas, en las que el jugador gobierna desde el inicio.
+   */
+  authority?: number;
 }
 
 export interface WorldState {

@@ -1233,3 +1233,118 @@ export function cart(frame: number, flip: boolean, cargo: string): Sprite {
     g.restore();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Objetos del prólogo: la mochila, la caja perdida, las brasas
+// ---------------------------------------------------------------------------
+export function prologueProp(kind: 'mochila' | 'caja' | 'brasas'): Sprite {
+  switch (kind) {
+    case 'mochila':
+      return make('pp:mochila', 16, 14, 8, 13, (g) => {
+        g0 = g;
+        E(8, 13, 7, 1.6, 'rgba(0,0,0,0.25)');
+        R(2, 4, 12, 9, '#7a5232');
+        R(3, 4, 10, 2, '#8e6440');
+        R(3, 7, 10, 4, '#6a4428');
+        R(5, 8, 6, 3, '#5a3a22');
+        R(7, 9, 2, 1, '#c9a070');
+        Ln(4, 4, 6, 1, 1.2, '#5a3a22');
+        Ln(12, 4, 10, 1, 1.2, '#5a3a22');
+        R(13, 10, 2, 3, '#a8b4b8');
+      });
+    case 'caja':
+      return make('pp:caja', 18, 16, 9, 15, (g) => {
+        g0 = g;
+        E(9, 15, 8, 1.8, 'rgba(0,0,0,0.25)');
+        R(2, 4, 14, 11, '#a07a4e');
+        R(2, 4, 14, 2, '#b88e5c');
+        R(2, 9, 14, 1, '#6b4a2e');
+        R(6, 6, 6, 3, '#c9382a');
+        R(14, 1, 3, 3, '#e8b84a');
+        R(1, 13, 2, 2, '#e8b84a');
+      });
+    case 'brasas':
+      return make('pp:brasas', 22, 10, 11, 8, (g) => {
+        g0 = g;
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2;
+          R(11 + Math.round(Math.cos(a) * 8) - 1, 6 + Math.round(Math.sin(a) * 2.5) - 1, 3, 2, k % 2 ? '#7d776e' : '#948d82');
+        }
+        R(7, 5, 8, 2, '#3a3430');
+        R(8, 4, 3, 1, '#5a3a22');
+        R(12, 5, 2, 1, '#c9563a');
+      });
+  }
+}
+
+/** El símbolo del colgante en pixel art (24×24), para la carta. */
+export function emblem(index: number, scale = 6): HTMLCanvasElement {
+  const P = new Painter(26, 26, 13, 13);
+  const ink = '#3a2418';
+  const gold = '#c99a3a';
+  P.oval(0, 0, 12, 12, '#8a3a2a');
+  P.oval(0, 0, 10, 10, '#a8442e');
+  switch (index) {
+    case 0: // dos líneas cruzadas sobre un círculo
+      P.oval(0, 2, 5, 5, gold);
+      P.oval(0, 2, 3, 3, '#a8442e');
+      P.line(-6, -6, 6, 6, ink);
+      P.line(6, -6, -6, 6, ink);
+      break;
+    case 1: // un ojo dentro de un triángulo
+      P.poly([0, -8, 8, 6, -8, 6], gold);
+      P.oval(0, 1, 4, 2, '#f4ecd8');
+      P.oval(0, 1, 1, 1, ink);
+      break;
+    case 2: // una espiga partida
+      P.line(0, 8, 0, -1, gold);
+      P.line(1, -3, 1, -8, gold);
+      for (let k = 0; k < 3; k++) (P.px(-1, 4 - k * 3, gold), P.px(1, 3 - k * 3, gold), P.px(-2, 3 - k * 3, gold));
+      P.px(2, -6, gold);
+      P.px(0, -6, gold);
+      break;
+    case 3: // tres olas
+      for (let k = 0; k < 3; k++) for (let x = -7; x <= 7; x++) P.px(x, -4 + k * 4 + Math.round(Math.sin(x * 0.8) * 1.3), gold);
+      break;
+    case 4: // una torre con una estrella
+      P.rect(-3, -2, 6, 10, gold);
+      P.rect(-4, -4, 8, 2, gold);
+      P.rect(-1, 3, 2, 4, ink);
+      P.px(0, -8, '#f4ecd8');
+      P.px(-1, -8, gold);
+      P.px(1, -8, gold);
+      P.px(0, -9, gold);
+      P.px(0, -7, gold);
+      break;
+    case 5: // una mano abierta con una llave
+      P.rect(-4, -1, 8, 7, gold);
+      for (let k = 0; k < 4; k++) P.rect(-4 + k * 2, -6, 1, 5, gold);
+      P.rect(-7, 0, 3, 1, gold);
+      P.line(-2, 2, 3, 2, ink);
+      P.px(-3, 1, ink);
+      P.px(-3, 3, ink);
+      P.px(3, 3, ink);
+      break;
+    default: // un ciervo con la cornamenta en llamas
+      P.rect(-3, 1, 6, 4, gold);
+      P.rect(-2, -2, 3, 3, gold);
+      P.line(-2, -3, -5, -7, '#ffb050');
+      P.line(1, -3, 4, -7, '#ffb050');
+      P.px(-5, -8, '#ffd970');
+      P.px(4, -8, '#ffd970');
+      P.px(-4, -5, '#ef7a2a');
+      P.px(3, -5, '#ef7a2a');
+      P.rect(-3, 5, 1, 3, gold);
+      P.rect(2, 5, 1, 3, gold);
+      break;
+  }
+  P.outline();
+  const c = P.toCanvas(false);
+  const out = document.createElement('canvas');
+  out.width = c.width * scale;
+  out.height = c.height * scale;
+  const g = out.getContext('2d')!;
+  g.imageSmoothingEnabled = false;
+  g.drawImage(c, 0, 0, out.width, out.height);
+  return out;
+}

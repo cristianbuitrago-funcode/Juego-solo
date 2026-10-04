@@ -90,6 +90,11 @@ src/
 │   ├── layout.ts          Pueblos, edificios, campos, caminos (A*), puentes, fronteras, lugares
 │   ├── life.ts            Capa de vida persistente: pueblos que crecen/arden/se reconstruyen,
 │   │                      vecinos que nacen/envejecen/mueren/emigran, generaciones del jugador
+│   ├── identity.ts        El protagonista: habilidades y conocimientos que se descubren, pasado
+│   │                      olvidado y fragmentos de memoria, necesidades, reputación y cargos,
+│   │                      talentos únicos y crónica personal
+│   ├── livelihood.ts      Ganarse la vida: trabajar, comer, dormir, estudiar, comerciar, convencer
+│   ├── prologue.ts        Los primeros días: mochila, primer encuentro, caja, acequia, carta
 │   ├── folk.ts            Vecinos con memoria y disposición a ayudar
 │   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
 │   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
@@ -236,6 +241,30 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - Escala coherente: casas mucho más grandes que una persona, árboles altos, caballos mayores que la gente; pueblos con calles, fuente o pozo, bancos, faroles, almacenes, establos, graneros y carros.
 - Luz por hora (mañana rosada, tarde dorada) y noches oscuras con ventanas, faroles y hogueras cálidas; tormentas con relámpagos, viento con hojas; la gente se refugia o se cubre con capucha y se abriga en invierno.
 - Gentío en las ciudades grandes, pájaros, perros, patos y caballos; nivel de detalle por distancia y ajuste de calidad gráfica para Android.
+
+**Versión 5 — despertar sin memoria.** El protagonista ya no gobierna desde el principio:
+
+- Despierta junto a un camino, sin nombre, sin familia y sin nada más que un colgante. Nadie le debe nada; nadie sabe quién es.
+- Primero hay que vivir: hambre, cansancio, monedas. Trabaja con los vecinos (campo, redes, taller, puesto, guardia, sanadora…), come en la posada, duerme donde pueda.
+- Se convierte en lo que hace: 11 habilidades (lo que puede hacer) y 9 conocimientos (lo que comprende) que se descubren al usarlos. Algunas venían de su pasado y despiertan de golpe: «algo en tus manos parece recordar cómo hacerlo».
+- El pasado vuelve por fragmentos (el colgante, un objeto, una canción, un sueño, un camino, alguien que le reconoce, lo que hizo) y el jugador decide qué hacer con ello: aceptar su nombre o no, reparar, callar, no dejar que le defina.
+- Talentos únicos según cómo se ha vivido (Lectura política, Superviviente, Comandante, Ojo de mercader, Mirada de investigador, Manos de sanador, Lengua de plata, Sombra) que abren opciones nuevas en el mundo.
+- El poder se gana: desconocido → conocido → apreciado → de confianza → consejero → miembro del consejo → líder. Los cargos se ofrecen (no se piden) y se pueden rechazar. Sin cargo, las decisiones políticas del motor no están disponibles.
+- El diario crece con la vida: al principio solo mapa, «Quién soy» y crónica; la investigación, las hipótesis, el consejo y los objetivos aparecen cuando el personaje tiene voz para usarlos.
+- Crónica personal («Tu historia»): «A los 27 años, despertó junto a un camino…». Los herederos tienen su propio carácter y pueden honrar o rechazar el legado.
+- Las partidas guardadas antes de este cambio siguen como estaban: el protagonista gobierna.
+
+**Fase 1 — el prólogo jugable.** Los primeros 10–20 minutos de una partida nueva, sin misión principal ni tutorial (el mundo enseña):
+
+- Despiertas en un claro verde junto a un camino, con un único objetivo suave: «Descubre dónde estás». Cerca: restos de una hoguera, una cabaña vacía y una mochila que no recuerdas (comida, tres monedas, una llave de hierro y un cuaderno con tu letra).
+- En el camino, alguien recoge leña: «¿Te encuentras bien?» — «No lo sé… no recuerdo cómo llegué aquí» — «¿No recuerdas?». Te habla del pueblo, de la posada, de una hoguera que vio anoche.
+- Se llega andando. El pueblo vive a su ritmo; la posadera, el artesano, un comerciante, alguien pequeño que corre por la plaza…
+- Una azada rota: no sabes cómo arreglarla → miras cómo lo hace el artesano → «Algo sobre esto te resulta extrañamente familiar. Conocimiento adquirido: Reparación básica» → un primer recuerdo borroso («…no aprietes tanto. Así, despacio…»). No sabes quién era esa persona.
+- Una caja perdida: ayudar, investigar las huellas, preguntar al crío, devolverla, cubrirle, delatarle, quedártela, venderla o ignorarla. Al día siguiente el pueblo lo sabe (o no).
+- La noche: faroles, gente que vuelve a casa, y buscar dónde dormir (pagar una cama, el pajar si te lo has ganado, la cabaña vacía o al raso). Al dormir, «Día 1» con un pequeño resumen.
+- El segundo día, dos vecinos se pelean por el agua de una acequia: dar la razón a uno u otro, investigar, mediar, mentir o no meterte. Las consecuencias duran varios días.
+- Al final, la posadera guarda una carta sellada con el símbolo de tu colgante que nombra un lugar que conoces sin saber por qué. «¿Por qué conozco esto?»
+- Código: `src/world/prologue.ts` (estado, escenas, consecuencias al amanecer, resumen del día) y su conexión en las rutinas, la escena y los diálogos.
 
 **Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
 

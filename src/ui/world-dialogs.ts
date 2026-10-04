@@ -1,4 +1,4 @@
-import { ACTIONS, answerPetition, freeAgents } from '../core/api';
+import { ACTIONS, answerPetition, freeAgents, hasAuthority } from '../core/api';
 import { ROLES } from '../core/content/roles';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
@@ -7,9 +7,15 @@ import { drawPortrait } from '../render/human';
 import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';
+import { hourOf } from '../world/clock';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../world/encounters';
 import { doorOf, getLayout, nearestWalkable } from '../world/layout';
+import { answerOffer, chooseFragment, hasTalent, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
 import { ensureLife, heirs, succeed } from '../world/life';
+import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
+import { acequiaOptions, acequiaResolve, acequiaView, noteMeeting, prologueChoose, prologueOf, prologueScene, type PScene, type PTarget } from '../world/prologue';
+import { emblem } from '../render/sprites';
+import { SYMBOLS } from '../world/identity';
 import { checkRumorInPerson, examinePlace, listenTavern, templeElders } from '../world/presence';
 import { roadPath } from '../world/roadnet';
 import { giveTo, observeFolk, talkToFolk } from '../world/talk';
@@ -42,6 +48,88 @@ export function dialogue(app: App, title: string, subtitle: string, lines: strin
 }
 
 const folkOf = (w: WorldState, id: string) => ensureLife(w).folk.find((f) => f.id === id);
+
+/** Un recuerdo que vuelve. Si plantea una decisión, el jugador elige qué hacer con él. */
+export function showFragment(app: App, ev: FragmentEvent): void {
+  audio.sfx('descubrimiento');
+  const close = app.modal(() => [
+    h('div', { class: 'dlg-head' }, h('h2', null, ev.title), h('div', { class: 'tiny' }, 'Un recuerdo')),
+    ...ev.lines.map((l) => h('p', null, l)),
+    h('div', { class: 'dlg-choices' },
+      ...(ev.choices?.length
+        ? ev.choices.map((c) => h('button', { class: 'btn', onclick: () => { close(); const res = chooseFragment(app.w!, ev.id, c.id); if (res.length) dialogue(app, ev.title, '', res, [{ label: 'Seguir', run: () => app.refresh(), primary: true }]); app.refresh(); } }, c.label))
+        : [h('button', { class: 'btn teal', onclick: () => (close(), app.refresh()) }, 'Guardar el recuerdo')]),
+    ),
+  ], { cls: 'dialog fragment-modal' });
+}
+
+/** Muestra el resultado de algo que hiciste: lo que pasa, el tiempo que lleva y lo que aprendes. */
+function outcome(app: App, title: string, o: Outcome, then?: () => void): void {
+  if (o.minutes) app.passTime(o.minutes);
+  app.notes(o.notes);
+  if (o.fragment) return showFragment(app, o.fragment);
+  if (o.lines.length) dialogue(app, title, '', o.lines, [{ label: 'Seguir', run: () => (then ? then() : app.refresh()), primary: true }]);
+  else app.refresh();
+}
+
+/**
+ * Escenas del prólogo: una conversación o un momento que se encadena según
+ * lo que respondas. Los recuerdos aparecen borrosos; la carta enseña el emblema.
+ */
+export function runPrologue(app: App, s: PScene | null): void {
+  const w = app.w!;
+  if (s?.minutes) app.passTime(s.minutes);
+  if (s?.notes?.length) app.notes(s.notes);
+  if (!s) return app.refresh();
+  if (s.flash) audio.sfx('descubrimiento');
+  else audio.sfx('tap');
+  const portrait = s.folk ? portraitOf(w, s.folk) : undefined;
+  const past = ensureLife(w).identity?.past;
+  const art = s.letter && past ? emblem(Math.max(0, SYMBOLS.indexOf(past.symbol)), 5) : null;
+  if (art) art.className = 'emblem';
+  let close = () => {};
+  const pick = (id: string) => {
+    close();
+    if (s.id === 'hut' && id === 'dormir') return app.sleep('raso');
+    runPrologue(app, prologueChoose(w, s.id, id));
+  };
+  close = app.modal(() => [
+    h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, s.title), s.sub ? h('div', { class: 'tiny' }, s.sub) : null)),
+    art,
+    ...s.lines.map((l, i) => h('p', { class: `${l.startsWith('«') || l.startsWith('—') ? 'quote' : ''} ${s.flash ? 'flash-line' : ''}`, style: s.flash ? `animation-delay:${i * 0.9}s` : '' }, l)),
+    h('div', { class: 'dlg-choices' }, ...s.choices.map((c, i) => h('button', { class: `btn ${i === 0 ? 'teal' : ''}`, onclick: () => pick(c.id) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+  ], { cls: `dialog ${s.flash ? 'fragment-modal flash-modal' : ''} ${s.letter ? 'letter-modal' : ''}` });
+}
+
+/** Si el prólogo tiene algo que decir aquí, lo dice; si no, sigue lo normal. */
+function prologueAt(app: App, t: PTarget): boolean {
+  const s = prologueScene(app.w!, t);
+  if (!s) return false;
+  runPrologue(app, s);
+  return true;
+}
+
+/** Visitar un edificio puede despertar un recuerdo. */
+function visit(app: App, building: string, regionId: number): boolean {
+  const ev = tryFragment(app.w!, { kind: 'edificio', building, regionId });
+  if (ev) {
+    showFragment(app, ev);
+    return true;
+  }
+  return false;
+}
+
+/** Cargo que te ofrecen en un pueblo: llega, no se pide. */
+function offerChoice(app: App, regionId: number): Choice[] {
+  const id = ensureLife(app.w!).identity!;
+  const o = id.offers.find((x) => x.regionId === regionId);
+  if (!o) return [];
+  const title = STANDING[o.level].name.toLowerCase();
+  return [
+    { label: `✋ Aceptar: ser ${title}`, primary: true, hint: STANDING[o.level].hint, run: () => (app.toast(answerOffer(app.w!, regionId, true)), app.refresh()) },
+    { label: `🙅 Rechazarlo`, hint: 'Puedes vivir sin cargos. Quizá vuelvan a ofrecértelo.', run: () => (app.toast(answerOffer(app.w!, regionId, false)), app.refresh()) },
+  ];
+}
 
 /** Retrato del vecino con la expresión que le provoca lo que ha vivido. Parpadea mientras el diálogo está abierto. */
 function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefined {
@@ -77,7 +165,9 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
     case 'folk': {
       const f = folkOf(w, t.id);
       const out = [b('💬 Hablar', () => talk(app, t.id), true), b('👁 Observar', () => observe(app, t.id)), b('🚶 Seguir', () => (app.scene?.followFolk(t.id), app.toast(`Sigues a ${f?.name}. Mueve el joystick para dejar de seguirle.`)))];
-      if (f?.role === 'lider' && !w.regions[f.regionId].isHome) out.splice(1, 0, b('⚖ Decidir', () => leaderDecisions(app, f.regionId)));
+      const job = f ? jobFor(w, f) : null;
+      if (job && ensureLife(w).identity?.mode === 'forastero') out.splice(1, 0, b(job.label.split(' ')[0] + ' Trabajar', () => outcome(app, job.label.slice(2), work(w, t.id))));
+      if (f?.role === 'lider' && !w.regions[f.regionId].isHome && hasAuthority(w, 'mediar')) out.splice(1, 0, b('⚖ Decidir', () => leaderDecisions(app, f.regionId)));
       return out;
     }
     case 'building':
@@ -92,6 +182,8 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       return [b('📨 Escuchar al mensajero', () => arrive(app, t), true)];
     case 'signpost':
       return [b('🧭 Viajar', () => arrive(app, t), true)];
+    case 'item':
+      return [b(t.id === 'mochila' ? '🎒 Mirar' : t.id === 'caja' ? '📦 Mirar' : t.id === 'cabana' ? '🚪 Entrar' : '🔎 Examinar', () => arrive(app, t), true)];
   }
 }
 
@@ -116,7 +208,12 @@ export function arrive(app: App, t: Target): void {
     case 'messenger':
       return petition(app, t.petitionId);
     case 'signpost':
+      if (visit(app, 'cruce', t.regionId)) return;
       return travel(app, t.regionId);
+    case 'item':
+      if (t.id === 'cabana') return hut(app);
+      prologueAt(app, { kind: 'item', id: t.id });
+      return;
   }
 }
 
@@ -129,12 +226,33 @@ function talk(app: App, folkId: string): void {
   if (!f) return;
   const busy = ensureLife(w).encounters.find((e) => !e.resolved && (e.folkA === folkId || e.folkB === folkId));
   if (busy) return encounter(app, busy.id);
+  noteMeeting(w, f);
+  if (prologueAt(app, { kind: 'folk', id: folkId })) return;
   const r = w.regions[f.regionId];
   const res = talkToFolk(w, folkId);
-  const inv = ensureLife(w).player.inventory;
+  const life = ensureLife(w);
+  const id = life.identity!;
+  const inv = life.player.inventory;
   const choices: Choice[] = [];
-  if (f.role === 'lider' && !r.isHome) choices.push({ label: '⚖ Tratar asuntos de gobierno', run: () => leaderDecisions(app, f.regionId), primary: true });
-  const pet = w.petitions.find((p) => p.regionId === f.regionId && (p.characterId === f.charId || f.role === 'lider'));
+  const memory = tryFragment(w, { kind: 'hablar', folkId });
+  if (memory) return showFragment(app, memory);
+  app.notes(afterTalk(w, f));
+  if (res.lied) {
+    const tell = noticeLie(w);
+    if (tell) res.lines.push(tell);
+  }
+  const read = readLeader(w, f);
+  if (read) res.lines.push(read);
+  if (f.role === 'lider' && !r.isHome && hasAuthority(w, 'mediar')) choices.push({ label: '⚖ Tratar asuntos de gobierno', run: () => leaderDecisions(app, f.regionId), primary: true });
+  if (f.role === 'lider') choices.push(...offerChoice(app, f.regionId));
+  const job = jobFor(w, f);
+  if (job && id.mode === 'forastero') choices.push({ label: job.label, hint: `${Math.round(job.minutes / 60)} h · ${job.pay.coins ? 'algo de dinero' : job.pay.comida ? 'algo de comida' : 'aprendes'}`, run: () => outcome(app, job.label.slice(2), work(w, folkId)), primary: !choices.length });
+  if (id.mode === 'forastero') choices.push({ label: '❓ Preguntar por ti', run: () => outcome(app, f.name, askAboutMe(w, folkId)) });
+  if (f.role === 'comerciante') choices.push({ label: `🍞 Comprarle comida (${priceOf(w, f.regionId, 1)} 🪙)`, run: () => outcome(app, f.name, buyFood(w, f.regionId)) });
+  if (f.role === 'comerciante' && inv.reliquias > 0) choices.push({ label: '💰 Venderle algo de valor', run: () => outcome(app, f.name, sellRelic(w, f.regionId)) });
+  if (f.resentment > 0.3 || f.trust < 0.35) choices.push({ label: hasTalent(id, 'lengua') ? '🗣 Convencerle (lengua de plata)' : '🗣 Intentar convencerle', run: () => outcome(app, f.name, convince(w, folkId)) });
+  if (id.mode === 'forastero' && f.role !== 'nino') choices.push({ label: '🌒 Contarle una mentira para sacar algo', hint: 'Si te pillan, se sabrá.', run: () => outcome(app, f.name, deceive(w, folkId)) });
+  const pet = hasAuthority(w, 'negar') ? w.petitions.find((p) => p.regionId === f.regionId && (p.characterId === f.charId || f.role === 'lider')) : undefined;
   if (pet) choices.push({ label: `📨 «${pet.title}»`, run: () => petition(app, pet.id) });
   if (inv.comida > 0) choices.push({ label: '🍞 Darle comida', run: () => (app.toast(giveTo(w, folkId, 'comida')), app.refresh()) });
   if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
@@ -169,6 +287,11 @@ function leaderDecisions(app: App, regionId: number): void {
     ids.push('abandonar');
   }
   const known = w.rumors.filter((x) => x.known && w.day <= x.expires + 5).slice(-4);
+  const allowed = ids.filter((id) => hasAuthority(w, id));
+  if (!allowed.length && !hasAuthority(w, 'compartir')) {
+    return void dialogue(app, `El salón de ${r.name}`, '', [`Te reciben con cortesía, pero no hablas en nombre de nadie. «¿Y tú quién eres para venir a tratar estos asuntos?»`, `Para negociar por un pueblo, primero tendrías que tener voz en ${w.regions[w.player.home].name}.`], [...offerChoice(app, regionId), { label: 'Volver', run: () => {} }]);
+  }
+  ids.splice(0, ids.length, ...allowed);
   const choices: Choice[] = ids.map((id) => ({
     label: `${ACTIONS[id].icon} ${id === 'favorecer' && r.favored ? 'Dejar de favorecer' : ACTIONS[id].label}`,
     run: () => openAction(app, id, { region: regionId, inPerson: 1 }),
@@ -209,30 +332,70 @@ function building(app: App, regionId: number, kind: string): void {
   const r = w.regions[regionId];
   const home = r.isHome;
   const life = ensureLife(w);
+  const id = life.identity!;
+  const stand = id.standing[regionId] ?? 0;
+  if (visit(app, kind, regionId)) return;
   switch (kind) {
     case 'hogar':
-      return void dialogue(app, 'Tu casa', `${life.player.name}, ${life.player.age} años`, ['El fuego sigue encendido. Tu familia te espera.'], [
-        { label: '🌙 Dormir hasta el amanecer', run: () => app.sleep(), primary: true },
+      if (home && !id.housed) {
+        const can = stand >= 2;
+        return void dialogue(app, 'Una casa vacía', '', ['La puerta está atrancada con una tabla. Dicen que era de una familia que se marchó hace años.', can ? 'Ahora que te conocen, quizá te dejen quedarte.' : 'Nadie le daría una casa a un desconocido.'], [
+          ...(can
+            ? [{
+                label: '🏠 Preguntar si puedes quedarte',
+                primary: true,
+                run: () => {
+                  id.housed = true;
+                  story(w, `Le dieron una casa en ${r.name}. Por primera vez, tenía un sitio al que volver.`, 'logro');
+                  dialogue(app, 'Tu casa', '', ['«Es tuya mientras la cuides», te dicen. Barres el polvo, enciendes el fuego. Ya no duermes al raso.'], [{ label: 'Seguir', run: () => app.refresh(), primary: true }]);
+                },
+              }]
+            : []),
+          { label: 'Salir', run: () => {} },
+        ]);
+      }
+      return void dialogue(app, 'Tu casa', `${life.player.name}, ${life.player.age} años`, [life.player.family.length ? 'El fuego sigue encendido. Tu familia te espera.' : 'El fuego sigue encendido. La casa huele a tuya.'], [
+        { label: '🌙 Dormir hasta el amanecer', run: () => app.sleep('casa'), primary: true },
         { label: '⏳ Descansar tres horas', run: () => (app.passTime(180), app.toast('Descansas un rato.')) },
-        { label: '🌳 Tu familia y tu linaje', run: () => app.setView('familia') },
+        { label: '🪞 Quién soy', run: () => app.setView('familia') },
         { label: '💾 Guardar o cargar', run: () => app.saves() },
         { label: 'Salir', run: () => {} },
       ]);
     case 'almacen':
-      if (home) return storehouse(app);
-      return void dialogue(app, `Almacén de ${r.name}`, '', [r.food < 4 ? 'Las estanterías están casi vacías. Un hombre barre el suelo sin ganas.' : r.food > 15 ? 'Sacos apilados hasta el techo. Huele a grano seco.' : 'Hay provisiones, pero se cuentan con cuidado.'], [
-        { label: `${ACTIONS.explotar.icon} Exigir parte de sus recursos`, run: () => openAction(app, 'explotar', { region: regionId, inPerson: 1 }) },
+      if (home && hasAuthority(w, 'ayuda')) return storehouse(app);
+      if (!home && hasAuthority(w, 'explotar'))
+        return void dialogue(app, `Almacén de ${r.name}`, '', [r.food < 4 ? 'Las estanterías están casi vacías. Un hombre barre el suelo sin ganas.' : r.food > 15 ? 'Sacos apilados hasta el techo. Huele a grano seco.' : 'Hay provisiones, pero se cuentan con cuidado.'], [
+          { label: `${ACTIONS.explotar.icon} Exigir parte de sus recursos`, run: () => openAction(app, 'explotar', { region: regionId, inPerson: 1 }) },
+          { label: 'Salir', run: () => {} },
+        ]);
+      return void dialogue(app, `Almacén de ${r.name}`, '', [home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
+        { label: '🙏 Pedir algo de comer', run: () => outcome(app, 'El almacén', charity(w, regionId)) },
         { label: 'Salir', run: () => {} },
       ]);
     case 'salon':
-      if (home) return council(app);
-      return leaderDecisions(app, regionId);
+      if (home && hasAuthority(w, 'observar')) return council(app);
+      if (!home && hasAuthority(w, 'mediar')) return leaderDecisions(app, regionId);
+      return void dialogue(app, `Salón de ${r.name}`, stand >= 3 ? 'Te dejan pasar como oyente' : 'La puerta está cerrada', [stand >= 3 ? 'Te sientas al fondo. Discuten, gritan, votan. Nadie te pregunta, pero escuchas.' : 'Dentro se oyen voces. Deciden cosas que afectan a todos, y tú no estás invitado.'], [
+        ...offerChoice(app, regionId),
+        ...(stand >= 3 ? [{ label: '📚 Escuchar el debate', run: () => outcome(app, 'El consejo', study(w, regionId, 'salon')) }] : []),
+        { label: '🌒 Escuchar desde la puerta', hint: 'Si te ven, no les gustará.', run: () => outcome(app, 'Tras la puerta', eavesdrop(w, regionId)) },
+        { label: 'Salir', run: () => {} },
+      ]);
     case 'posada':
+      if (w.regions[regionId].isHome && prologueAt(app, { kind: 'posada' })) return;
       return tavern(app, regionId);
     case 'templo':
-      return void dialogue(app, `Templo de ${r.name}`, '', templeElders(w, regionId), [{ label: 'Salir', run: () => app.refresh() }]);
+      return void dialogue(app, `Templo de ${r.name}`, '', templeElders(w, regionId), [
+        { label: '📚 Estudiar con los ancianos', hint: 'Historia, costumbres y lenguas.', run: () => outcome(app, 'El templo', study(w, regionId, 'templo')) },
+        ...(r.flags.fiebre ? [{ label: '🌿 Atender a los enfermos', hint: hasTalent(id, 'sanador') ? 'Sabes cómo frenar esta fiebre.' : 'Necesitarías saber mucho de medicina.', run: () => outcome(app, 'Los enfermos', tendSick(w, regionId)) }] : []),
+        ...(!id.housed ? [{ label: '🕯 Pedir refugio para dormir', hint: 'Gratis, en un banco frío.', run: () => app.sleep('templo') }] : []),
+        { label: 'Salir', run: () => app.refresh() },
+      ]);
     case 'forja':
-      return void dialogue(app, `Forja de ${r.name}`, '', [r.militancy > 0.55 ? 'Martillos día y noche. Puntas de lanza amontonadas en un rincón.' : r.research ? 'El herrero prueba algo nuevo y no deja mirar.' : 'Herraduras, rejas de arado, ollas. Trabajo de paz.'], [{ label: 'Salir', run: () => {} }]);
+      return void dialogue(app, `Forja de ${r.name}`, '', [r.militancy > 0.55 ? 'Martillos día y noche. Puntas de lanza amontonadas en un rincón.' : r.research ? 'El herrero prueba algo nuevo y no deja mirar.' : 'Herraduras, rejas de arado, ollas. Trabajo de paz.'], [
+        ...life.folk.filter((f) => f.alive && f.regionId === regionId && f.role === 'artesano').slice(0, 1).map((f) => ({ label: '🔨 Ofrecerte para trabajar', run: () => outcome(app, 'La forja', work(w, f.id)) })),
+        { label: 'Salir', run: () => {} },
+      ]);
   }
 }
 
@@ -244,7 +407,7 @@ function storehouse(app: App): void {
     regionPicker(app, action === 'ayuda' ? '¿A dónde envías la caravana?' : '¿A quién envías el regalo?', (id) =>
       openAction(app, action, { region: id }, action === 'ayuda' ? { extras: [{ key: 'amount', label: 'Tamaño de la caravana', options: [[8, 'Pequeña'], [12, 'Normal'], [20, 'Grande']] }] } : {}),
     );
-  dialogue(app, 'Almacén de tu gente', `Provisiones: ${Math.round(w.player.reserves)}`, ['«¿Qué hacemos con lo que tenemos?», pregunta el intendente, libreta en mano.'], [
+  dialogue(app, `Almacén de ${w.regions[w.player.home].name}`, `Provisiones: ${Math.round(w.player.reserves)}`, ['«¿Qué hacemos con lo que tenemos?», pregunta el intendente, libreta en mano.'], [
     { label: '🌾 Preparar una caravana de provisiones', run: () => pick('ayuda'), primary: true, hint: 'Viajará por los caminos y tardará días en llegar.' },
     { label: '🎁 Enviar un regalo', run: () => pick('regalo') },
     {
@@ -264,10 +427,11 @@ function storehouse(app: App): void {
 /** El salón del consejo: leyes, prioridades, peticiones y emisarios. */
 function council(app: App): void {
   const w = app.w!;
-  dialogue(app, 'Salón del consejo', `Emisarios libres: ${freeAgents(w)} de ${w.player.agents}`, ['Aquí se reúne tu gente. Desde aquí envías emisarios allí donde no puedes ir en persona.'], [
+  dialogue(app, 'Salón del consejo', `Emisarios libres: ${freeAgents(w)} de ${w.player.agents}`, ['Aquí se reúne el consejo. Desde aquí se envían emisarios allí donde nadie puede ir en persona.'], [
+    ...offerChoice(app, w.player.home),
     ...w.petitions.slice(0, 3).map((p) => ({ label: `📨 ${p.title}`, run: () => petition(app, p.id) })),
     { label: '🧭 Enviar emisarios', run: () => emissaries(app), primary: true },
-    { label: '⚖ Leyes, prioridades y peticiones', run: () => app.setView('decisiones') },
+    ...(hasAuthority(w, 'ley') ? [{ label: '⚖ Leyes, prioridades y peticiones', run: () => app.setView('decisiones') }] : []),
     { label: '🔎 Investigaciones y rumores', run: () => app.setView('investigar') },
     { label: 'Salir', run: () => {} },
   ]);
@@ -277,7 +441,7 @@ function emissaries(app: App): void {
   regionPicker(app, '¿A qué región envías a alguien?', (id) => {
     const w = app.w!;
     const st = w.intel[id].observerStationed;
-    const opts: Choice[] = (['observar', st ? 'retirar' : 'destacar', 'espiar', 'sabotaje'] as const).map((a) => ({ label: `${ACTIONS[a].icon} ${ACTIONS[a].label}`, hint: ACTIONS[a].hint, run: () => openAction(app, a, { region: id }) }));
+    const opts: Choice[] = (['observar', st ? 'retirar' : 'destacar', 'espiar', 'sabotaje'] as const).filter((a) => hasAuthority(w, a)).map((a) => ({ label: `${ACTIONS[a].icon} ${ACTIONS[a].label}`, hint: ACTIONS[a].hint, run: () => openAction(app, a, { region: id }) }));
     const rumors = w.rumors.filter((x) => x.known && !x.investigated && x.about === id);
     for (const ru of rumors) opts.push({ label: `🔎 Investigar: «${ru.text.slice(0, 40)}…»`, run: () => openAction(app, 'investigar', { rumor: ru.id }) });
     opts.push({ label: 'Volver', run: () => {} });
@@ -297,13 +461,61 @@ function regionPicker(app: App, title: string, onPick: (id: number) => void): vo
 function tavern(app: App, regionId: number): void {
   const w = app.w!;
   const r = w.regions[regionId];
+  const life = ensureLife(w);
+  const id = life.identity!;
   const aboutHere = w.rumors.filter((x) => x.known && !x.investigated && x.about === regionId);
-  dialogue(app, `Posada de ${r.name}`, '', ['Humo, cerveza y conversaciones a media voz.'], [
-    { label: '👂 Escuchar conversaciones', run: () => dialogue(app, `Posada de ${r.name}`, 'Escuchas…', listenTavern(w, regionId), [{ label: 'Seguir', run: () => app.refresh() }]), primary: true },
+  const hour = Math.floor(((life.clock % 1440) + 1440) % 1440 / 60 + 6) % 24;
+  const listen = () => {
+    const song = tryFragment(w, { kind: 'posada', regionId, hour });
+    const lines = listenTavern(w, regionId);
+    const learnt = study(w, regionId, 'posada');
+    app.notes(learnt.notes);
+    if (learnt.minutes) app.passTime(60);
+    if (song) return showFragment(app, song);
+    dialogue(app, `Posada de ${r.name}`, 'Escuchas…', lines, [{ label: 'Seguir', run: () => app.refresh() }]);
+  };
+  const forastero = id.mode === 'forastero';
+  dialogue(app, `Posada de ${r.name}`, forastero ? `Llevas ${id.needs.coins} 🪙` : '', ['Humo, cerveza y conversaciones a media voz.'], [
+    { label: '👂 Escuchar conversaciones', run: listen, primary: !forastero || id.needs.hunger < 0.5 },
+    ...(forastero ? [
+      { label: `🍲 Comer algo caliente (${priceOf(w, regionId, 1)} 🪙)`, primary: id.needs.hunger >= 0.5, run: () => outcome(app, 'La posada', buyMeal(w, regionId)) },
+      { label: `🛏 Dormir aquí (${priceOf(w, regionId, 2)} 🪙)`, run: () => { const o = rentBed(w, regionId); if (o.lines[0].startsWith('Una cama de paja')) app.sleep('posada'); else outcome(app, 'La posada', o); } },
+      ...loft(app, regionId),
+    ] : []),
     ...aboutHere.map((ru) => ({ label: `🔎 Comprobar en persona: «${ru.text.slice(0, 40)}…»`, run: () => dialogue(app, 'Lo compruebas tú mismo', '', [checkRumorInPerson(w, ru.id)], [{ label: 'Seguir', run: () => app.refresh() }]) })),
-    { label: `${ACTIONS.difundir.icon} Hacer correr un rumor`, run: () => openAction(app, 'difundir', { region: regionId, inPerson: 1 }), hint: ACTIONS.difundir.hint },
+    ...(hasAuthority(w, 'difundir') ? [{ label: `${ACTIONS.difundir.icon} Hacer correr un rumor`, run: () => openAction(app, 'difundir', { region: regionId, inPerson: 1 }), hint: ACTIONS.difundir.hint }] : []),
     { label: 'Salir', run: () => {} },
   ]);
+}
+
+/** Si te has ganado a alguien, la posadera te deja el pajar sin cobrar. */
+function loft(app: App, regionId: number): Choice[] {
+  const w = app.w!;
+  const p = prologueOf(w);
+  const id = ensureLife(w).identity!;
+  if (!p || !w.regions[regionId].isHome || id.housed) return [];
+  const inn = folkOf(w, p.inn);
+  const why = p.crate === 'returned' || p.crate === 'covered' ? 'Ya me han contado lo de la caja.' : p.repair === 3 ? `${folkOf(w, p.artisan)?.name ?? 'El artesano'} dice que tienes buenas manos.` : null;
+  const owed = (inn?.memories ?? []).some((m) => m.kind === 'robo' || m.kind === 'mentira');
+  if (!why || owed) return [];
+  return [{
+    label: '🌾 Preguntar por el pajar',
+    hint: 'Gratis, si te lo has ganado',
+    run: () => dialogue(app, inn?.name ?? 'La posada', '', [`«${why} El pajar está detrás. No es una cama, pero está seco.»`], [{ label: 'Dormir en el pajar', primary: true, run: () => { story(w, `${inn?.name ?? 'La posadera'} le dejó dormir gratis en el pajar.`, 'relacion'); app.sleep('posada'); } }, { label: 'Ahora no', run: () => {} }], inn ? portraitOf(w, inn.id) : undefined),
+  }];
+}
+
+/** La cabaña vacía junto al camino donde despertaste. */
+function hut(app: App): void {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const hr = hourOf(life.clock);
+  runPrologue(app, {
+    id: 'hut',
+    title: 'Una cabaña vacía',
+    lines: ['La puerta cede con un quejido. Dentro: polvo, un camastro de paja y una mesa con una taza volcada.', 'Nadie vive aquí desde hace tiempo. Pero alguien barrió un rincón no hace mucho.'],
+    choices: [...(hr >= 19 || hr < 5 || life.identity!.needs.fatigue > 0.7 ? [{ id: 'dormir', label: '🌙 Dormir aquí', hint: 'Gratis. Frío, pero a cubierto.' }] : []), { id: 'salir', label: 'Salir' }],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -322,9 +534,9 @@ function borderPost(app: App, index: number): void {
   else if ((rel?.tension ?? 0) > 0.5) lines.push(`«Hay mucho movimiento al otro lado. No me gusta nada.»`, 'Los guardias tienen la mano en la empuñadura.');
   else lines.push('«Pasa, viajero. Los caminos están tranquilos.»');
   const choices: Choice[] = [];
-  if (route.status === 'abierta') choices.push({ label: `${ACTIONS.cerrarRuta.icon} Pedir que cierren el paso`, hint: ACTIONS.cerrarRuta.hint, run: () => openAction(app, 'cerrarRuta', { route: p.routeId, region: a.isHome ? b.id : a.id }) });
-  if (route.status === 'cerrada') choices.push({ label: `${ACTIONS.abrirRuta.icon} Pedir que lo reabran`, run: () => openAction(app, 'abrirRuta', { route: p.routeId, region: a.isHome ? b.id : a.id }) });
-  if (rel?.war) {
+  if (route.status === 'abierta' && hasAuthority(w, 'cerrarRuta')) choices.push({ label: `${ACTIONS.cerrarRuta.icon} Pedir que cierren el paso`, hint: ACTIONS.cerrarRuta.hint, run: () => openAction(app, 'cerrarRuta', { route: p.routeId, region: a.isHome ? b.id : a.id }) });
+  if (route.status === 'cerrada' && hasAuthority(w, 'abrirRuta')) choices.push({ label: `${ACTIONS.abrirRuta.icon} Pedir que lo reabran`, run: () => openAction(app, 'abrirRuta', { route: p.routeId, region: a.isHome ? b.id : a.id }) });
+  if (rel?.war && hasAuthority(w, 'intervenir')) {
     const attacker = a.flags.guerra ? a : b;
     choices.push({ label: `${ACTIONS.intervenir.icon} Intervenir con tu guardia`, hint: ACTIONS.intervenir.hint, run: () => openAction(app, 'intervenir', { region: attacker.id }) });
     choices.push({ label: `${ACTIONS.mediar.icon} Mediar entre ambos`, run: () => openAction(app, 'mediar', { region: a.id, other: b.id, inPerson: 1 }) });
@@ -347,6 +559,7 @@ function encounter(app: App, id: string, extra: string[] = []): void {
   const w = app.w!;
   const e = ensureLife(w).encounters.find((x) => x.id === id);
   if (!e) return;
+  if (e.kind === 'p_acequia') return acequia(app, extra);
   const view = describeEncounter(w, e);
   const opts = encounterOptions(w, e);
   dialogue(app, view.title, w.regions[e.regionId].name, [view.scene, ...extra], opts.map((o, i) => ({
@@ -354,10 +567,28 @@ function encounter(app: App, id: string, extra: string[] = []): void {
     primary: i === 0,
     run: () => {
       const res = resolveEncounter(w, id, o.id);
+      app.notes(encounterLearning(w, e.kind, o.id, e.regionId, res.done));
       if (res.done) dialogue(app, view.title, '', res.lines, [{ label: 'Seguir tu camino', run: () => app.refresh(), primary: true }]);
       else encounter(app, id, res.lines);
     },
   })), e.folkA ? portraitOf(w, e.folkA) : undefined);
+}
+
+/** Dos vecinos se pelean por el agua. No hay una respuesta buena. */
+function acequia(app: App, extra: string[]): void {
+  const w = app.w!;
+  const p = prologueOf(w)!;
+  const view = acequiaView(w);
+  dialogue(app, view.title, w.regions[w.player.home].name, [view.scene, ...extra], acequiaOptions(w).map((o, i) => ({
+    label: o.label,
+    primary: i === 0,
+    run: () => {
+      const res = acequiaResolve(w, o.id);
+      app.notes(res.notes);
+      if (res.done) dialogue(app, view.title, '', res.lines, [{ label: 'Seguir tu camino', run: () => app.refresh(), primary: true }]);
+      else acequia(app, res.lines);
+    },
+  })), portraitOf(w, p.a));
 }
 
 // ---------------------------------------------------------------------------
@@ -409,12 +640,20 @@ export function succession(app: App): void {
   const old = life.player;
   const options = heirs(life);
   const list = options.length ? options : old.family.length ? old.family : [{ name: 'un aprendiz del pueblo', relation: 'aprendiz' as const, age: 18 }];
-  dialogue(app, `${old.name} ha muerto`, `a los ${old.age} años`, ['Tu gente lo llora. El mundo sigue.', 'Alguien debe tomar el relevo. Heredará la casa, el conocimiento, la reputación… y los enemigos.'], list.map((k, i) => ({
+  let pendingHeir: (typeof list)[number] | null = null;
+  dialogue(app, `${old.name} ha muerto`, `a los ${old.age} años`, ['Quienes le conocían lo lloran. El mundo sigue.', ...ensureLife(w).identity!.story.slice(-4).map((e) => `«${e.text}»`), 'Alguien toma el relevo.'], list.map((k, i) => ({
     label: `${k.name}, ${k.relation} (${k.age} años)`,
     primary: i === 0,
-    run: () => {
+    run: () => (pendingHeir = k) && dialogue(app, k.name, `${k.relation}, ${k.age} años`, [`${k.name} no es ${old.name}. Tiene su propio carácter y sus propios sueños.`, '¿Qué hará con lo que deja?'], [
+      { label: '🕯 Honrar el legado', hint: 'Hereda buena parte de la reputación… y los enemigos.', primary: true, run: () => takeOver(true) },
+      { label: '🌱 Seguir su propio camino', hint: 'Empieza casi de cero. Pocos le juzgarán por lo que hizo su familia.', run: () => takeOver(false) },
+    ]),
+  })));
+  function takeOver(honor: boolean): void {
+    const k = pendingHeir!;
+    {
       if (!old.family.length) old.family.push({ ...k });
-      const name = succeed(w, k.name);
+      const name = succeed(w, k.name, honor);
       const l = getLayout(w);
       const home = l.villages[w.player.home];
       const hogar = home.keys.find((b) => b.kind === 'hogar');
@@ -423,7 +662,7 @@ export function succession(app: App): void {
       app.scene?.teleport(spot.x, spot.y);
       app.banner('Una nueva generación', name);
       app.refresh();
-    },
-  })));
+    }
+  }
 }
 

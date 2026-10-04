@@ -71,7 +71,7 @@ export function populate(life: Life, w: WorldState, rng: Rng, houseCount: (regio
     // Personajes del motor.
     for (const c of w.characters.filter((x) => x.regionId === r.id && x.alive)) linkCharacter(life, w, c, rng);
     const n = folkTarget(r.population, r.isHome);
-    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', ...(r.isHome ? (['anciano'] as FolkRole[]) : (['anciano', 'guardia'] as FolkRole[]))];
+    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', ...(r.isHome ? (['anciano', 'lider', 'sanadora'] as FolkRole[]) : (['anciano', 'guardia'] as FolkRole[]))];
     while (roles.length < n) roles.push(rng.pick(pool));
     for (const role of roles.slice(0, n)) {
       const age = role === 'nino' ? rng.int(5, 12) : role === 'anciano' ? rng.int(62, 78) : rng.int(18, 55);

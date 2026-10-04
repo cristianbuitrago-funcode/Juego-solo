@@ -599,10 +599,35 @@ function closeRoute(ctx: Ctx, routeId: number): string {
 // ---------------------------------------------------------------------------
 // Ejecutar una acción desde la interfaz.
 // ---------------------------------------------------------------------------
+/**
+ * Autoridad necesaria para cada decisión (0 forastero … 6 líder). El
+ * protagonista empieza sin voz: lo que puede hacer en nombre de otros lo
+ * decide el cargo que se haya ganado en su comunidad.
+ */
+export const ACTION_LEVEL: Record<string, number> = {
+  difundir: 1, advertir: 2, compartir: 3, compartirTecnologia: 3,
+  observar: 4, destacar: 4, retirar: 4, espiar: 4, investigar: 4, negar: 4,
+  ayuda: 5, regalo: 5, explotar: 5, comercio: 5, mediar: 5, presion: 5, sabotaje: 5, intervenir: 5, cerrarRuta: 5, abrirRuta: 5, ley: 5, prioridad: 5,
+  alianza: 6, romperAlianza: 6, prohibir: 6, permitir: 6, favorecer: 6, abandonar: 6, retomar: 6,
+};
+
+export const AUTHORITY_NAMES = ['forastero', 'conocido', 'apreciado', 'de confianza', 'consejero', 'miembro del consejo', 'líder'];
+
+/** ¿Tiene el protagonista voz para esta decisión? */
+export function hasAuthority(w: WorldState, actionId: string): boolean {
+  return (w.player.authority ?? 6) >= (ACTION_LEVEL[actionId] ?? 0);
+}
+
+export function authorityReason(w: WorldState, actionId: string): string {
+  const need = ACTION_LEVEL[actionId] ?? 0;
+  return `Nadie actuaría por orden tuya: haría falta ser ${AUTHORITY_NAMES[need]} en ${w.regions[w.player.home].name}.`;
+}
+
 export function performAction(w: WorldState, actionId: string, params: Params): ActionResult {
   const def = ACTIONS[actionId];
   if (!def) return { ok: false, message: 'Acción desconocida.' };
   if (w.ended) return { ok: false, message: 'La era ha terminado.' };
+  if (!hasAuthority(w, actionId)) return { ok: false, message: authorityReason(w, actionId) };
   const reason = def.check(w, params);
   if (reason) return { ok: false, message: reason };
   const ctx = makeCtx(w);

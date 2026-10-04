@@ -8,7 +8,7 @@ import { conclude, foundFragment } from './systems/mystery';
 import type { Rumor, WorldState } from './types';
 import { commitCtx, makeCtx } from './world';
 
-export { ACTIONS, answerPetition, freeAgents, performAction, talkTo, type ActionDef, type Params } from './actions';
+export { ACTIONS, ACTION_LEVEL, AUTHORITY_NAMES, answerPetition, authorityReason, hasAuthority, freeAgents, performAction, talkTo, type ActionDef, type Params } from './actions';
 export { createWorld } from './gen/worldgen';
 export { advanceDay, continueEra, eraTitle, type DayReport } from './simulation';
 
