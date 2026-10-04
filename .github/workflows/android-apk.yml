@@ -1,0 +1,52 @@
+# Compila el APK de Android (debug, instalable directamente) en los servidores
+# de GitHub, que ya traen el SDK de Android. El APK queda como artefacto de
+# la ejecución: Actions → «APK Android» → ecos-apk.
+name: APK Android
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas y compilación web
+        run: |
+          npm test
+          npm run build
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # El runner ya trae el SDK de Android; solo se añade la plataforma 36.
+      - name: Plataforma Android 36
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Copiar la web al proyecto Android
+        run: npx cap sync android
+
+      - name: Compilar APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ecos-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
