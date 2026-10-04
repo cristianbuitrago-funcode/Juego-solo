@@ -52,6 +52,8 @@ export class MapView {
   private raf = 0;
   private dirty = true;
   selected: number | null = null;
+  /** Posición del jugador en unidades del mapa (para dibujar dónde estás). */
+  player: { x: number; y: number } | null = null;
   highlights = new Set<number>(); // regiones con pistas nuevas hoy
   smokeAt = new Set<number>();
   reduceMotion = false;
@@ -392,6 +394,30 @@ export class MapView {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawMissions(g, t);
     this.drawLabels(g, t, animate);
+    if (this.player) {
+      const p = this.toScreen(this.player.x, this.player.y);
+      const pulse = animate ? (Math.sin(t / 300) + 1) / 2 : 0.5;
+      g.strokeStyle = `rgba(233,180,76,${0.4 + pulse * 0.5})`;
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(p.x, p.y, 10 + pulse * 6, 0, Math.PI * 2);
+      g.stroke();
+      g.fillStyle = '#e9b44c';
+      g.strokeStyle = '#2b1e15';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.font = '700 12px Georgia, serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'bottom';
+      g.lineWidth = 3;
+      g.strokeStyle = 'rgba(244,233,206,0.9)';
+      g.strokeText('Estás aquí', p.x, p.y - 12);
+      g.fillStyle = '#2b1e15';
+      g.fillText('Estás aquí', p.x, p.y - 12);
+    }
   }
 
   private drawRiver(g: CanvasRenderingContext2D): void {

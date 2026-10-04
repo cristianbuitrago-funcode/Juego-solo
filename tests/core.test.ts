@@ -116,6 +116,8 @@ describe('memoria y consecuencias en cadena', () => {
     const leader = w.characters.find((c) => c.regionId === target.id)!;
     const before = leader.emotions.gratitude;
     performAction(w, 'ayuda', { region: target.id });
+    // La caravana tarda en llegar: el recuerdo nace cuando llega.
+    for (let i = 0; i < 3; i++) advanceDay(w);
     expect(leader.memories.some((m) => m.kind === 'ayuda')).toBe(true);
     expect(leader.emotions.gratitude).toBeGreaterThan(before);
   });
@@ -149,6 +151,16 @@ describe('hipótesis', () => {
     const h = w.hypotheses[0];
     expect(['correcta', 'parcial', 'incorrecta']).toContain(h.result);
     expect(h.explanation).toBeTruthy();
+  });
+
+  it('la caravana llega días después y puede verse como una provocación', () => {
+    const w = createWorld(14);
+    const r = w.regions.find((x) => !x.isHome && x.neighbors.some((n) => !w.regions[n].isHome))!;
+    const before = r.food;
+    performAction(w, 'ayuda', { region: r.id, amount: 20 });
+    expect(r.food).toBe(before);
+    for (let i = 0; i < 4; i++) advanceDay(w);
+    expect(w.entries.some((e) => e.text.startsWith(`Tu caravana llegó a ${r.name}`))).toBe(true);
   });
 
   it('una ayuda grande hace correcta la hipótesis de que el alimento sube', () => {

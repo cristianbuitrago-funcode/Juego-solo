@@ -1,6 +1,5 @@
 import { MEMORY_LINES } from '../../core/content/dialogue';
-import { ACTIONS, talkTo } from '../../core/api';
-import type { Params } from '../../core/actions';
+import { talkTo } from '../../core/api';
 import { ago, fill } from '../../core/util';
 import { charactersOf, routesOf } from '../../core/world';
 import { audio } from '../../audio/audio';
@@ -8,7 +7,6 @@ import type { App } from '../app';
 import { clear, h } from '../dom';
 import { regionStatus, STATUS_LABEL } from '../map/colors';
 import { avatar, characterTitle, emotionRead, empty, entryRow, FACT_LABEL, FACT_ORDER } from './common';
-import { openAction } from './composer';
 
 /**
  * Panel de región (hoja inferior deslizable). Solo muestra lo que el jugador
@@ -31,7 +29,7 @@ export function openRegionSheet(app: App, id: number, keepTab: boolean): HTMLEle
   const draw = () => {
     clear(tabs).append(
       ...(['saber', 'gente', 'decidir', 'historia'] as Tab[]).map((t) =>
-        h('button', { class: currentTab === t ? 'on' : '', onclick: () => ((currentTab = t), audio.sfx('tap'), draw()) }, { saber: 'Saber', gente: 'Gente', decidir: 'Decidir', historia: 'Historia' }[t]),
+        h('button', { class: currentTab === t ? 'on' : '', onclick: () => ((currentTab = t), audio.sfx('tap'), draw()) }, { saber: 'Saber', gente: 'Gente', decidir: 'Ir allí', historia: 'Historia' }[t]),
       ),
     );
     clear(body).append(tabs, ...{ saber: tabKnow, gente: tabPeople, decidir: tabDecide, historia: tabHistory }[currentTab](app, id));
@@ -155,48 +153,21 @@ function talk(app: App, characterId: string): void {
   ], { onClose: () => app.refresh() });
 }
 
-/** Acciones disponibles para la región, agrupadas. */
+/**
+ * Las decisiones ya no se toman desde la ficha: se toman en el mundo.
+ * Aquí se explica cómo llegar y qué se puede hacer allí.
+ */
 function tabDecide(app: App, id: number): Node[] {
   const w = app.w!;
   const r = w.regions[id];
-  if (r.isHome) {
-    return [h('p', { class: 'lead' }, 'Las decisiones sobre tu gente están en la pantalla de Decisiones.'), h('button', { class: 'btn block primary', onclick: () => app.setView('decisiones') }, 'Ir a Decisiones'), ...routeControls(app, id)];
-  }
   const intel = w.intel[id];
-  const ids: string[] = [];
-  ids.push('observar', intel.observerStationed ? 'retirar' : 'destacar', 'espiar');
-  if (r.abandoned) ids.push('retomar');
-  else {
-    ids.push('ayuda', 'regalo', 'comercio', 'explotar', 'mediar', 'alianza', 'romperAlianza', 'presion', 'difundir', 'sabotaje');
-    ids.push(r.resourceBanned ? 'permitir' : 'prohibir');
-    ids.push('favorecer', 'abandonar');
-    if (r.techs.length && intel.facts.tecnologias?.value !== 'nada fuera de lo común') ids.push('compartirTecnologia');
-    if (w.mystery.kind === 'invierno' && w.mystery.solved) ids.push('advertir');
-    if (intel.facts.tension?.value === 'en guerra' || (r.flags.guerra && intel.level > 0)) ids.push('intervenir');
-  }
-  const groups: Record<string, string> = { informacion: 'Información', diplomacia: 'Diplomacia', economia: 'Economía', politica: 'Política', fuerza: 'Último recurso' };
-  const out: Node[] = [];
-  for (const [g, title] of Object.entries(groups)) {
-    const list = ids.filter((a) => ACTIONS[a].group === g);
-    if (!list.length) continue;
-    out.push(h('h3', null, title));
-    out.push(h('div', { class: 'action-grid' }, ...list.map((a) => actionButton(app, a, { region: id }))));
-  }
-  out.push(...routeControls(app, id));
-  return out;
-}
-
-function actionButton(app: App, actionId: string, params: Params): HTMLElement {
-  const w = app.w!;
-  const def = ACTIONS[actionId];
-  let label = def.label;
-  if (actionId === 'favorecer' && w.regions[Number(params.region)].favored) label = 'Dejar de favorecer';
-  // Las acciones de pareja comprueban la otra región en el compositor.
-  const reason = def.target === 'par' ? null : def.check(w, params);
-  return h('button', {
-    class: 'action', 'aria-disabled': reason ? 'true' : 'false',
-    onclick: () => (reason ? app.toast(reason, true) : openAction(app, actionId, params)),
-  }, h('span', { class: 'i' }, def.icon), h('span', null, label));
+  if (r.isHome) return [h('p', { class: 'lead' }, 'Tu hogar. En el almacén preparas caravanas; en el salón del consejo envías emisarios, cambias leyes y escuchas a los mensajeros; en tu casa descansas.')];
+  return [
+    h('p', { class: 'lead' }, intel.level === 0 ? 'No sabes nada de este lugar. Puedes enviar un emisario desde tu salón del consejo… o ir tú.' : `Para tratar con ${r.name} en persona, viaja hasta su pueblo y habla con su líder, visita su posada o su puesto fronterizo.`),
+    h('button', { class: 'btn primary block', onclick: () => { app.waypoint = id; app.closeDiary(); app.toast(`Destino marcado: ${intel.level ? r.name : 'tierra sin explorar'}. Sigue la flecha dorada.`); } }, '🧭 Marcar como destino'),
+    h('p', { class: 'tiny' }, 'Desde tu salón del consejo puedes enviar observadores, espías o investigadores sin moverte de casa.'),
+    ...routeControls(app, id),
+  ];
 }
 
 function routeControls(app: App, id: number): Node[] {
@@ -209,9 +180,9 @@ function routeControls(app: App, id: number): Node[] {
       const other = w.regions[rt.a === id ? rt.b : rt.a];
       const name = w.intel[other.id].level ? other.name : 'una tierra sin explorar';
       const tag = rt.status === 'abierta' ? h('span', { class: 'tag good' }, 'abierto') : rt.status === 'cerrada' ? h('span', { class: 'tag warn' }, 'cerrado') : h('span', { class: 'tag bad' }, 'bloqueado por la guerra');
-      const btn = rt.status === 'abierta' ? h('button', { class: 'btn small', onclick: () => openAction(app, 'cerrarRuta', { route: rt.id, region: id }) }, '⛔ Cerrar') : rt.status === 'cerrada' ? h('button', { class: 'btn small', onclick: () => openAction(app, 'abrirRuta', { route: rt.id, region: id }) }, '✅ Reabrir') : null;
-      return h('div', { class: 'card row', style: 'display:flex;align-items:center;gap:10px' }, h('div', { style: 'flex:1' }, `Hacia ${name} `, tag), btn);
+      return h('div', { class: 'card row', style: 'display:flex;align-items:center;gap:10px' }, h('div', { style: 'flex:1' }, `Hacia ${name} `, tag));
     }),
+    h('p', { class: 'tiny' }, 'Los caminos se abren o se cierran hablando con la guardia de cada puesto fronterizo.'),
   ];
 }
 

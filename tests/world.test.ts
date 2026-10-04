@@ -1,0 +1,220 @@
+import { describe, expect, it } from 'vitest';
+import { performAction } from '../src/core/actions';
+import { createWorld } from '../src/core/gen/worldgen';
+import { exportGame, importGame } from '../src/core/save';
+import { advanceDay } from '../src/core/simulation';
+import type { WorldState } from '../src/core/types';
+import { wireWorld } from '../src/world';
+import { dayOf, hourOf, seasonOf, weatherOf, yearOf } from '../src/world/clock';
+import { describeEncounter, encounterOptions, resolveEncounter } from '../src/world/encounters';
+import { getLayout } from '../src/world/layout';
+import { createLife, ensureLife, heirs, succeed } from '../src/world/life';
+import { findPath, passable } from '../src/world/path';
+import { examinePlace, listenTavern } from '../src/world/presence';
+import { roadPath } from '../src/world/roadnet';
+import { routineOf } from '../src/world/routines';
+import { giveTo, talkToFolk } from '../src/world/talk';
+import { idx } from '../src/world/terrain';
+import { T } from '../src/world/types';
+
+wireWorld();
+
+function world(seed: number): WorldState {
+  const w = createWorld(seed, { eraLength: 0 });
+  ensureLife(w);
+  return w;
+}
+
+describe('terreno y pueblos', () => {
+  it('es determinista y coherente con las regiones del motor', () => {
+    const a = getLayout(createWorld(77));
+    const b = getLayout(createWorld(77));
+    expect(a.roads.length).toBe(b.roads.length);
+    expect(a.villages.map((v) => [v.cx, v.cy])).toEqual(b.villages.map((v) => [v.cx, v.cy]));
+  });
+
+  it('cada región tiene su pueblo con plaza, salón, almacén y posada', () => {
+    const w = createWorld(78);
+    const l = getLayout(w);
+    for (const v of l.villages) {
+      expect(l.terrain.region[idx(v.cx, v.cy)]).toBe(v.regionId);
+      expect(l.terrain.tiles[idx(v.cx, v.cy)]).toBe(T.Plaza);
+      for (const k of ['salon', 'almacen', 'posada']) expect(v.keys.some((b) => b.kind === k)).toBe(true);
+      expect(v.houses.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('los caminos unen los pueblos y cruzan el río por puentes', () => {
+    const w = createWorld(79);
+    const l = getLayout(w);
+    expect(l.roads.length).toBe(w.routes.length);
+    expect(l.posts.length).toBeGreaterThan(0);
+    const path = roadPath(w, l.roads[0].a, l.roads[0].b);
+    expect(path.length).toBeGreaterThan(5);
+    for (const p of path.filter((_, i) => i % 5 === 0)) expect(l.terrain.tiles[idx(p.x, p.y)]).not.toBe(T.River);
+  });
+
+  it('el jugador empieza en tierra firme y puede llegar caminando a la plaza', () => {
+    const w = world(80);
+    const l = getLayout(w);
+    const p = w.life!.player;
+    expect(passable(w, l, p.x, p.y)).toBe(true);
+    const v = l.villages[w.player.home];
+    expect(findPath(w, p.x, p.y, v.cx + 0.5, v.cy + 0.5).length).toBeGreaterThan(0);
+  });
+});
+
+describe('vecinos con rutinas y memoria', () => {
+  it('las rutinas cambian con la hora y con el estado de la región', () => {
+    const w = world(81);
+    const life = w.life!;
+    const farmer = life.folk.find((f) => f.role === 'campesino' && !w.regions[f.regionId].isHome)!;
+    const night = routineOf(w, farmer, 22 * 60 - 6 * 60);
+    const day = routineOf(w, farmer, 9 * 60 - 6 * 60);
+    expect(night.inside).toBe(true);
+    expect(day.inside).toBe(false);
+    expect(day.activity).toContain('campo');
+    w.regions[farmer.regionId].flags.hambre = { since: w.day };
+    expect(routineOf(w, farmer, 9 * 60 - 6 * 60).activity).toContain('cola');
+  });
+
+  it('un vecino recuerda que le diste comida y te reconoce al volver', () => {
+    const w = world(82);
+    const f = w.life!.folk.find((x) => !x.charId && x.role !== 'nino')!;
+    talkToFolk(w, f.id);
+    giveTo(w, f.id, 'comida');
+    expect(f.memories.some((m) => m.kind === 'comida')).toBe(true);
+    for (let i = 0; i < 12; i++) advanceDay(w);
+    if (f.alive) {
+      const res = talkToFolk(w, f.id);
+      expect(res.lines[0]).toMatch(/volverías|Eres tú/);
+    }
+  });
+
+  it('la información que comparten depende de la confianza', () => {
+    const w = world(83);
+    const f = w.life!.folk.find((x) => !x.charId && !w.regions[x.regionId].isHome)!;
+    f.trust = 0;
+    f.resentment = 1;
+    f.gratitude = 0;
+    const res = talkToFolk(w, f.id);
+    expect(res.learned.join(' ')).toContain('evita hablar');
+  });
+
+  it('nacen, envejecen y mueren con el paso de los años', () => {
+    const w = world(84);
+    const before = w.life!.folk.filter((f) => !f.charId).map((f) => f.age);
+    for (let i = 0; i < 45; i++) advanceDay(w);
+    const after = w.life!.folk.filter((f) => !f.charId && f.alive);
+    expect(after.some((f) => f.age > (before[0] ?? 0) || f.role === 'nino')).toBe(true);
+    expect(w.life!.folk.length).toBeGreaterThan(30);
+  });
+});
+
+describe('consecuencias visibles', () => {
+  it('la caravana física sale del almacén y llega cuando el motor entrega las provisiones', () => {
+    const w = world(85);
+    const target = w.regions.find((r) => !r.isHome && roadPath(w, w.player.home, r.id).length)!;
+    performAction(w, 'ayuda', { region: target.id, amount: 12 });
+    const c = w.life!.caravans[0];
+    expect(c).toBeDefined();
+    expect(c.arrive).toBeGreaterThan(c.depart);
+  });
+
+  it('la guerra quema casas y la paz trae la reconstrucción', () => {
+    const w = world(86);
+    const a = w.regions.find((r) => !r.isHome && r.neighbors.some((n) => !w.regions[n].isHome))!;
+    const b = w.regions[a.neighbors.find((n) => !w.regions[n].isHome)!];
+    a.relations[b.id].war = b.relations[a.id].war = true;
+    a.flags.guerra = { since: w.day, data: { with: b.id } };
+    b.flags.guerra = { since: w.day, data: { with: a.id } };
+    for (let i = 0; i < 8; i++) advanceDay(w);
+    const burned = w.life!.towns[a.id].burned.length + w.life!.towns[b.id].burned.length;
+    expect(burned).toBeGreaterThan(0);
+  });
+});
+
+describe('exploración y encuentros', () => {
+  it('examinar lugares descubiertos da objetos y puede revelar la verdad oculta', () => {
+    const w = world(87);
+    const l = getLayout(w);
+    const p = l.places[0];
+    w.life!.places[p.id] = { discovered: true };
+    const lines = examinePlace(w, p.id);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(w.life!.places[p.id].examined).toBe(true);
+  });
+
+  it('escuchar en la posada solo se puede una vez al día', () => {
+    const w = world(88);
+    const r = w.regions.find((x) => !x.isHome)!;
+    listenTavern(w, r.id);
+    expect(listenTavern(w, r.id)[0]).toContain('Vuelve mañana');
+  });
+
+  it('una disputa ignorada puede convertirse en una ofensa entre pueblos', () => {
+    let escalated = 0;
+    for (let s = 0; s < 6; s++) {
+      const w = world(90 + s);
+      const r = w.regions.find((x) => !x.isHome && x.neighbors.some((n) => !w.regions[n].isHome))!;
+      const o = r.neighbors.find((n) => !w.regions[n].isHome)!;
+      r.relations[o].tension = 0.5;
+      const a = w.life!.folk.find((f) => f.regionId === r.id && !f.charId)!;
+      const b = w.life!.folk.find((f) => f.regionId === o && !f.charId)!;
+      w.life!.encounters.push({ id: 'n1', kind: 'disputa', regionId: r.id, x: 10, y: 10, day: w.day, folkA: a.id, folkB: b.id, otherRegion: o, truth: 'robo', resolved: false, learned: [], announced: true });
+      const e = w.life!.encounters[0];
+      expect(describeEncounter(w, e).scene).toContain(a.name);
+      expect(encounterOptions(w, e).some((x) => x.id === 'investigar')).toBe(true);
+      resolveEncounter(w, 'n1', 'irse');
+      if (w.entries.some((x) => x.text.includes('ofensa entre pueblos'))) escalated++;
+    }
+    expect(escalated).toBeGreaterThan(0);
+  });
+});
+
+describe('tiempo y generaciones', () => {
+  it('el calendario tiene horas, estaciones, años y tiempo atmosférico', () => {
+    expect(hourOf(0)).toBe(6);
+    expect(dayOf(1440)).toBe(2);
+    expect(seasonOf(1)).toBe('primavera');
+    expect(seasonOf(16)).toBe('invierno');
+    expect(yearOf(21)).toBe(2);
+    expect(['despejado', 'nublado', 'lluvia', 'niebla', 'nieve']).toContain(weatherOf(createWorld(1), 3));
+  });
+
+  it('cuando el personaje muere, un heredero toma el relevo y la partida continúa', () => {
+    const w = world(95);
+    const life = w.life!;
+    life.player.family[0].age = 20;
+    expect(heirs(life).length).toBeGreaterThan(0);
+    const oldName = life.player.name;
+    const heir = heirs(life)[0].name;
+    succeed(w, heir);
+    expect(w.life!.player.name).toBe(heir);
+    expect(w.life!.player.generation).toBe(2);
+    expect(w.life!.player.lineage[0].name).toBe(oldName);
+    expect(w.entries.some((e) => e.text.includes(`Muere ${oldName}`))).toBe(true);
+    advanceDay(w);
+    expect(w.ended).toBe(false);
+  });
+
+  it('el mundo es infinito si no se fija una era', () => {
+    const w = world(96);
+    for (let i = 0; i < 80; i++) advanceDay(w);
+    expect(w.ended).toBe(false);
+  });
+});
+
+describe('guardado del mundo vivo', () => {
+  it('la capa de vida viaja con la partida y las partidas antiguas se migran', () => {
+    const w = world(97);
+    const back = importGame(exportGame(w))!;
+    expect(back.life?.folk.length).toBe(w.life!.folk.length);
+    const old = createWorld(98);
+    (old as { version: number }).version = 1;
+    const migrated = importGame(exportGame(old))!;
+    expect(migrated.version).toBe(2);
+    expect(ensureLife(migrated).folk.length).toBeGreaterThan(0);
+    expect(createLife(migrated).player.name).toBeTruthy();
+  });
+});

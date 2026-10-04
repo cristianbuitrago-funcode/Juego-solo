@@ -18,7 +18,13 @@ function chips<T extends string | number>(options: [T, string][], current: T | u
 
 const knownRegions = (w: WorldState, exclude: number[] = []) => w.regions.filter((r) => !r.isHome && w.intel[r.id].level > 0 && !exclude.includes(r.id));
 
-export function openAction(app: App, actionId: string, base: Params): void {
+export interface Extra {
+  key: string;
+  label: string;
+  options: [number | string, string][];
+}
+
+export function openAction(app: App, actionId: string, base: Params, opts: { extras?: Extra[]; onDone?: () => void } = {}): void {
   const w = app.w!;
   const def = ACTIONS[actionId];
   const params: Params = { ...base };
@@ -28,7 +34,11 @@ export function openAction(app: App, actionId: string, base: Params): void {
 
   const draw = () => {
     clear(body);
-    add(body, h('h2', null, `${def.icon} ${def.label}`), h('p', { class: 'lead' }, def.hint));
+    add(body, h('h2', null, `${def.icon} ${def.label}`), h('p', { class: 'lead' }, def.hint), params.inPerson ? h('p', { class: 'tiny' }, 'Estás aquí en persona: no hace falta enviar a ningún emisario.') : null);
+    for (const ex of opts.extras ?? []) {
+      if (params[ex.key] === undefined) params[ex.key] = ex.options[Math.min(1, ex.options.length - 1)][0];
+      add(body, h('div', { class: 'field' }, h('label', null, ex.label), chips(ex.options, params[ex.key], (v) => ((params[ex.key] = v), draw()))));
+    }
     const r = params.region !== undefined ? w.regions[Number(params.region)] : undefined;
     // Parámetros según el tipo de acción.
     if (def.target === 'par' && r) {
@@ -50,7 +60,7 @@ export function openAction(app: App, actionId: string, base: Params): void {
       add(body, 
         h('p', { class: 'quote' }, `«${ru?.text}»`),
         h('div', { class: 'field' }, h('label', null, '¿A quién se lo cuentas?'),
-          chips(knownRegions(w).map((x) => [x.id, x.name] as [number, string]), params.region as number | undefined, (v) => ((params.region = v), draw()))),
+          chips(knownRegions(w).filter((x) => !params.inPerson || x.id === Number(params.region)).map((x) => [x.id, x.name] as [number, string]), params.region as number | undefined, (v) => ((params.region = v), draw()))),
         h('div', { class: 'field' }, h('label', null, 'Qué afirmas'),
           chips<string>([['cierto', 'Que es cierto'], ['falso', 'Que es falso']], params.claim as string | undefined, (v) => ((params.claim = v), draw()))),
         ru?.verdict ? h('div', { class: 'tiny' }, `Lo que tú sabes: ${ru.verdict}.`) : h('div', { class: 'tiny' }, 'Aún no lo has investigado: afirmes lo que afirmes, es una apuesta.'),
@@ -103,6 +113,7 @@ export function openAction(app: App, actionId: string, base: Params): void {
     close();
     app.toast(res.message);
     app.refresh();
+    opts.onDone?.();
   };
   draw();
   close = app.modal(() => [body]);

@@ -46,7 +46,9 @@ export function freeAgents(w: WorldState): number {
 
 const R = (w: WorldState, p: Params, key = 'region'): Region => w.regions[Number(p[key])];
 
-function needAgent(w: WorldState): string | null {
+/** Hace falta un emisario libre, salvo que el jugador esté allí en persona. */
+function needAgent(w: WorldState, p?: Params): string | null {
+  if (p?.inPerson) return null;
   return freeAgents(w) > 0 ? null : 'No te quedan emisarios disponibles.';
 }
 
@@ -77,6 +79,12 @@ function endMission(ctx: Ctx, id: string | number | boolean): void {
   ctx.w.missions = ctx.w.missions.filter((m) => m.id !== id);
 }
 
+/** Tamaño de una caravana: 8, 12 (por defecto) o 20 provisiones. */
+function amountOf(p: Params): number {
+  const n = Number(p.amount ?? 12);
+  return n === 8 || n === 20 ? n : 12;
+}
+
 function travelDays(w: WorldState, regionId: number): number {
   const d = hops(w, w.player.home)[regionId];
   return d <= 1 ? 2 : d === 2 ? 2 : 3;
@@ -95,7 +103,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   observar: {
     id: 'observar', label: 'Enviar observador', icon: '👁', group: 'informacion', target: 'region',
     hint: 'Un emisario viaja y vuelve con un informe fiable de lo que ocurre (y de lo que ocurrió).',
-    check: (w, p) => all(needAgent(w), notHome(w, p)),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p)),
     run: (ctx, p) => {
       const r = R(ctx.w, p);
       const id = act(ctx, `Enviaste un observador a ${r.name}.`, []);
@@ -106,7 +114,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   destacar: {
     id: 'destacar', label: 'Destacar observador', icon: '📌', group: 'informacion', target: 'region',
     hint: 'Un emisario se queda a vivir allí: recibirás informes frecuentes mientras permanezca.',
-    check: (w, p) => all(needAgent(w), notHome(w, p), w.intel[Number(p.region)].observerStationed ? 'Ya tienes a alguien allí.' : null),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p), w.intel[Number(p.region)].observerStationed ? 'Ya tienes a alguien allí.' : null),
     run: (ctx, p) => {
       const r = R(ctx.w, p);
       ctx.w.intel[r.id].observerStationed = true;
@@ -126,7 +134,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   espiar: {
     id: 'espiar', label: 'Escuchar conversaciones', icon: '👂', group: 'informacion', target: 'region', method: 'engano',
     hint: 'Infiltras a alguien para conocer a su gente, sus recuerdos y sus intenciones. Pueden descubrirlo.',
-    check: (w, p) => all(needAgent(w), notHome(w, p)),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p)),
     run: (ctx, p) => {
       const r = R(ctx.w, p);
       const id = act(ctx, `Infiltraste a alguien en ${r.name} para escuchar conversaciones.`, []);
@@ -139,7 +147,7 @@ export const ACTIONS: Record<string, ActionDef> = {
     hint: 'Comprobar si un rumor es cierto, falso o un malentendido.',
     check: (w, p) => {
       const ru = w.rumors.find((x) => x.id === p.rumor);
-      return all(needAgent(w), !ru ? 'Rumor desconocido.' : ru.investigated ? 'Ya lo investigaste.' : null);
+      return all(needAgent(w, p), !ru ? 'Rumor desconocido.' : ru.investigated ? 'Ya lo investigaste.' : null);
     },
     run: (ctx, p) => {
       const ru = ctx.w.rumors.find((x) => x.id === p.rumor)!;
@@ -149,29 +157,22 @@ export const ACTIONS: Record<string, ActionDef> = {
     },
   },
   ayuda: {
-    id: 'ayuda', label: 'Enviar provisiones', icon: '🌾', group: 'economia', target: 'region', method: 'ayuda',
-    hint: 'Alivia el hambre ahora. Repetirlo crea dependencia y envidias.',
-    check: (w, p) => all(notHome(w, p), notAbandoned(w, p), w.player.reserves < 12 ? 'No tienes provisiones suficientes.' : null),
+    id: 'ayuda', label: 'Enviar una caravana de provisiones', icon: '🌾', group: 'economia', target: 'region', method: 'ayuda',
+    hint: 'La caravana tarda días en llegar. Alivia el hambre; repetirlo crea dependencia, y no todos los vecinos lo verán con buenos ojos.',
+    check: (w, p) => all(notHome(w, p), notAbandoned(w, p), w.player.reserves < amountOf(p) ? 'No tienes provisiones suficientes.' : null),
     run: (ctx, p) => {
       const { w } = ctx;
       const r = R(w, p);
-      w.player.reserves -= 12;
-      const id = act(ctx, `Enviaste provisiones a ${r.name}.`, [r.id]);
-      const k = influence(r);
-      r.food += 6;
-      r.attitude.trust = clamp(r.attitude.trust + 0.07 * k);
-      r.attitude.gratitude = clamp(r.attitude.gratitude + 0.1 * k);
-      r.dependency = clamp(r.dependency + 0.12);
+      const amount = amountOf(p);
+      w.player.reserves -= amount;
+      const size = amount <= 8 ? 'pequeña' : amount >= 20 ? 'grande' : '';
+      const id = act(ctx, `Enviaste una caravana ${size ? size + ' ' : ''}de provisiones a ${r.name}.`.replace('  ', ' '), [r.id]);
+      r.dependency = clamp(r.dependency + 0.12 * (amount / 12));
       r.selfReliance = clamp(r.selfReliance - 0.04);
-      const repeated = (r.patternsSeen.ayuda ?? 0) >= 3;
-      regionRemembers(ctx, r.id, repeated ? 'ayudaRepetida' : 'ayuda', repeated ? 0.2 : 0.55, id);
-      // Envidia de quienes desconfían de esta región.
-      for (const nb of r.neighbors) {
-        const o = w.regions[nb];
-        if (!o.isHome && o.relations[r.id]?.opinion < -0.1) o.attitude.trust = clamp(o.attitude.trust - 0.03);
-      }
+      const days = travelDays(w, r.id);
+      schedule(ctx, 'caravanaLlega', days, { region: r.id, food: amount / 2 }, id);
       notePattern(ctx, 'ayuda', r.id, id);
-      return `Los carros salen hacia ${r.name}.`;
+      return `La caravana sale hacia ${r.name}. Llegará en unos ${days} días.`;
     },
   },
   regalo: {
@@ -210,7 +211,7 @@ export const ACTIONS: Record<string, ActionDef> = {
     hint: 'Más comercio en el camino que os une. Más presión sobre su tierra.',
     check: (w, p) => {
       const route = routeBetween(w, w.player.home, Number(p.region));
-      return all(needAgent(w), notHome(w, p), notAbandoned(w, p), !route ? 'Necesitas un camino directo con esa región.' : route.status !== 'abierta' ? 'El camino no está abierto.' : null);
+      return all(needAgent(w, p), notHome(w, p), notAbandoned(w, p), !route ? 'Necesitas un camino directo con esa región.' : route.status !== 'abierta' ? 'El camino no está abierto.' : null);
     },
     run: (ctx, p) => {
       const r = R(ctx.w, p);
@@ -218,7 +219,7 @@ export const ACTIONS: Record<string, ActionDef> = {
       const id = act(ctx, `Firmaste un acuerdo comercial con ${r.name}.`, [r.id]);
       route.baseTraffic = clamp(route.baseTraffic + 0.18, 0, 1.2);
       r.attitude.trust = clamp(r.attitude.trust + 0.05 * influence(r));
-      startMission(ctx, 'diplomacia', r.id, 1, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', r.id, 1, {}, id);
       notePattern(ctx, 'comercio', r.id, id);
       return 'Los mercaderes celebran el acuerdo.';
     },
@@ -226,12 +227,12 @@ export const ACTIONS: Record<string, ActionDef> = {
   mediar: {
     id: 'mediar', label: 'Mediar entre regiones', icon: '⚖', group: 'diplomacia', target: 'par', method: 'dialogo',
     hint: 'Sientas a dos pueblos a la misma mesa. Depende de la confianza, los agravios y tu reputación.',
-    check: (w, p) => all(needAgent(w), notHome(w, p), p.other === undefined ? 'Elige la otra región.' : null, w.regions[Number(p.region)].relations[Number(p.other)] ? null : 'No son vecinas.'),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p), p.other === undefined ? 'Elige la otra región.' : null, w.regions[Number(p.region)].relations[Number(p.other)] ? null : 'No son vecinas.'),
     run: (ctx, p) => {
       const a = R(ctx.w, p);
       const b = R(ctx.w, p, 'other');
       const id = act(ctx, `Iniciaste una mediación entre ${a.name} y ${b.name}.`, [a.id, b.id], a.relations[b.id].tensionCause);
-      startMission(ctx, 'diplomacia', a.id, 2, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', a.id, 2, {}, id);
       schedule(ctx, 'mediacion', 2, { a: a.id, b: b.id }, id);
       notePattern(ctx, 'dialogo', a.id, id);
       return 'Tus emisarios convocan a ambas partes. Sabrás el resultado en unos días.';
@@ -242,13 +243,13 @@ export const ACTIONS: Record<string, ActionDef> = {
     hint: 'Une a dos vecinos que se aprecian. Fracasa si se desconfían.',
     check: (w, p) => {
       const rel = w.regions[Number(p.region)].relations[Number(p.other)];
-      return all(needAgent(w), notHome(w, p), p.other === undefined ? 'Elige la otra región.' : null, !rel ? 'No son vecinas.' : rel.allied ? 'Ya son aliadas.' : rel.war ? 'Están en guerra.' : null);
+      return all(needAgent(w, p), notHome(w, p), p.other === undefined ? 'Elige la otra región.' : null, !rel ? 'No son vecinas.' : rel.allied ? 'Ya son aliadas.' : rel.war ? 'Están en guerra.' : null);
     },
     run: (ctx, p) => {
       const a = R(ctx.w, p);
       const b = R(ctx.w, p, 'other');
       const id = act(ctx, `Propusiste una alianza entre ${a.name} y ${b.name}.`, [a.id, b.id]);
-      startMission(ctx, 'diplomacia', a.id, 2, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', a.id, 2, {}, id);
       schedule(ctx, 'alianza', 2, { a: a.id, b: b.id }, id);
       return 'Tus emisarios llevan la propuesta.';
     },
@@ -258,14 +259,14 @@ export const ACTIONS: Record<string, ActionDef> = {
     hint: 'Siembras desconfianza entre dos aliados. Si se descubre, no te lo perdonarán.',
     check: (w, p) => {
       const rel = w.regions[Number(p.region)].relations[Number(p.other)];
-      return all(needAgent(w), notHome(w, p), !rel?.allied ? 'No son aliadas.' : null);
+      return all(needAgent(w, p), notHome(w, p), !rel?.allied ? 'No son aliadas.' : null);
     },
     run: (ctx, p) => {
       const { w } = ctx;
       const a = R(w, p);
       const b = R(w, p, 'other');
       const id = act(ctx, `Sembraste desconfianza entre ${a.name} y ${b.name}.`, [a.id, b.id]);
-      startMission(ctx, 'diplomacia', a.id, 2, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', a.id, 2, {}, id);
       a.relations[b.id].allied = b.relations[a.id].allied = false;
       for (const [x, y] of [[a, b], [b, a]]) {
         x.relations[y.id].opinion = clamp(x.relations[y.id].opinion - 0.45, -1, 1);
@@ -305,7 +306,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   sabotaje: {
     id: 'sabotaje', label: 'Sabotaje', icon: '🔥', group: 'fuerza', target: 'region', method: 'engano',
     hint: 'Retrasa sus preparativos o inventos. Si te descubren, el rencor será enorme.',
-    check: (w, p) => all(needAgent(w), notHome(w, p)),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p)),
     run: (ctx, p) => {
       const r = R(ctx.w, p);
       const id = act(ctx, `Enviaste a alguien a sabotear ${r.name}.`, []);
@@ -338,7 +339,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   compartir: {
     id: 'compartir', label: 'Compartir información', icon: '📜', group: 'informacion', target: 'rumor', method: 'informacion',
     hint: 'Cuentas a una región lo que sabes (o lo que dices saber) sobre un rumor.',
-    check: (w, p) => all(needAgent(w), p.region === undefined ? 'Elige a quién contárselo.' : null, notHome(w, p), p.claim === undefined ? 'Elige qué afirmar.' : null),
+    check: (w, p) => all(needAgent(w, p), p.region === undefined ? 'Elige a quién contárselo.' : null, notHome(w, p), p.claim === undefined ? 'Elige qué afirmar.' : null),
     run: (ctx, p) => {
       const { w, rng } = ctx;
       const ru = w.rumors.find((x) => x.id === p.rumor)!;
@@ -346,7 +347,7 @@ export const ACTIONS: Record<string, ActionDef> = {
       const claimTrue = p.claim === 'cierto';
       const honest = claimTrue === ru.truth;
       const id = act(ctx, `Contaste a ${r.name} que el rumor «${ru.text}» es ${claimTrue ? 'cierto' : 'falso'}.`, [r.id], ru.causeId);
-      startMission(ctx, 'diplomacia', r.id, 1, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', r.id, 1, {}, id);
       const believed = rng.chance(clamp(0.25 + w.player.credibility * 0.5 + r.attitude.trust * 0.35));
       const rel = r.relations[ru.about];
       if (believed) {
@@ -372,7 +373,7 @@ export const ACTIONS: Record<string, ActionDef> = {
   difundir: {
     id: 'difundir', label: 'Crear un rumor', icon: '🗣', group: 'politica', target: 'par', method: 'engano',
     hint: 'Haces correr una historia sobre una región entre la gente de otra. Puede volverse contra ti.',
-    check: (w, p) => all(needAgent(w), notHome(w, p), p.other === undefined ? 'Elige sobre quién.' : null, p.kind === undefined ? 'Elige el tipo de rumor.' : null),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p), p.other === undefined ? 'Elige sobre quién.' : null, p.kind === undefined ? 'Elige el tipo de rumor.' : null),
     run: (ctx, p) => {
       const { w } = ctx;
       const audience = R(w, p);
@@ -380,7 +381,7 @@ export const ACTIONS: Record<string, ActionDef> = {
       const kind = String(p.kind) as RumorKind;
       const truth = kind === 'ataque' ? about.militancy > 0.55 : kind === 'hambre' ? about.food < 3 : kind === 'riqueza' ? about.food > 15 : kind === 'enfermedad' ? !!about.flags.fiebre : false;
       const id = act(ctx, `Hiciste correr un rumor en ${audience.name} sobre ${about.name}.`, []);
-      startMission(ctx, 'diplomacia', audience.id, 1, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', audience.id, 1, {}, id);
       createRumor(ctx, { kind, about: about.id, target: kind === 'ataque' || kind === 'traicion' ? audience.id : undefined, heardIn: audience.id, truth, origin: 'jugador', believers: [audience.id], causeId: id, forceKnown: true });
       scheduleExposure(ctx, 'rumorPropio', 0.45, { region: audience.id, about: about.id }, id);
       return 'La historia empieza a circular.';
@@ -389,12 +390,12 @@ export const ACTIONS: Record<string, ActionDef> = {
   advertir: {
     id: 'advertir', label: 'Advertir del invierno', icon: '❄', group: 'informacion', target: 'region', method: 'informacion',
     hint: 'Compartes lo que sabes del invierno largo para que se preparen.',
-    check: (w, p) => all(needAgent(w), notHome(w, p), w.mystery.kind === 'invierno' && w.mystery.solved ? null : 'No sabes de qué advertir.', R(w, p).flags.advertida ? 'Ya están avisados.' : null),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p), w.mystery.kind === 'invierno' && w.mystery.solved ? null : 'No sabes de qué advertir.', R(w, p).flags.advertida ? 'Ya están avisados.' : null),
     run: (ctx, p) => {
       const { w } = ctx;
       const r = R(w, p);
       const id = act(ctx, `Advertiste a ${r.name} del invierno largo.`, [r.id]);
-      startMission(ctx, 'diplomacia', r.id, 1, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', r.id, 1, {}, id);
       if (r.attitude.trust > 0.28 || w.player.credibility > 0.6) {
         r.flags.advertida = { since: w.day, causeId: id };
         r.food += 2;
@@ -505,13 +506,13 @@ export const ACTIONS: Record<string, ActionDef> = {
   compartirTecnologia: {
     id: 'compartirTecnologia', label: 'Difundir un invento', icon: '💡', group: 'informacion', target: 'region', method: 'informacion',
     hint: 'Enseñas a los vecinos lo que esta región inventó. El mundo avanza; el inventor se enfada.',
-    check: (w, p) => all(needAgent(w), notHome(w, p), R(w, p).techs.length ? null : 'No han inventado nada.'),
+    check: (w, p) => all(needAgent(w, p), notHome(w, p), R(w, p).techs.length ? null : 'No han inventado nada.'),
     run: (ctx, p) => {
       const { w } = ctx;
       const r = R(w, p);
       const tech = (p.tech as string) && TECH_BY_ID[p.tech as string] ? (p.tech as string) : r.techs[r.techs.length - 1];
       const id = act(ctx, `Difundiste ${TECH_BY_ID[tech].name} de ${r.name} entre sus vecinos.`, [r.id], r.flags[`invento_${tech}`]?.causeId);
-      startMission(ctx, 'diplomacia', r.id, 1, {}, id);
+      if (!p.inPerson) startMission(ctx, 'diplomacia', r.id, 1, {}, id);
       for (const nb of r.neighbors) {
         const o = w.regions[nb];
         if (o.isHome || o.techs.includes(tech)) continue;
@@ -608,7 +609,16 @@ export function performAction(w: WorldState, actionId: string, params: Params): 
   const message = def.run(ctx, params);
   w.player.actionsToday++;
   commitCtx(ctx);
+  for (const l of listeners) l(w, actionId, params);
   return { ok: true, message };
+}
+
+type ActionListener = (w: WorldState, actionId: string, params: Params) => void;
+const listeners: ActionListener[] = [];
+
+/** Otras capas (el mundo explorable) pueden reaccionar a las decisiones tomadas. */
+export function onAction(l: ActionListener): void {
+  listeners.push(l);
 }
 
 /** Resolver una petición con una de sus opciones. */
@@ -737,6 +747,38 @@ registerEffect('alianza', (ctx, s) => {
     regionRemembers(ctx, b.id, 'alianza', 0.4, e.id, { X: a.name }, a.id);
   } else {
     record(ctx, { kind: 'diplomacia', text: `${a.name} y ${b.name} rechazan la alianza: aún no se fían lo suficiente.`, regions: [a.id, b.id], causeId: s.causeId, known: true });
+  }
+});
+
+/**
+ * Llega una caravana de provisiones. Los habitantes descargan, los mercados
+ * se llenan… y los vecinos que recelan del destino pueden verlo como una
+ * provocación: una buena intención puede aumentar la tensión.
+ */
+registerEffect('caravanaLlega', (ctx, s) => {
+  const { w } = ctx;
+  const r = w.regions[Number(s.data.region)];
+  const food = Number(s.data.food);
+  const k = influence(r);
+  r.food += food;
+  r.attitude.trust = clamp(r.attitude.trust + 0.07 * k * (food / 6));
+  r.attitude.gratitude = clamp(r.attitude.gratitude + 0.1 * k);
+  const e = record(ctx, { kind: 'consecuencia', text: `Tu caravana llegó a ${r.name}. Los habitantes descargan los sacos y el mercado vuelve a tener productos.`, regions: [r.id], causeId: s.causeId, importance: 2 });
+  const repeated = (r.patternsSeen.ayuda ?? 0) >= 3;
+  regionRemembers(ctx, r.id, repeated ? 'ayudaRepetida' : 'ayuda', repeated ? 0.2 : 0.55, e.id);
+  for (const nb of r.neighbors) {
+    const o = w.regions[nb];
+    const rel = o.relations[r.id];
+    if (o.isHome || !rel) continue;
+    if (rel.opinion < -0.1) {
+      o.attitude.trust = clamp(o.attitude.trust - 0.04);
+      const traits = w.cultures.find((c) => c.id === o.culture)?.traits;
+      if ((traits?.pride ?? 0.5) > 0.45 || rel.tension > 0.35) {
+        rel.tension = clamp(rel.tension + 0.12);
+        const e2 = record(ctx, { kind: 'conflicto', text: `En ${o.name} interpretan tu caravana a ${r.name} como una provocación.`, regions: [o.id, r.id], causeId: e.id, importance: 2 });
+        rel.tensionCause = e2.id;
+      }
+    }
   }
 });
 
