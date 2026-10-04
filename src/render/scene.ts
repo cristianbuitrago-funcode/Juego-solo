@@ -1441,6 +1441,17 @@ export class WorldScene {
   /** "!" sobre los encuentros, y resaltado del objetivo enfocado. */
   private drawMarkers(g: CanvasRenderingContext2D, t: number): void {
     const life = ensureLife(this.w);
+    // La caja perdida destella de vez en cuando: miel al sol.
+    for (const it of prologueItems(this.w)) {
+      if (it.id !== 'caja' || (!this.reduceMotion && Math.floor(t / 180) % 9 > 2)) continue;
+      const X = Math.round(it.x * TILE + 5);
+      const Y = Math.round(it.y * TILE - 16);
+      g.fillStyle = '#fff6c8';
+      g.fillRect(X, Y - 2, 1, 5);
+      g.fillRect(X - 2, Y, 5, 1);
+      g.fillStyle = '#ffd36a';
+      g.fillRect(X, Y, 1, 1);
+    }
     for (const e of life.encounters) {
       if (e.resolved) continue;
       const bob = this.reduceMotion ? 0 : Math.sin(t / 250) * 2;

@@ -418,6 +418,11 @@ describe('el prólogo: los primeros días', () => {
     prologueTick(w, v.cx, v.cy, at(1, 10));
     expect(p.crate).toBe('lost');
     expect(prologueItems(w).some((i) => i.id === 'caja')).toBe(true);
+    // Está donde dice el comerciante: junto al almacén, cerca de la plaza.
+    const store = getLayout(w).villages[w.player.home].keys.find((k) => k.kind === 'almacen')!;
+    expect(Math.hypot(p.crateSpot.x - (store.x + store.w / 2), p.crateSpot.y - (store.y + store.h / 2))).toBeLessThan(10);
+    expect(prologueChoose(w, 'merchant:lost', 'donde')!.lines[0]).toMatch(/de la plaza/);
+    expect(p.objective).toMatch(/caja/);
     prologueChoose(w, 'crate', 'vender');
     expect(p.crate).toBe('sold');
     w.day = 2;

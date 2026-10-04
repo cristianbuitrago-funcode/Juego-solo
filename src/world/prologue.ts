@@ -58,6 +58,7 @@ export interface Prologue {
   clue: 'none' | 'ready' | 'given';
   nightHint: boolean;
   seen: string[];
+  crateMoved?: boolean;
 }
 
 export function prologueOf(w: WorldState): Prologue | undefined {
@@ -109,9 +110,8 @@ export function setupPrologue(w: WorldState, life: Life): void {
       }
     }
   const road = at(Math.min(d * 0.4, 10), 0.5);
-  // La caja: tras las últimas casas; la acequia: junto al primer campo.
-  const back = v.houses[Math.min(v.houses.length - 1, 6)] ?? v.keys[0];
-  const crateSpot = nearestWalkable(l, back.x + back.w + 1.2, back.y + back.h - 0.2);
+  // La caja: caída junto al carro del almacén; la acequia: junto al primer campo.
+  const crateSpot = crateSpotOf(w);
   const field = v.fields[0];
   const waterSpot = field ? nearestWalkable(l, field.x + field.w / 2, field.y + field.h + 1) : nearestWalkable(l, v.cx + 12, v.cy + 6);
   life.prologue = {
@@ -147,10 +147,29 @@ export function setupPrologue(w: WorldState, life: Life): void {
     clue: 'none',
     nightHint: false,
     seen: [],
+    crateMoved: true,
   };
   // Las manos saben arreglar cosas: es la primera grieta en el olvido.
   const id = life.identity!;
   id.latent.artesania = Math.max(id.latent.artesania ?? 0, 1);
+}
+
+/** Donde cayó la caja: junto al carro del almacén (lo que el comerciante dice), a la vista desde la plaza. */
+export function crateSpotOf(w: WorldState): Pt {
+  const l = getLayout(w);
+  const v = l.villages[w.player.home];
+  const st = v.keys.find((k) => k.kind === 'almacen') ?? v.keys[0];
+  const cart = v.props.filter((pr) => pr.kind === 'carro').sort((a, b) => Math.hypot(a.x - st.x, a.y - st.y) - Math.hypot(b.x - st.x, b.y - st.y))[0];
+  if (cart && Math.hypot(cart.x - st.x, cart.y - st.y) < 9) return nearestWalkable(l, cart.x + 1.4, cart.y + 0.6);
+  return nearestWalkable(l, st.x + st.w + 1.5, st.y + st.h + 1.5);
+}
+
+/** «Al norte de la plaza», «al este»…: para que las indicaciones sirvan de algo. */
+export function sideOf(w: WorldState, pt: Pt): string {
+  const v = getLayout(w).villages[w.player.home];
+  const dx = pt.x - v.cx;
+  const dy = pt.y - v.cy;
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'al este de la plaza' : 'al oeste de la plaza') : dy > 0 ? 'al sur de la plaza' : 'al norte de la plaza';
 }
 
 const folk = (w: WorldState, id: string) => w.life!.folk.find((f) => f.id === id);
@@ -445,12 +464,14 @@ export function prologueChoose(w: WorldState, sceneId: string, choice: string): 
     // --- La caja -----------------------------------------------------------
     case 'merchant:lost:buscar':
       p.crate = 'searching';
+      p.objective = `Busca la caja de ${folk(w, p.merchant)!.name}, junto al almacén`;
       remember(folk(w, p.merchant)!, { day: w.day, kind: 'ayuda', weight: 0.1 }, gen);
       folk(w, p.merchant)!.lastMet = w.day;
-      return done(end('merchant:ok', folk(w, p.merchant)!.name, ['«¿De verdad? Que los dioses te lo paguen, porque yo no puedo. Estaba en el carro, junto a las últimas casas.»']));
+      return done(end('merchant:ok', folk(w, p.merchant)!.name, [`«¿De verdad? Que los dioses te lo paguen, porque yo no puedo. Estaba en el carro, junto al almacén, ${sideOf(w, p.crateSpot)}. Quizá se cayó por ahí.»`]));
     case 'merchant:lost:donde':
+      if (!p.objective) p.objective = `La caja de ${folk(w, p.merchant)!.name}: junto al almacén`;
       folk(w, p.merchant)!.lastMet = w.day;
-      return done(end('merchant:ok', folk(w, p.merchant)!.name, ['«En el carro, detrás de las últimas casas. Fui a por agua y cuando volví ya no estaba.»']));
+      return done(end('merchant:ok', folk(w, p.merchant)!.name, [`«En el carro, junto al almacén, ${sideOf(w, p.crateSpot)}. Fui a por agua y cuando volví ya no estaba.»`]));
     case 'merchant:lost:nada':
       folk(w, p.merchant)!.lastMet = w.day;
       return done(null);
@@ -611,6 +632,16 @@ export function prologueTick(w: WorldState, x: number, y: number, clock: number)
   const v = l.villages[w.player.home];
   const home = w.regions[w.player.home];
   const h = hourOf(clock);
+  // Partidas del primer prólogo: la caja estaba donde nadie la encontraba.
+  if (!p.crateMoved) {
+    p.crateMoved = true;
+    p.crateSpot = crateSpotOf(w);
+  }
+  if ((p.crate === 'lost' || p.crate === 'searching') && !p.seen.includes('caja-vista') && Math.hypot(p.crateSpot.x - x, p.crateSpot.y - y) < 9) {
+    p.seen.push('caja-vista');
+    out.whispers.push('Algo brilla en el barro, junto al carro: tarros de miel.');
+  }
+  if (p.objective && /caja de/.test(p.objective) && p.crate !== 'lost' && p.crate !== 'searching') p.objective = null;
   if (!p.arrived && Math.hypot(v.cx - x, v.cy - y) < v.plazaR + 7) {
     p.arrived = true;
     p.objective = null;
@@ -626,7 +657,7 @@ export function prologueTick(w: WorldState, x: number, y: number, clock: number)
     p.crateDay = w.day;
     out.whispers.push(`En la plaza, ${folk(w, p.merchant)?.name ?? 'un comerciante'} grita: «¿Alguien ha visto mi caja?»`);
   }
-  if ((p.crate === 'lost' || p.crate === 'searching') && (h >= 21 || w.day > p.crateDay)) {
+  if ((p.crate === 'lost' || p.crate === 'searching') && (w.day > p.crateDay + 1 || (w.day === p.crateDay + 1 && h >= 21))) {
     p.crate = 'ignored';
     p.effects.push({ day: w.day + 1, id: 'crate:ignored' });
   }
