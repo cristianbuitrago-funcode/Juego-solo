@@ -417,7 +417,7 @@ export class ChunkCache {
         else if ((t === T.Grass || t === T.Meadow) && p > 0.9) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
         else if (t === T.Forest && p > 0.9) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if (t === T.Rock && p < 0.08) out.push({ x: ox, y: oy, kind: 'roca', v, region: reg });
-        else if (t === T.Mountain && tx % 4 === 0 && ty % 3 === (tx % 8 === 0 ? 0 : 1) && v > 60) out.push({ x: tx * TILE + (v % 24) - 4, y: ty * TILE + 10 + ((v >> 3) % 10), kind: 'pico', v, region: reg });
+        else if (t === T.Mountain && (tx + (ty % 2) * 2) % 4 === 0 && ty % 3 === 0 && v > 70) out.push({ x: tx * TILE + (v % 32) - 8, y: ty * TILE + 4 + ((v >> 3) % 16), kind: 'pico', v: (v * 13) >> 2, region: reg });
         else if (t === T.Marsh && p < 0.22) out.push({ x: ox, y: oy, kind: 'junco', v, region: reg });
         // Mojones en las fronteras (sin líneas: piedras viejas que marcan el límite).
         if (reg >= 0 && v < 30 && (t === T.Grass || t === T.Meadow)) {

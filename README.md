@@ -101,6 +101,7 @@ src/
 ├── render/                Dibujo 2D en canvas
 │   ├── pixel.ts           Base común del pixel art: pintor de píxeles, tonos, contorno y
 │   │                      conversión de dibujos vectoriales en pixel art (pixelize)
+│   ├── fx.ts              Lluvia, salpicaduras, nieve, viento, hogueras, llamas y humo en píxeles
 │   ├── human.ts           Personas en pixel art: cabeza grande y expresiva, 10 expresiones,
 │   │                      vistas de frente/espalda/perfil, acciones; retratos de diálogo
 │   ├── appearance.ts      Rasgos únicos + vestuario por región y clase social; aspecto del jugador
@@ -220,6 +221,8 @@ La app está fijada en orientación vertical, usa el botón «atrás» del siste
 - Suelo con bordes orgánicos entre materiales, adoquines, reflejos y espuma en el agua, matas de hierba y florecillas; pueblos verdes con senderos.
 - Árboles con hojas en racimos, escala coherente (persona ≈ 29 px, casa ≈ 100 px, árbol 55–75 px, caballo mayor que una persona).
 - Sombras planas, contorno oscuro teñido y luz nocturna cálida.
+- Lluvia con gotas y salpicaduras en píxeles, nieve en copos, viento con hojas, hogueras y faroles animados en pixel art, humo pixelado.
+- Montañas generadas píxel a píxel: seis siluetas, cara iluminada y en sombra, estratos, nieve dentada y pinos al pie.
 
 El motor estratégico de la versión 1 (memoria, consecuencias en cadena, rumores, hipótesis, mundo autónomo, legado) se conserva entero y alimenta todo lo que se ve.
 

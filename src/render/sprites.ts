@@ -5,7 +5,7 @@
  * mide 48 px; una puerta, ~40 px; una casa, ~95 px de alto; un roble, ~95 px;
  * un caballo es más grande que una persona.
  */
-import { pixelize } from './pixel';
+import { Painter, pixelize, tone } from './pixel';
 
 export interface Sprite {
   canvas: HTMLCanvasElement;
@@ -298,21 +298,81 @@ export function rock(v: number, snow = false): Sprite {
   });
 }
 
-export function peak(v: number): Sprite {
-  return makeK(`pk:${v % 3}`, 140, 126, 70, 120, 0.62, (g) => {
-    g0 = g;
-    E(70, 120, 62, 9, 'rgba(0,0,0,0.25)');
-    const h = 92 + (v % 3) * 12;
-    poly([6, 120, 70, 120 - h, 134, 120], '#76716a');
-    poly([70, 120 - h, 134, 120, 80, 120], '#5c5751');
-    // Estratos y grietas.
-    g.strokeStyle = 'rgba(0,0,0,0.18)';
-    g.lineWidth = 1.2;
-    for (let i = 1; i < 5; i++) Ln(70 - i * 9, 120 - h + i * 20, 70 + i * 6, 120 - h + i * 22, 1.2, 'rgba(0,0,0,0.15)');
-    poly([70, 120 - h, 90, 120 - h + 34, 80, 120 - h + 28, 72, 120 - h + 38, 60, 120 - h + 26, 52, 120 - h + 32], '#eef2f4');
-    poly([30, 120, 38, 110, 46, 120], '#8a857c');
-    poly([96, 120, 104, 112, 112, 120], '#6a655e');
-  });
+/**
+ * Montaña en pixel art, generada píxel a píxel: silueta con una o dos
+ * cumbres, cara iluminada (noroeste) y cara en sombra violácea, estratos y
+ * grietas, nieve con borde dentado y pinos diminutos al pie. Seis
+ * variantes de tamaño y forma para que la cordillera no se repita.
+ */
+export function peak(v: number, snowy = true): Sprite {
+  const vv = v % 6;
+  const key = `pk2:${vv}:${snowy}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  let seed = 977 * (vv + 1);
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const W = [96, 80, 110, 72, 88, 104][vv];
+  const Hh = [78, 64, 92, 56, 70, 84][vv];
+  const P = new Painter(W + 6, Hh + 8, Math.round(W / 2) + 3, Hh + 4);
+  const half = W / 2;
+  // Cumbres: una principal y, a veces, una secundaria.
+  const peaks: [number, number][] = [[(rnd() - 0.5) * W * 0.22, Hh]];
+  if (vv % 2 === 0) peaks.push([(rnd() > 0.5 ? 1 : -1) * W * (0.22 + rnd() * 0.12), Hh * (0.55 + rnd() * 0.15)]);
+  const noise: number[] = [];
+  for (let x = 0; x <= W; x++) noise.push((rnd() - 0.5) * 2.2);
+  const heightAt = (x: number): number => {
+    let h = 0;
+    for (const [px, ph] of peaks) {
+      const d = Math.abs(x - px) / half;
+      h = Math.max(h, ph * Math.max(0, 1 - d * (1.05 + (x < px ? 0 : 0.08))));
+    }
+    return h + noise[Math.round(x + half)] * (h > 6 ? 1 : 0);
+  };
+  const [mx] = peaks[0];
+  const rock = { lit: '#a29d93', mid: '#858077', dark: '#635f68', deep: '#4c4855' };
+  const snowL = '#f4f7fb';
+  const snowS = '#c4cde0';
+  const snowLine = Hh * (0.6 - (vv % 3) * 0.05);
+  P.shadow(0, -1, half * 0.95, 4, 0.25);
+  for (let x = Math.ceil(-half); x <= Math.floor(half); x++) {
+    const h = Math.round(heightAt(x));
+    if (h <= 0) continue;
+    for (let y = 0; y < h; y++) {
+      const yy = -1 - y; // fila (hacia arriba)
+      // La arista baja de la cumbre en diagonal: a su izquierda, la cara iluminada.
+      const ridge = mx + (y - Hh) * -0.18 + noise[Math.round(x + half)] * 0.6;
+      const lit = x < ridge;
+      let c = lit ? rock.lit : rock.dark;
+      const band = (y + Math.round(noise[(Math.round(x + half) * 7) % noise.length] * 2)) % 9;
+      if (band === 0) c = lit ? rock.mid : rock.deep;
+      else if (band === 1 && lit) c = tone(rock.lit, 1.06);
+      if (lit && x > ridge - 3) c = rock.mid; // canto junto a la arista
+      // Grietas en diagonal.
+      if (((x * 3 + y * 5 + vv * 11) % 37 === 0 || (x * 5 - y * 3 + vv) % 41 === 0) && y < h - 2) c = lit ? rock.mid : rock.deep;
+      // Nieve: por encima de la línea, con borde dentado; se acumula en los salientes.
+      const jag = Math.round(noise[(Math.round(x + half) * 3) % noise.length] * 2.5 + Math.sin(x * 0.7) * 1.5);
+      if (snowy && y > snowLine + jag) c = lit ? snowL : snowS;
+      else if (snowy && y > snowLine + jag - 2 && (x + y) % 3 === 0) c = lit ? '#dfe5ee' : '#a8b0c4';
+      // Pie de la montaña: canchal y algo de hierba.
+      if (y < 3 && (x * 7 + y) % 5 === 0) c = y === 0 ? '#6f8a4a' : rock.mid;
+      P.px(x, yy, c);
+    }
+    // Filo superior iluminado.
+    if (h > 3) P.px(x, -h, x < mx ? (snowy && h > snowLine ? '#ffffff' : '#b8b2a8') : rock.dark);
+  }
+  // Pinos diminutos al pie (dan escala).
+  const pines = 2 + (vv % 3);
+  for (let i = 0; i < pines; i++) {
+    const px = Math.round((rnd() - 0.5) * W * 0.8);
+    const base = -1 - Math.round(rnd() * 3);
+    if (heightAt(px) < 10) continue;
+    P.rect(px, base - 1, 1, 2, '#4a3220');
+    for (let k = 0; k < 5; k++) P.rect(px - Math.floor((5 - k) / 2), base - 2 - k, ((5 - k) >> 1) * 2 + 1, 1, k % 2 ? '#2f5c3c' : '#3d6e48');
+  }
+  const canvas = P.toCanvas();
+  const sp: Sprite = { canvas, w: canvas.width, h: canvas.height, ax: P.ax, ay: P.ay };
+  cache.set(key, sp);
+  return sp;
 }
 
 export function boundaryStone(): Sprite {
