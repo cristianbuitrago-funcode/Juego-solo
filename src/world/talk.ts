@@ -1,3 +1,4 @@
+import { politicalTalk } from './poltalk';
 import { record, revealRegionHistory } from '../core/chronicle';
 import { hearsay } from '../core/intel';
 import { mysteryHooks } from '../core/systems/mystery';
@@ -106,6 +107,11 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
       }
     }
     lines.push(...chatter(w, f, ctx.rng, hourOf(life.clock), weatherOf(w, w.day), { price: foodPrice(w, r.id), scarce: look === 'escaso' || look === 'vacio', festival: festLine, mourningFor: lost?.text.replace(/^Murió /, '').replace(/\.$/, '') }));
+    // La política se oye en la calle (Fase 4).
+    if (open > 0.3) {
+      const pl = politicalTalk(w, f, ctx.rng);
+      if (pl) lines.push(pl);
+    }
   }
 
   // 2) La vida en su región, filtrada por la confianza y la honestidad.

@@ -78,6 +78,8 @@ export interface Market {
   closedStalls: number; // puestos cerrados (comerciantes arruinados o sin nada que vender)
   shock?: { factor: number; until: number; why: string };
   mine?: boolean; // se encontró una veta de hierro
+  /** Lo que las leyes del pueblo hacen a la economía (lo escribe politics.ts cada día). */
+  law?: { tax: number; effort: number; craft: number; extract: number; aid: number; guard: number };
   v: 3;
 }
 
@@ -142,6 +144,7 @@ export function working(w: WorldState, f: Folk): boolean {
   if (p.sick !== undefined && p.sick >= w.day) return false;
   if (p.away && p.away.back > w.day) return false;
   if (p.mourning !== undefined && p.mourning >= w.day && trait(f, 'trabajador') < 70) return false;
+  if (p.strike !== undefined && p.strike >= w.day) return false;
   return f.age >= 14 && f.role !== 'nino' && f.role !== 'anciano';
 }
 
@@ -183,8 +186,9 @@ function buyFromMarket(m: Market, g: Good, n: number, purse: { coins: number; pa
   const cost = can * m.price[g];
   purse.pay(cost);
   m.stock[g] -= can;
-  m.cash += cost * 0.94;
-  m.treasury += cost * 0.06; // tasa del mercado
+  const tax = m.law?.tax ?? 0.06; // tasa del mercado (la fija la ley de impuestos)
+  m.cash += cost * (1 - tax);
+  m.treasury += cost * tax;
   return can;
 }
 
@@ -228,7 +232,9 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   const income = new Map<Folk, number>();
   const add = (f: Folk, c: number) => income.set(f, (income.get(f) ?? 0) + c);
   const workers = people.filter((f) => working(w, f));
-  const effort = (f: Folk) => 0.7 + trait(f, 'trabajador') / 170 - trait(f, 'perezoso') / 400;
+  const lawK = m.law?.effort ?? 1;
+  const effort = (f: Folk) => (0.7 + trait(f, 'trabajador') / 170 - trait(f, 'perezoso') / 400) * lawK;
+  const extract = m.law?.extract ?? 1;
   // Herramientas: sin ellas se trabaja mucho peor (y se gastan).
   const producers = workers.filter((f) => ['campesino', 'pescador', 'minero', 'lenador', 'carpintero', 'artesano', 'pastor', 'tejedor'].includes(f.role));
   const tools = 0.6 + 0.4 * clamp(m.stock.herramientas / Math.max(1, producers.length * 0.35));
@@ -261,13 +267,13 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
         break;
       case 'minero': {
         const iron = r.resource === 'hierro' || m.mine ? 1.3 : rock > 20 ? 0.45 : 0.2;
-        produce(f, 'hierro', iron * k);
-        produce(f, 'piedra', (0.6 + Math.min(1, rock / 40)) * k);
+        produce(f, 'hierro', iron * k * extract);
+        produce(f, 'piedra', (0.6 + Math.min(1, rock / 40)) * k * extract);
         if (r.resource === 'sal') produce(f, 'sal', 0.8 * k);
         break;
       }
       case 'lenador':
-        produce(f, 'madera', (0.8 + Math.min(1.6, forest / 30)) * k);
+        produce(f, 'madera', (0.8 + Math.min(1.6, forest / 30)) * k * extract);
         if (r.resource === 'ambar') produce(f, 'ambar', 0.06 * k);
         break;
       case 'carpintero': {
@@ -348,7 +354,7 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
       spent[g] += b;
     }
     // Con los graneros llenos, el pueblo no deja que nadie pase hambre: las arcas pagan su pan.
-    if (got < need * 0.65 && foodStock(m) > people.length * 0.8 * 3 && m.treasury > 1) {
+    if (got < need * (m.law?.aid ?? 0.65) && foodStock(m) > people.length * 0.8 * 3 && m.treasury > 1) {
       const aid = { coins: m.treasury, pay: (x: number) => (m.treasury = Math.max(0, m.treasury - x)) };
       for (const g of [...FOODS].sort((a, b) => m.price[a] - m.price[b])) {
         if (got >= need * 0.75) break;
@@ -386,7 +392,7 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   // Sueldos públicos: guardias, consejo, sanadora y exploradores cobran de las arcas.
   for (const f of workers) {
     if (!['guardia', 'lider', 'exploradora'].includes(f.role)) continue;
-    const wage = f.role === 'lider' ? 1.6 : 0.9;
+    const wage = f.role === 'lider' ? 1.6 : 0.9 * (f.role === 'guardia' ? m.law?.guard ?? 1 : 1);
     const pay = Math.min(m.treasury, wage);
     m.treasury -= pay;
     if (f.p) f.p.coins += pay;
@@ -396,7 +402,9 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   const merchants = workers.filter((f) => f.role === 'comerciante');
   const sales = GOODS.reduce((s, g) => s + spent[g] * m.price[g], 0);
   for (const f of merchants) {
-    const take = Math.min(Math.max(0, m.cash - 25), (sales * 0.14) / merchants.length + 0.3);
+    // Su margen: lo que queda de cada venta después de la tasa (con impuestos altos, ganan menos).
+    const margin = Math.max(0.04, 0.2 - (m.law?.tax ?? 0.06));
+    const take = Math.min(Math.max(0, m.cash - 25), (sales * margin) / merchants.length + 0.3);
     m.cash -= take;
     if (f.p) f.p.coins += take;
     add(f, take);
@@ -430,6 +438,7 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
     let target = GOOD[g].base * clamp(2.4 / (days + 0.45), 0.45, 5.5);
     if (r.flags.guerra && (g === 'armas' || FOODS.includes(g) || g === 'medicinas')) target *= 1.25;
     if (isolated && m.stock[g] < m.demand[g] * 3) target *= 1.3;
+    if (GOOD[g].kind === 'producto' && g !== 'armas' && g !== 'medicinas') target *= m.law?.craft ?? 1; // los gremios cobran más
     m.price[g] = Math.round((m.price[g] * 0.65 + target * 0.35) * 100) / 100;
   }
   m.made = Object.fromEntries(GOODS.filter((g) => made[g] > 0).map((g) => [g, Math.round(made[g] * 10) / 10]));

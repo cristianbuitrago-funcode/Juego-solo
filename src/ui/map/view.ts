@@ -4,6 +4,8 @@ import { fbm } from '../../core/noise';
 import type { WorldState } from '../../core/types';
 import { hops } from '../../core/world';
 import { regionColor } from './colors';
+import { stanceOf } from '../../world/diplomacy';
+import { convoyPositions, tradeOf } from '../../world/trade';
 
 /**
  * Mapa 2D interactivo dibujado en canvas.
@@ -57,6 +59,8 @@ export class MapView {
   highlights = new Set<number>(); // regiones con pistas nuevas hoy
   smokeAt = new Set<number>();
   reduceMotion = false;
+  /** Capa estratégica: territorios y relaciones, comercio, conflictos (o la vista normal). */
+  layer: 'normal' | 'politica' | 'comercio' | 'conflictos' = 'normal';
 
   constructor(private parent: HTMLElement, private cb: MapCallbacks) {
     this.canvas = document.createElement('canvas');
@@ -157,7 +161,20 @@ export class MapView {
   refresh(): void {
     const w = this.w;
     if (!w || !this.image) return;
-    const lut = w.regions.map((r) => regionColor(w, r.id, r.id === this.selected));
+    const owner = w.regions.map((r) => w.life?.politics?.owner[r.id] ?? r.id);
+    const lut = w.regions.map((r) => {
+      const c = regionColor(w, r.id, r.id === this.selected);
+      // Fronteras dinámicas: un territorio ocupado toma el color de quien lo controla.
+      if (owner[r.id] !== r.id && w.intel[r.id].level > 0) {
+        const o = regionColor(w, owner[r.id], false);
+        return c.map((v, i) => Math.round(v * 0.45 + o[i] * 0.55)) as [number, number, number];
+      }
+      if (this.layer === 'politica' && w.intel[r.id].level > 0) {
+        const fed = w.life?.politics?.federations.find((f) => f.members.includes(r.id));
+        if (fed) return c.map((v, i) => Math.round(v * 0.7 + [120, 150, 190][i] * 0.3)) as [number, number, number];
+      }
+      return c;
+    });
     const fog = w.regions.map((r) => w.intel[r.id].level === 0);
     const d = this.image.data;
     for (let k = 0; k < BW * BH; k++) {
@@ -179,7 +196,15 @@ export class MapView {
           const y = (k / BW) | 0;
           if ((x + y) % 7 === 0) (r *= 0.75), (g *= 0.75), (b *= 0.75);
         }
-        if (e === 1) (r *= 0.45), (g *= 0.42), (b *= 0.4);
+        if (e === 1) {
+          // Entre dueños distintos la frontera se marca más (y cambia si cambia el dueño).
+          const x = k % BW;
+          const nb = [this.regionMap[k + 1], this.regionMap[k + BW], this.regionMap[k - 1], this.regionMap[k - BW]].find((n) => n !== undefined && n >= 0 && n !== id);
+          const hard = nb !== undefined && owner[nb] !== owner[id] && x > 0;
+          if (hard) (r *= 0.25), (g *= 0.18), (b *= 0.18);
+          else if (nb !== undefined && owner[nb] === owner[id] && owner[id] !== id) (r *= 0.8), (g *= 0.78), (b *= 0.76);
+          else (r *= 0.45), (g *= 0.42), (b *= 0.4);
+        }
         if (e === 2) (r = 58), (g = 46), (b = 38);
       }
       const o = k * 4;
@@ -388,6 +413,7 @@ export class MapView {
     g.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
     this.drawRiver(g);
     this.drawRoutes(g, t);
+    this.drawLayer(g, t);
     this.drawGlyphs(g);
     this.drawParticles(g, animate);
     // Capa en coordenadas de pantalla (texto nítido a cualquier zoom).
@@ -490,6 +516,102 @@ export class MapView {
           g.fill();
           g.stroke();
         }
+      }
+    }
+  }
+
+  /** Capas estratégicas: relaciones y tratados, comercio y caravanas, guerras y protestas. Solo lo que sabes. */
+  private drawLayer(g: CanvasRenderingContext2D, t: number): void {
+    const w = this.w!;
+    const pol = w.life?.politics;
+    if (!pol || this.layer === 'normal') return;
+    const known = (id: number) => w.regions[id].isHome || w.intel[id].level > 0;
+    const seen = new Set<string>();
+    if (this.layer === 'politica') {
+      for (const r of w.regions) for (const idStr of Object.keys(r.relations)) {
+        const id = Number(idStr);
+        const key = `${Math.min(r.id, id)}-${Math.max(r.id, id)}`;
+        if (seen.has(key) || !known(r.id) || !known(id)) continue;
+        seen.add(key);
+        const st = stanceOf(w, r.id, id);
+        const a = r.center;
+        const b = w.regions[id].center;
+        const color = { amistad: '#4f8a3a', neutralidad: 'rgba(80,70,60,0.35)', tension: '#d08a2a', rivalidad: '#b0402a', alianza: '#2f6fb0', guerra: '#a01818' }[st];
+        g.setLineDash(st === 'guerra' ? [6, 5] : st === 'neutralidad' ? [3, 6] : []);
+        g.strokeStyle = color;
+        g.lineWidth = st === 'alianza' || st === 'guerra' ? 6 : 4;
+        g.beginPath();
+        g.moveTo(a.x + (b.x - a.x) * 0.18, a.y + (b.y - a.y) * 0.18);
+        g.lineTo(a.x + (b.x - a.x) * 0.82, a.y + (b.y - a.y) * 0.82);
+        g.stroke();
+        g.setLineDash([]);
+        const tr = pol.treaties.filter((x) => !x.broken && x.until >= w.day && ((x.a === r.id && x.b === id) || (x.a === id && x.b === r.id)));
+        if (tr.length) {
+          g.font = '16px system-ui, sans-serif';
+          g.textAlign = 'center';
+          g.textBaseline = 'middle';
+          g.fillText(tr.map((x) => ({ comercio: '⚖', fronteras: '⛳', defensa: '🛡', recursos: '📦', alianza: '🤝', paz: '🕊' })[x.kind]).join(''), (a.x + b.x) / 2, (a.y + b.y) / 2);
+        }
+      }
+      for (const c of pol.claims) if (known(c.a) && known(c.b)) {
+        const a = w.regions[c.a].center;
+        const b = w.regions[c.b].center;
+        g.font = '14px system-ui, sans-serif';
+        g.fillText('⚑', a.x * 0.4 + b.x * 0.6, a.y * 0.4 + b.y * 0.6);
+      }
+    }
+    if (this.layer === 'comercio') {
+      const vol = (w.life!.society as unknown as { trade?: { volume: Record<string, number> } })?.trade?.volume ?? tradeOf(w).volume;
+      for (const route of w.routes) {
+        if (!known(route.a) && !known(route.b)) continue;
+        const v = vol[`${Math.min(route.a, route.b)}-${Math.max(route.a, route.b)}`] ?? 0;
+        if (v <= 0) continue;
+        const a = w.regions[route.a].center;
+        const b = w.regions[route.b].center;
+        const { cx, cy } = this.routeCurve(a, b, route.id);
+        g.strokeStyle = 'rgba(214,160,40,0.55)';
+        g.lineWidth = Math.min(16, 3 + Math.sqrt(v) * 0.6);
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.quadraticCurveTo(cx, cy, b.x, b.y);
+        g.stroke();
+      }
+      for (const p of convoyPositions(w)) {
+        if (!known(p.c.from) && !known(p.c.to)) continue;
+        g.fillStyle = p.c.status === 'atacada' ? '#a3362b' : p.c.kind === 'jugador' ? '#e9b44c' : '#f3e3b5';
+        g.strokeStyle = '#4a3324';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.rect(p.x * 2 - 6, p.y * 2 - 4, 12, 8);
+        g.fill();
+        g.stroke();
+      }
+    }
+    if (this.layer === 'conflictos') {
+      const pulse = this.reduceMotion ? 0.5 : (Math.sin(t / 300) + 1) / 2;
+      for (const war of pol.wars.filter((x) => x.status === 'activa')) {
+        if (!known(war.a) && !known(war.b)) continue;
+        const f = w.regions[war.front].center;
+        g.strokeStyle = `rgba(160,24,24,${0.4 + pulse * 0.5})`;
+        g.lineWidth = 5;
+        g.beginPath();
+        g.arc(f.x, f.y, 34 + pulse * 8, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.font = '18px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (const r of w.regions) {
+        if (!known(r.id)) continue;
+        const icons: string[] = [];
+        if (pol.wars.some((x) => x.status === 'activa' && x.front === r.id)) icons.push('⚔');
+        if (pol.owner[r.id] !== undefined && pol.owner[r.id] !== r.id) icons.push('⛓');
+        const orgs = pol.orgs.filter((o) => o.regionId === r.id && !o.dissolved && o.action);
+        if (orgs.some((o) => o.action!.kind === 'motin')) icons.push('🔥');
+        else if (orgs.length) icons.push('✊');
+        if ((pol.rebellions[r.id]?.stage ?? 0) >= 2 && (w.intel[r.id].level >= 2 || r.isHome)) icons.push('🗡');
+        if (pol.secrets.some((s) => s.known && !s.public && s.regionId === r.id)) icons.push('🗝');
+        if (icons.length) g.fillText(icons.join(' '), r.center.x + 34, r.center.y - 30);
       }
     }
   }

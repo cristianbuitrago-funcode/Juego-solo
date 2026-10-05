@@ -1,3 +1,4 @@
+import { politicsDay } from './politics';
 import { Rng, hashString } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
@@ -65,6 +66,9 @@ export function societyDay(w: WorldState): void {
   convoyTick(w);
   businessDay(w);
   climateDay(w, rng);
+  // La política: grupos, leyes, votaciones, protestas, diplomacia, secretos y guerra (Fase 4).
+  const pnews = politicsDay(w);
+  if (pnews.length && life.identity) (life.identity.inbox ??= []).push(...[...new Set(pnews)].slice(0, 5));
   playerDeedsToRumors(w);
   if (here >= 0) makeApproaches(w, rng, here);
   s.lastSeen[here] = w.day;
@@ -890,8 +894,9 @@ export function catchUp(w: WorldState, regionId: number): string[] {
   if (last === undefined || w.day - last < 3) return [];
   const life = w.life!;
   const known = (id: string) => life.folk.find((f) => f.id === id)?.lastMet ?? -1;
-  const news = s.events.filter((e) => e.regionId === regionId && e.day > last && e.day < w.day && ['boda', 'muerte', 'nacimiento', 'migracion', 'oficio', 'pelea', 'reconciliacion', 'separacion', 'robo', 'marcha', 'enemistad', 'pueblo', 'herencia', 'cosecha'].includes(e.kind));
-  const relevant = news.filter((e) => e.who.some((id) => known(id) >= 0) || e.kind === 'cosecha' || e.kind === 'pueblo').slice(-4);
+  const news = s.events.filter((e) => e.regionId === regionId && e.day > last && e.day < w.day && ['boda', 'muerte', 'nacimiento', 'migracion', 'oficio', 'pelea', 'reconciliacion', 'separacion', 'robo', 'marcha', 'enemistad', 'pueblo', 'herencia', 'cosecha', 'ley', 'eleccion', 'gobierno', 'protesta', 'huelga', 'boicot', 'motin', 'rebelion', 'guerra', 'batalla', 'tratado'].includes(e.kind));
+  const POL = ['ley', 'eleccion', 'gobierno', 'protesta', 'huelga', 'boicot', 'motin', 'rebelion', 'guerra', 'batalla', 'tratado'];
+  const relevant = news.filter((e) => e.who.some((id) => known(id) >= 0) || e.kind === 'cosecha' || e.kind === 'pueblo' || POL.includes(e.kind)).slice(-5);
   for (const e of relevant) if (!s.heard.includes(e.id)) s.heard.push(e.id);
   const out = [...economyChanges(w, regionId), ...relevant.map((e) => `Mientras no estabas: ${e.text.charAt(0).toLowerCase()}${e.text.slice(1)}`)];
   snapshot(w, regionId);

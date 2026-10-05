@@ -29,6 +29,7 @@ import { giveTo, observeFolk, talkToFolk } from '../world/talk';
 import type { App } from './app';
 import { h, vibrate } from './dom';
 import { openAction } from './screens/composer';
+import { marketSuspicion, politicalChoices, townAffairs, warDialog } from './politics';
 
 /**
  * Las decisiones salen del menú y entran en el mundo: se toman hablando con
@@ -269,6 +270,8 @@ function talk(app: App, folkId: string): void {
   if (pet) choices.push({ label: `📨 «${pet.title}»`, run: () => petition(app, pet.id) });
   if (inv.comida > 0) choices.push({ label: '🍞 Darle comida', run: () => (app.toast(giveTo(w, folkId, 'comida')), app.refresh()) });
   if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60 || (f.p?.sick ?? -1) >= w.day)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
+  // La política: votaciones, grupos, quien gobierna, lo que sabe, la oposición, la guerra (Fase 4).
+  choices.splice(Math.min(choices.length, 1), 0, ...politicalChoices(app, f));
   // Su vida con los demás: pleitos en los que puedes intervenir y gente por la que preguntar.
   for (const c of arcChoices(w, f)) choices.splice(Math.min(choices.length, 1), 0, { label: c.label, hint: c.hint, run: () => arcRun(app, folkId, c.id) });
   if (f.age >= 10) choices.push({ label: '👥 Preguntar por alguien', run: () => askAbout(app, folkId) });
@@ -364,7 +367,7 @@ function leaderDecisions(app: App, regionId: number): void {
   const known = w.rumors.filter((x) => x.known && w.day <= x.expires + 5).slice(-4);
   const allowed = ids.filter((id) => hasAuthority(w, id));
   if (!allowed.length && !hasAuthority(w, 'compartir')) {
-    return void dialogue(app, `El salón de ${r.name}`, '', [`Te reciben con cortesía, pero no hablas en nombre de nadie. «¿Y tú quién eres para venir a tratar estos asuntos?»`, `Para negociar por un pueblo, primero tendrías que tener voz en ${w.regions[w.player.home].name}.`], [...offerChoice(app, regionId), { label: 'Volver', run: () => {} }]);
+    return void dialogue(app, `El salón de ${r.name}`, '', [`Te reciben con cortesía, pero no hablas en nombre de nadie. «¿Y tú quién eres para venir a tratar estos asuntos?»`, `Para negociar por un pueblo, primero tendrías que tener voz en ${w.regions[w.player.home].name}.`], [...offerChoice(app, regionId), ...(w.life?.politics ? [{ label: '🏛 Asuntos del pueblo', run: () => townAffairs(app, regionId) }] : []), { label: 'Volver', run: () => {} }]);
   }
   ids.splice(0, ids.length, ...allowed);
   const choices: Choice[] = ids.map((id) => ({
@@ -373,6 +376,8 @@ function leaderDecisions(app: App, regionId: number): void {
   }));
   for (const ru of known) choices.push({ label: `📜 Contarle: «${ru.text.slice(0, 48)}${ru.text.length > 48 ? '…' : ''}»`, run: () => openAction(app, 'compartir', { region: regionId, rumor: ru.id, inPerson: 1 }) });
   for (const p of w.petitions.filter((x) => x.regionId === regionId)) choices.unshift({ label: `📨 Responder: ${p.title}`, run: () => petition(app, p.id), primary: true });
+  if (w.life?.politics) choices.unshift({ label: '🏛 Asuntos del pueblo', hint: 'Quién manda, qué se vota, qué grupos hay', run: () => townAffairs(app, regionId) });
+  if (r.flags.guerra && w.life?.politics) choices.unshift({ label: '⚔ La guerra', run: () => warDialog(app, regionId), primary: true });
   choices.push({ label: 'Volver', run: () => {} });
   dialogue(app, `Asuntos con ${r.name}`, 'Estás aquí en persona: tus palabras pesan más que las de un emisario.', ['Cualquier decisión puede acompañarse de una hipótesis. Después, vuelve y comprueba qué ha pasado.'], choices);
 }
@@ -445,6 +450,7 @@ function building(app: App, regionId: number, kind: string): void {
         ]);
       return void dialogue(app, `Almacén de ${r.name}`, '', [describeMarket(w, regionId)[0], home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
         { label: '🧺 Ir al mercado', run: () => marketDialog(app, regionId), primary: true },
+        ...(levelOf(id, 'k:economia') + levelOf(id, 'comercio') >= 1 ? [{ label: '📈 ¿Cuadran los precios?', hint: 'Si alguien esconde comida, se nota en los precios.', run: () => marketSuspicion(app, regionId) }] : []),
         { label: '🙏 Pedir algo de comer', run: () => outcome(app, 'El almacén', charity(w, regionId)) },
         { label: 'Salir', run: () => {} },
       ]);
@@ -453,6 +459,7 @@ function building(app: App, regionId: number, kind: string): void {
       if (!home && hasAuthority(w, 'mediar')) return leaderDecisions(app, regionId);
       return void dialogue(app, `Salón de ${r.name}`, stand >= 3 ? 'Te dejan pasar como oyente' : 'La puerta está cerrada', [stand >= 3 ? 'Te sientas al fondo. Discuten, gritan, votan. Nadie te pregunta, pero escuchas.' : 'Dentro se oyen voces. Deciden cosas que afectan a todos, y tú no estás invitado.'], [
         ...offerChoice(app, regionId),
+        { label: '🏛 Asuntos del pueblo', hint: 'Quién manda, qué se vota, qué grupos hay', run: () => townAffairs(app, regionId), primary: true },
         ...(stand >= 3 ? [{ label: '📚 Escuchar el debate', run: () => outcome(app, 'El consejo', study(w, regionId, 'salon')) }] : []),
         { label: '🌒 Escuchar desde la puerta', hint: 'Si te ven, no les gustará.', run: () => outcome(app, 'Tras la puerta', eavesdrop(w, regionId)) },
         { label: 'Salir', run: () => {} },
@@ -505,6 +512,7 @@ function council(app: App): void {
   const w = app.w!;
   dialogue(app, 'Salón del consejo', `Emisarios libres: ${freeAgents(w)} de ${w.player.agents}`, ['Aquí se reúne el consejo. Desde aquí se envían emisarios allí donde nadie puede ir en persona.'], [
     ...offerChoice(app, w.player.home),
+    ...(w.life?.politics ? [{ label: '🏛 Asuntos del pueblo', hint: 'Leyes, votaciones, grupos, vecinos', run: () => townAffairs(app, w.player.home), primary: true }] : []),
     ...w.petitions.slice(0, 3).map((p) => ({ label: `📨 ${p.title}`, run: () => petition(app, p.id) })),
     { label: '🧭 Enviar emisarios', run: () => emissaries(app), primary: true },
     ...(hasAuthority(w, 'ley') ? [{ label: '⚖ Leyes, prioridades y peticiones', run: () => app.setView('decisiones') }] : []),

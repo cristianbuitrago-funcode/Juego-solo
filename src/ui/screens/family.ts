@@ -6,7 +6,8 @@ import { ROLE_TITLE } from '../../world/folk';
 import { playerEco } from '../../world/business';
 import { GOOD } from '../../world/economy';
 import { priceBook } from '../market';
-import { emotionOf } from '../../world/society';
+import { emotionOf, playerRegion } from '../../world/society';
+import { forecastDialog, politicsSections, secretsDialog } from '../politics';
 import { showFragment } from '../world-dialogs';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
@@ -74,6 +75,8 @@ export function renderFamily(app: App): Node[] {
           ...id.items.map((it) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '🔱'), h('div', { class: 'txt' }, it === 'colgante' ? 'Un colgante con un símbolo' : it, h('div', null, h('button', { class: 'btn small', onclick: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(app, ev); } }, 'Mirarlo'))))),
         )
       : null,
+    ...politicsSections(app),
+    life.politics ? h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => forecastDialog(app, playerRegion(w)) }, '🧪 Hacer una predicción'), h('button', { class: 'btn small', onclick: () => secretsDialog(app) }, '🗝 Lo que sabes')) : null,
     metFolk.length ? section('Gente que conoces', ...people(app)) : null,
     ...economySections(app),
     memories.length ? section('Recuerdos', ...memories.map((e) => h('p', { class: 'quote' }, e.text))) : null,
