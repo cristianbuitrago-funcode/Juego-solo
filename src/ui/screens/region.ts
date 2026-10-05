@@ -1,3 +1,10 @@
+import { describeGeo } from '../../world/geography';
+import { describeNature } from '../../world/nature';
+import { describeDisasters } from '../../world/disasters';
+import { describeCulture } from '../../world/culture';
+import { describeKnowledge } from '../../world/knowledge';
+import { describeRoads } from '../../world/roads';
+import { describeSettlement } from '../../world/settlements';
 import { MEMORY_LINES } from '../../core/content/dialogue';
 import { talkTo } from '../../core/api';
 import { ago, fill } from '../../core/util';
@@ -119,6 +126,18 @@ function tabKnow(app: App, id: number): Node[] {
     ] as (HTMLElement | null)[]).filter((x): x is HTMLElement => !!x));
     const war = warOf(w, id);
     if (war) out.push(h('div', { class: 'card' }, ...describeWar(w, war).map((l) => h('p', { class: 'tiny' }, l))));
+  }
+  // La tierra y su gente (Fase 6): solo si has estado o te lo han contado bien.
+  if (life?.atlas && (life.visited[id] !== undefined || intel.level >= 2 || r.isHome)) {
+    const land = [...describeGeo(w, id), ...describeNature(w, id), ...describeDisasters(w, id)];
+    out.push(h('h3', null, 'La tierra'), ...land.map((l) => h('p', { class: 'tiny' }, l)));
+    out.push(h('h3', null, 'Su gente'), ...describeCulture(w, id).map((l) => h('p', { class: 'tiny' }, l)));
+    const know = describeKnowledge(w, id);
+    if (know.length) out.push(h('h3', null, 'Lo que saben hacer'), ...know.map((l) => h('p', { class: 'tiny' }, l)));
+    const roads = describeRoads(w, id);
+    if (roads.length) out.push(h('h3', null, 'Caminos y puertos'), ...roads.map((l) => h('p', { class: 'tiny' }, l)));
+    const sts = life.atlas.settlements.filter((x) => x.regionId === id);
+    if (sts.length) out.push(h('h3', null, 'Otros lugares'), ...sts.map((x) => h('p', { class: 'tiny' }, describeSettlement(w, x)[0])));
   }
   const rumors = w.rumors.filter((x) => x.known && (x.about === id || x.target === id));
   if (rumors.length) {

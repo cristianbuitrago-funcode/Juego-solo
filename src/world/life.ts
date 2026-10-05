@@ -14,6 +14,7 @@ import { chooseParent, comingOfAge, mournDeaths, planToday, societyDay, startFir
 import { ensurePeople, folkById, logEvent, partnerOf } from './society';
 import { educate, inheritTraits } from './generations';
 import { generationsDay } from './succession';
+import { atlasDay } from './world6';
 import { marketOf } from './economy';
 import { walkable } from './terrain';
 import { findPath } from './path';
@@ -189,6 +190,9 @@ export function dailyLife(w: WorldState): void {
   const id = life.identity;
   if (id) for (const n of news) (id.inbox ??= []).push(n.text);
   if (id && gnews.length) (id.inbox ??= []).push(...gnews.slice(0, 3));
+  // Fase 6: el mundo completo (asentamientos, caminos, puertos, desastres, técnicas, épocas…).
+  const wnews = atlasDay(w);
+  if (id && wnews.length) (id.inbox ??= []).push(...wnews.slice(0, 3));
   life.caravans = life.caravans.filter((c) => c.arrive > life.clock);
   life.encounters = life.encounters.filter((e) => !e.resolved && w.day - e.day < 2);
   // dailyLife usa su propio RNG: no altera la secuencia aleatoria del motor.

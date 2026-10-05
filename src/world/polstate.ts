@@ -79,7 +79,7 @@ export type Laws = Record<LawId, string>;
 // ---------------------------------------------------------------------------
 // Sistemas de gobierno: no son nombres, cada uno decide de otra manera
 // ---------------------------------------------------------------------------
-export type GovSystem = 'consejo' | 'alcalde' | 'monarquia' | 'republica' | 'familias' | 'militar' | 'federacion';
+export type GovSystem = 'consejo' | 'alcalde' | 'monarquia' | 'republica' | 'familias' | 'militar' | 'federacion' | 'tribal' | 'ciudad' | 'autonoma' | 'confederacion';
 
 export const GOV: Record<GovSystem, { name: string; how: string; elections: boolean }> = {
   consejo: { name: 'consejo', how: 'Deciden los representantes de los grupos del pueblo, por mayoría.', elections: false },
@@ -89,6 +89,10 @@ export const GOV: Record<GovSystem, { name: string; how: string; elections: bool
   familias: { name: 'consejo de familias', how: 'Deciden las cabezas de las familias más ricas; cuanto más tiene una casa, más pesa su voto.', elections: false },
   militar: { name: 'gobierno de la guardia', how: 'Manda quien manda la guardia. La seguridad va primero y las protestas se aplastan.', elections: false },
   federacion: { name: 'federación', how: 'El pueblo decide lo suyo en consejo; el comercio, la seguridad y la migración se acuerdan con los pueblos federados.', elections: false },
+  tribal: { name: 'consejo de ancianos', how: 'Deciden los mayores; pesa más quien más ha vivido, y las costumbres casi nunca cambian.', elections: false },
+  ciudad: { name: 'ciudad libre', how: 'Mandan los gremios y los comerciantes: el voto pesa según lo que cada cual mueve en el mercado.', elections: false },
+  autonoma: { name: 'comunidad autónoma', how: 'El pueblo se gobierna en asamblea, pero el comercio y la seguridad los decide quien lo domina.', elections: true },
+  confederacion: { name: 'confederación', how: 'Cada pueblo confederado decide lo suyo; lo común solo sale si nadie se opone.', elections: false },
 };
 
 export interface Gov {
@@ -346,7 +350,12 @@ export interface War {
   ended?: { day: number; text: string; winner?: number };
   playerSide?: number;
   allies: Record<number, number[]>; // quién acude a cada bando
+  /** Qué clase de guerra es (Fase 6): cambia lo que pasa al terminar. */
+  kind?: WarKind;
 }
+
+export type WarKind = 'territorial' | 'recursos' | 'independencia' | 'civil' | 'rebelion' | 'invasion';
+export const WAR_KIND_NAME: Record<WarKind, string> = { territorial: 'guerra por tierras', recursos: 'guerra por recursos', independencia: 'guerra de independencia', civil: 'guerra civil', rebelion: 'rebelión armada', invasion: 'invasión' };
 
 // ---------------------------------------------------------------------------
 // Hipótesis sobre el mundo, decisiones y legado

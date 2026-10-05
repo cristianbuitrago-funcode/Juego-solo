@@ -1,3 +1,4 @@
+import { carryKnowledge } from './knowledge';
 import type { Rng } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
@@ -238,6 +239,7 @@ export function migrate(w: WorldState, f: Folk, to: number, adjustPop = true): F
     if (kf?.alive && kf.regionId === from && kf.age < 16 && (k.rel === 'hijo' || k.rel === 'hija')) gone.push(kf);
   }
   for (const g of gone) {
+    carryKnowledge(w, g, from, to); // lo que sabe viaja con él (Fase 6)
     g.origin = from;
     g.regionId = to;
     g.house = (g.house + 1) % 3;

@@ -1,16 +1,19 @@
 import { politicsDay } from './politics';
+import { worldSince } from './epochs';
+import { folkTurn, simTier } from './lod';
+import { weatherIn } from './geography';
 import { Rng, hashString } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
 
 import { activeArcOf, arcDay, changeJob, startArc } from './arcs';
-import { hourOf, seasonOf, weatherOf } from './clock';
+import { hourOf, seasonOf } from './clock';
 import { economyDayFull, foodIndex, GOOD, GOODS, marketOf, prosperityDay, stallLook, type EconomyNotes, type Good } from './economy';
 import { impactEcho, businessDay } from './business';
 import { climateOf, nearTiles, startDrought } from './farming';
 import { arrivals, careerDay, demographyDay, migrationDay } from './population';
 import { convoyTick, tradeDay } from './trade';
-import { T } from './types';
+import { DAYS_PER_YEAR, T } from './types';
 import { ROLE_TITLE } from './folk';
 import { learnFact, rumorsKnownBy, seedRumor, spreadRumors, versionsFor, type Approach } from './gossip';
 import { getLayout } from './layout';
@@ -39,7 +42,8 @@ export function societyDay(w: WorldState): void {
   for (const r of w.regions) {
     const people = byRegion.get(r.id) ?? [];
     if (!people.length) continue;
-    const detail = r.id === here || r.isHome ? 2 : life.visited[r.id] !== undefined ? 1 : 0;
+    const tier = simTier(w, r.id, here);
+    const detail = tier === 1 ? 2 : tier === 2 ? 1 : 0;
     const eco = economyDayFull(w, r.id, people);
     chainsFromEconomy(w, rng, r.id, people, eco, detail);
     tradeDay(w, rng, r.id, people);
@@ -48,6 +52,7 @@ export function societyDay(w: WorldState): void {
     if (detail > 0 || rng.chance(0.3)) careerDay(w, rng, r.id, people);
     arrivals(w, rng, r.id);
     for (const f of people) {
+      if (!folkTurn(w, tier, f.id)) continue;
       updateNeeds(w, f, people);
       updateEmotion(w, f);
       fadeAll(w, f);
@@ -845,7 +850,7 @@ export function socialOverride(w: WorldState, f: Folk, clock: number): SocialOve
   }
   if (p.mourning !== undefined && p.mourning >= day && h >= 8 && h < 20 && trait(f, 'trabajador') < 70) return { kind: 'casa', activity: 'está de luto, no sale de casa' };
   // Tormenta: nadie va al campo.
-  const weather = weatherOf(w, day);
+  const weather = weatherIn(w, f.regionId, day);
   if (weather === 'tormenta' && h >= 7 && h < 18 && (f.role === 'campesino' || f.role === 'pastor' || f.role === 'pescador' || f.role === 'minero')) return { kind: 'casa', activity: 'espera en casa a que amaine la tormenta' };
   // Guerra: los comerciantes cierran.
   const r = w.regions[f.regionId];
@@ -900,6 +905,8 @@ export function catchUp(w: WorldState, regionId: number): string[] {
   const relevant = news.filter((e) => e.who.some((id) => known(id) >= 0) || e.kind === 'cosecha' || e.kind === 'pueblo' || POL.includes(e.kind)).slice(-5);
   for (const e of relevant) if (!s.heard.includes(e.id)) s.heard.push(e.id);
   const out = [...economyChanges(w, regionId), ...relevant.map((e) => `Mientras no estabas: ${e.text.charAt(0).toLowerCase()}${e.text.slice(1)}`)];
+  // Tras años fuera, no solo ha cambiado el pueblo: ha cambiado el mundo (Fase 6).
+  if (w.day - last >= DAYS_PER_YEAR * 2 && life.atlas) out.unshift(...worldSince(w, last));
   snapshot(w, regionId);
   return out;
 }

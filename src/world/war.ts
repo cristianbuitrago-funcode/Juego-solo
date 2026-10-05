@@ -18,7 +18,7 @@ import { govOf, recordDecision } from './politics';
 import { relOf, signTreaty, treatiesOf } from './diplomacy';
 import { die, healthOf, injure } from './generations';
 import { createHeirloom } from './estate';
-import { nid, polOf, type Army, type Battle, type Terrain, type War } from './polstate';
+import { nid, polOf, WAR_KIND_NAME, type Army, type Battle, type Terrain, type War, type WarKind } from './polstate';
 
 /**
  * La guerra, cuando llega, es un asunto de recursos: soldados que comen,
@@ -56,6 +56,14 @@ function raiseArmy(w: WorldState, regionId: number): Army {
   return { regionId, soldiers, morale: clamp(0.55 + r.stability * 0.3), supply: Math.min(10, FOODS.reduce((s, g) => s + m.stock[g], 0) / Math.max(1, soldiers * 0.12)), weapons: clamp(m.stock.armas / Math.max(1, soldiers * 0.08)), transport: 0.4, fatigue: 0, leader: lead, intel: 0.1, hungryDays: 0 };
 }
 
+/** Qué clase de guerra es: quien depende de otro y se alza lucha por su independencia; quien pasa hambre, por recursos. */
+export function warKindFor(w: WorldState, a: number, b: number): WarKind {
+  const owner = polOf(w).owner;
+  if (owner[a] === b || owner[b] === a) return 'independencia';
+  if (foodDays(w, a) < 1.5 || w.regions[a].pressure > 0.7) return 'recursos';
+  return 'territorial';
+}
+
 /** Las causas de una guerra (lo que llevó a ella), para la crónica. */
 function causesOf(w: WorldState, a: number, b: number): string[] {
   const out: string[] = [];
@@ -70,9 +78,9 @@ function causesOf(w: WorldState, a: number, b: number): string[] {
   return out;
 }
 
-function startWorldWar(w: WorldState, a: number, b: number): War {
+export function startWorldWar(w: WorldState, a: number, b: number): War {
   const pol = polOf(w);
-  const war: War = { id: nid(w, 'g'), a, b, since: w.day, causes: causesOf(w, a, b), status: 'activa', front: b, armies: { [a]: raiseArmy(w, a), [b]: raiseArmy(w, b) }, battles: [], occupied: [], nextBattle: w.day + 2, allies: { [a]: [], [b]: [] } };
+  const war: War = { id: nid(w, 'g'), a, b, since: w.day, causes: causesOf(w, a, b), status: 'activa', front: b, armies: { [a]: raiseArmy(w, a), [b]: raiseArmy(w, b) }, battles: [], occupied: [], nextBattle: w.day + 2, allies: { [a]: [], [b]: [] }, kind: warKindFor(w, a, b) };
   pol.wars.push(war);
   // Los pactos de defensa: quien tiene un pacto con el atacado acude.
   for (const t of treatiesOf(w, b)) {
@@ -83,7 +91,7 @@ function startWorldWar(w: WorldState, a: number, b: number): War {
     const ally = t.a === a ? t.b : t.a;
     if (t.kind === 'alianza' && ally !== b && !war.allies[b].includes(ally)) war.allies[a].push(ally);
   }
-  const text = `${w.regions[a].name} y ${w.regions[b].name} están en guerra. Por qué: ${war.causes.join(', ')}.`;
+  const text = `${w.regions[a].name} y ${w.regions[b].name} están en guerra (${WAR_KIND_NAME[war.kind!]}). Por qué: ${war.causes.join(', ')}.`;
   for (const id of [a, b]) logEvent(w, id, 'guerra', text, []);
   pol.log.push({ day: w.day, regionId: a, kind: 'guerra', text });
   return war;
@@ -294,6 +302,23 @@ export function finishWar(w: WorldState, war: War, winner: number | undefined, h
   for (const id of war.occupied) if (winner === undefined || polOf(w).owner[id] !== winner) {
     polOf(w).owner[id] = id;
     delete w.regions[id].flags.ocupada;
+  }
+  // Una guerra de independencia ganada por quien dependía: es libre (la frontera cambia).
+  if (war.kind === 'independencia' && winner !== undefined) {
+    const owner = polOf(w).owner;
+    if (owner[winner] !== undefined && owner[winner] !== winner) owner[winner] = winner;
+    // y si ganó el señor, el vasallo sigue sometido (y más vigilado).
+    if (loser !== undefined && owner[loser] === winner) w.regions[loser].stability = clamp(w.regions[loser].stability - 0.1);
+  }
+  // Una guerra por recursos: el vencedor se lleva parte de la despensa del vencido.
+  if (war.kind === 'recursos' && winner !== undefined && loser !== undefined) {
+    const mw = marketOf(w, winner);
+    const ml = marketOf(w, loser);
+    for (const g of FOODS) {
+      const n = ml.stock[g] * 0.3;
+      ml.stock[g] -= n;
+      mw.stock[g] += n;
+    }
   }
   const text = winner !== undefined ? `Termina la guerra: ${w.regions[winner].name} vence a ${w.regions[loser!].name}${war.occupied.length ? ' y se queda con tierras ajenas' : ''}.` : `Termina la guerra entre ${A.name} y ${B.name}, sin vencedores.`;
   war.ended = { day: w.day, text, winner };

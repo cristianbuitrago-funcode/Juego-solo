@@ -16,6 +16,7 @@ import { diplomacyDay } from './diplomacy';
 import { intrigueDay } from './intrigue';
 import { warDay } from './war';
 import { forecastDay } from './forecast';
+import { profileOf, cultureOf } from './culture';
 import { GOV, LAWS, nid, polOf, SCALES, type Gov, type GovSystem, type LawId, type Laws, type Org, type Pressure, type Proposal, type Scale } from './polstate';
 
 /**
@@ -44,7 +45,9 @@ function initGov(w: WorldState, regionId: number): Gov {
   const r = w.regions[regionId];
   const rng = new Rng(hashString(`gov:${w.seed}:${regionId}`));
   const tr = CULTURES.find((c) => c.id === r.culture)?.traits ?? { curiosity: 0.5, pride: 0.5, mercantile: 0.5, caution: 0.5, spirituality: 0.5 };
-  const system: GovSystem = r.isHome ? 'consejo' : rng.weighted(['consejo', 'alcalde', 'monarquia', 'republica', 'familias'] as GovSystem[], (s) => (s === 'consejo' ? 0.8 : s === 'alcalde' ? 0.5 + tr.caution * 0.5 : s === 'monarquia' ? 0.2 + tr.pride * 0.9 : s === 'republica' ? 0.2 + tr.curiosity * 0.5 : 0.2 + tr.mercantile * 0.8))!;
+  // Cada cultura tiende a gobernarse a su manera (Fase 6: también consejos de ancianos y ciudades libres).
+  const prefer = profileOf(cultureOf(w, regionId)).government;
+  const system: GovSystem = r.isHome ? 'consejo' : rng.weighted(['consejo', 'alcalde', 'monarquia', 'republica', 'familias', 'tribal', 'ciudad'] as GovSystem[], (s) => (prefer.includes(s) ? 0.9 : 0) + (s === 'consejo' ? 0.5 : s === 'alcalde' ? 0.3 + tr.caution * 0.4 : s === 'monarquia' ? 0.1 + tr.pride * 0.6 : s === 'republica' ? 0.1 + tr.curiosity * 0.4 : s === 'familias' ? 0.1 + tr.mercantile * 0.5 : 0.05))!;
   const laws: Laws = {
     impuestos: 'medio',
     comercio: tr.mercantile > 0.6 ? 'libre' : rng.chance(0.4) ? 'aranceles' : 'libre',
@@ -52,7 +55,7 @@ function initGov(w: WorldState, regionId: number): Gov {
     agricultura: rng.chance(0.25) ? 'granero' : 'libre',
     trabajo: rng.chance(0.35) ? 'gremios' : 'libre',
     seguridad: tr.caution > 0.65 ? 'alta' : 'normal',
-    migracion: !r.isHome && tr.pride > 0.7 && rng.chance(0.5) ? 'cerrada' : 'abierta',
+    migracion: !r.isHome && (tr.pride > 0.7 || profileOf(cultureOf(w, regionId)).hospitality < 0.3) && rng.chance(0.5) ? 'cerrada' : 'abierta',
     educacion: tr.curiosity > 0.65 && rng.chance(0.5) ? 'escuela' : 'ninguna',
     recursos: 'libre',
   };
@@ -131,7 +134,20 @@ export function councilOf(w: WorldState, regionId: number): string[] {
       for (const o of orgsOf(w, regionId).filter((x) => x.kind === 'guardia')) for (const m of o.members.slice(0, 3)) out.add(m);
       break;
     case 'republica':
+    case 'autonoma':
       for (const o of seatOrgs(w, regionId).slice(0, 3)) if (o.leader && o.leader !== 'jugador') out.add(o.leader);
+      break;
+    case 'tribal':
+      for (const f of [...adults].sort((a, b) => b.age - a.age).slice(0, 5)) out.add(f.id);
+      break;
+    case 'ciudad':
+      for (const o of orgsOf(w, regionId).filter((x) => x.kind === 'comerciantes' || x.kind === 'artesanos' || x.kind === 'familias')) {
+        const rep = o.player.rank >= 3 ? 'jugador' : o.leader;
+        if (rep) out.add(rep);
+      }
+      break;
+    case 'confederacion':
+      for (const o of seatOrgs(w, regionId).slice(0, 4)) if (o.leader && o.leader !== 'jugador') out.add(o.leader);
       break;
   }
   if ((w.life!.identity!.rank[regionId] ?? 0) >= 5 && g.system !== 'monarquia' && g.system !== 'militar') out.add('jugador');
@@ -249,6 +265,8 @@ export function propose(w: WorldState, regionId: number, law: LawId, value: stri
   if (pol.proposals.some((p) => p.regionId === regionId && p.law === law && (p.status === 'abierta' || w.day - p.voteDay < 8))) return null;
   // La guardia en el poder nunca baja la seguridad.
   if (g.system === 'militar' && law === 'seguridad' && value !== 'alta') return null;
+  // Una comunidad autónoma no decide su comercio ni su seguridad: lo hace quien la domina.
+  if (g.system === 'autonoma' && (law === 'comercio' || law === 'seguridad') && (polOf(w).owner[regionId] ?? regionId) !== regionId) return null;
   const fed = g.system === 'federacion' && (law === 'comercio' || law === 'seguridad' || law === 'migracion') ? g.federation : undefined;
   const p: Proposal = { id: nid(w, 'p'), regionId, law, value, from, day: w.day, voteDay: w.day + days, status: 'abierta', sway: {}, pressure: {}, heard: [], federal: fed };
   pol.proposals.push(p);
@@ -277,11 +295,18 @@ export function votersOf(w: WorldState, p: Proposal): { id: string; weight: numb
     case 'monarquia':
     case 'militar':
       return council.map((id) => ({ id, weight: id === g.ruler ? 5 : 0.35 }));
-    case 'republica': {
+    case 'republica':
+    case 'autonoma': {
       const all = w.life!.folk.filter((f) => f.alive && f.regionId === p.regionId && f.age >= 18 && f.p).map((f) => ({ id: f.id, weight: 1 }));
       if (playerSeat(w, p.regionId)) all.push({ id: 'jugador', weight: 1 });
       return all;
     }
+    case 'tribal':
+      return council.map((id) => ({ id, weight: id === 'jugador' ? 1 : Math.max(1, (folkById(w, id)?.age ?? 40) / 30) }));
+    case 'ciudad':
+      return council.map((id) => ({ id, weight: id === 'jugador' ? 1.5 : 1 + (folkById(w, id)?.p?.coins ?? 0) / 25 }));
+    case 'confederacion':
+      return council.map((id) => ({ id, weight: 1 }));
   }
 }
 
@@ -305,7 +330,7 @@ export function leanOf(w: WorldState, voterId: string, p: Proposal): number {
   if (p.law === 'migracion' && p.value === 'cerrada') personal += (trait(f, 'desconfiado') - 50) / 200;
   if (p.law === 'educacion' && p.value === 'escuela') personal += (trait(f, 'curioso') - 50) / 250;
   personal += p.law === 'propiedad' ? (p.value === 'comunal' ? 1 : -1) * (trait(f, 'generoso') - trait(f, 'egoista')) / 300 : 0;
-  const statusQuo = -0.16 - trait(f, 'desconfiado') / 500;
+  const statusQuo = -0.16 - trait(f, 'desconfiado') / 500 - profileOf(cultureOf(w, f.regionId)).tradition * 0.12 - (govOf(w, p.regionId).system === 'tribal' ? 0.15 : 0);
   let sponsor = 0;
   if (p.from === 'jugador' && f.lastMet >= 0) sponsor = (f.trust - 0.5) * 0.5 + f.gratitude * 0.35 - f.resentment * 0.6;
   else if (p.from !== 'gobierno') {
@@ -350,6 +375,8 @@ function resolve(w: WorldState, p: Proposal): string[] {
     const t = tally(w, p);
     votes = t.votes;
     pass = t.yes > t.no;
+    // En una confederación, lo común solo sale si nadie se opone.
+    if (g.system === 'confederacion' && Object.values(t.votes).some((v) => !v)) pass = false;
     p.why = `${Math.round(t.yes * 10) / 10} a favor, ${Math.round(t.no * 10) / 10} en contra`;
   }
   p.votes = votes;

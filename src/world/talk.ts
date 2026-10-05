@@ -1,3 +1,4 @@
+import { foreignSpeech } from './culture';
 import { politicalTalk } from './poltalk';
 import { ancestorRel, generationalLine, talkedWith } from './generations';
 import { familyTalk, recognizeHeirloom } from './estate';
@@ -175,7 +176,7 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
   if (!r.isHome) r.lastAttention = Math.max(r.lastAttention, w.day - (f.role === 'lider' ? 0 : 5));
   commitCtx(ctx);
   if (lines.length > 6) lines.splice(6);
-  return { lines, learned, lied };
+  return { lines: foreignSpeech(w, f, lines), learned, lied };
 }
 
 function situation(ctx: Ctx, f: Folk, liar: boolean): string {

@@ -1,7 +1,8 @@
 import { hashString } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
-import { seasonOf, weatherOf } from './clock';
+import { seasonOf } from './clock';
+import { geoOf, weatherIn } from './geography';
 import { getLayout } from './layout';
 import { DAYS_PER_SEASON, DAYS_PER_YEAR, T, TW } from './types';
 
@@ -92,7 +93,7 @@ export function nearTiles(w: WorldState, regionId: number, pred: (t: number) => 
 
 /** La lluvia de hoy en una región (el tiempo es común, pero cada valle tiene sus nubes). */
 export function rainOf(w: WorldState, regionId: number, day = w.day): number {
-  const weather = weatherOf(w, day);
+  const weather = weatherIn(w, regionId, day);
   let rain = weather === 'lluvia' ? 1 : weather === 'tormenta' ? 1.3 : weather === 'nublado' ? 0.25 : weather === 'nieve' ? 0.35 : weather === 'niebla' ? 0.12 : 0;
   // Variación local.
   const local = (hashString(`${w.seed}:${regionId}:${day}`) % 1000) / 1000;
@@ -100,6 +101,9 @@ export function rainOf(w: WorldState, regionId: number, day = w.day): number {
   else if (local > 0.85) rain *= 0.4;
   const d = climateOf(w).drought;
   if (d && d.regions.includes(regionId) && day >= d.since && day <= d.until) rain *= 0.1;
+  // El clima de cada región (Fase 6): donde es seco llueve menos; las acequias lo compensan en parte.
+  const g = geoOf(w, regionId);
+  rain *= g.rain + (g.rain < 1 && w.regions[regionId].techs.includes('acequias') ? 0.25 : 0);
   return rain;
 }
 
@@ -169,7 +173,7 @@ export function farmDay(w: WorldState, regionId: number, effort: number, farmers
       f.damage.push('sequia');
       news.push({ kind: 'sequia', text: `No llueve en ${r.name}. La tierra se agrieta y las espigas se secan antes de granar.` });
     }
-    if (weatherOf(w, w.day) === 'tormenta' && rain > 1.2) {
+    if (weatherIn(w, regionId) === 'tormenta' && rain > 1.2) {
       f.growth = clamp(f.growth - 0.12);
       if (!f.damage.includes('tormenta')) {
         f.damage.push('tormenta');

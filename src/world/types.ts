@@ -190,6 +190,8 @@ export interface Life {
   politics?: import('./polstate').Politics;
   /** Generaciones, herencia y memoria histórica (Fase 5). */
   gens?: import('./genstate').Generations;
+  /** El mundo completo: asentamientos, caminos, naturaleza, desastres, técnicas, estados, tierras lejanas (Fase 6). */
+  atlas?: import('./atlas').Atlas;
 }
 
 export const DAY_MINUTES = 1440;

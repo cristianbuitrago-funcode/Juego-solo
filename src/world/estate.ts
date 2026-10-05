@@ -11,6 +11,7 @@ import { gensOf, gid, type Asset, type Beneficiary, type Debt, type Dispute, typ
 import { orgById } from './orgs';
 import { lawsOf } from './politics';
 import { recordHist } from './history';
+import { cultureOf, profileOf } from './culture';
 
 /**
  * Lo que queda: casa, dinero, carga, negocios, objetos con historia,
@@ -175,7 +176,9 @@ export function settleEstate(w: WorldState, heirId: string | undefined, heirName
     give(coinTo, `${coins} monedas`);
   } else {
     const town = law === 'comunal' ? 0.25 : 0;
-    const others = rel.length ? (law === 'comunal' ? 0.25 : 0.4) : 0;
+    // La costumbre también cuenta (Fase 6): donde hereda el mayor, los demás reciben poco.
+    const custom = profileOf(cultureOf(w, w.player.home)).inheritance;
+    const others = rel.length ? (custom === 'primogenitura' ? 0.1 : law === 'comunal' || custom === 'comunal' ? 0.25 : 0.4) : 0;
     heirCoins = Math.round(coins * (1 - town - others));
     if (town) {
       marketOf(w, w.player.home).treasury += coins * town;
