@@ -1,3 +1,4 @@
+import { tavernPolitics } from './poltalk';
 import { record, revealRegionHistory } from '../core/chronicle';
 import { meet, observe } from '../core/intel';
 import { foundFragment, mysteryHooks } from '../core/systems/mystery';
@@ -121,6 +122,7 @@ export function listenTavern(w: WorldState, regionId: number): string[] {
   observe(ctx, r, 0.7, ['tension', 'animo', 'relaciones']);
   const rev = revealRegionHistory(w, regionId, w.day - 20, 1);
   for (const e of rev) lines.push(`Alguien comenta: «${e.text}»`);
+  lines.push(...tavernPolitics(w, regionId, ctx.rng));
   if (!lines.length) lines.push('Se habla del tiempo, de la cosecha y de amores. Nada que no supieras.');
   commitCtx(ctx);
   return lines;

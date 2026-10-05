@@ -6,6 +6,11 @@ import { audio } from '../../audio/audio';
 import type { App } from '../app';
 import { clear, h } from '../dom';
 import { regionStatus, STATUS_LABEL } from '../map/colors';
+import { govOf } from '../../world/politics';
+import { describeRelations } from '../../world/diplomacy';
+import { describeWar, warOf } from '../../world/war';
+import { folkById } from '../../world/society';
+import { GOV, LAWS, LAW_IDS } from '../../world/polstate';
 import { avatar, characterTitle, emotionRead, empty, entryRow, FACT_LABEL, FACT_ORDER } from './common';
 
 /**
@@ -100,6 +105,20 @@ function tabKnow(app: App, id: number): Node[] {
       h('div', { class: 'k' }, FACT_LABEL[k]),
       h('div', { class: 'v' }, f.value, h('small', null, `${f.reliable ? '✓ informe' : '~ de oídas'} · ${ago(age)}`)),
     ));
+  }
+  // Política: lo que sabes de su gobierno, sus leyes, sus grupos y sus vecinos (si has estado o lo han observado).
+  const life = w.life;
+  if (life?.politics && (life.visited[id] !== undefined || intel.level >= 2 || r.isHome)) {
+    const g = govOf(w, id);
+    const owner = life.politics.owner[id];
+    out.push(...([h('h3', null, 'Gobierno y vecinos'),
+      h('p', null, `${GOV[g.system].name.charAt(0).toUpperCase() + GOV[g.system].name.slice(1)}${g.ruler ? `; al frente, ${g.ruler === 'jugador' ? 'tú' : folkById(w, g.ruler)?.name ?? 'alguien'}` : ''}. ${g.legitimacy > 0.65 ? 'Le aceptan.' : g.legitimacy > 0.4 ? 'Hay quien murmura.' : 'Casi nadie le respeta.'}`),
+      owner !== undefined && owner !== id ? h('p', { class: 'tag bad' }, `Ocupada por ${w.regions[owner].name}`) : null,
+      h('p', { class: 'tiny' }, LAW_IDS.filter((l) => g.laws[l] !== 'medio' && g.laws[l] !== 'normal' && g.laws[l] !== 'libre' && g.laws[l] !== 'ninguna' && g.laws[l] !== 'abierta').map((l) => LAWS[l].label[g.laws[l]]).join(' · ') || 'Leyes de siempre.'),
+      ...describeRelations(w, id).map((l) => h('p', { class: 'tiny' }, l)),
+    ] as (HTMLElement | null)[]).filter((x): x is HTMLElement => !!x));
+    const war = warOf(w, id);
+    if (war) out.push(h('div', { class: 'card' }, ...describeWar(w, war).map((l) => h('p', { class: 'tiny' }, l))));
   }
   const rumors = w.rumors.filter((x) => x.known && (x.about === id || x.target === id));
   if (rumors.length) {

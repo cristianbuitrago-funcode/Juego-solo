@@ -169,6 +169,8 @@ export interface Life {
   prologue?: import('./prologue').Prologue;
   /** La sociedad: lazos entre vecinos, rumores, conflictos, mercado, acontecimientos. */
   society?: import('./society').Society;
+  /** Política, organizaciones, diplomacia, información y guerra (Fase 4). */
+  politics?: import('./polstate').Politics;
 }
 
 export const DAY_MINUTES = 1440;

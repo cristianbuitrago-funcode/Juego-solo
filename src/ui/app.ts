@@ -55,6 +55,7 @@ export class App {
   private diary: HTMLElement | null = null;
   private diaryView: View = 'mapa';
   private map: MapView | null = null;
+  private mapLayer: MapView['layer'] = 'normal';
   private sheet: HTMLElement | null = null;
   private modals: HTMLElement[] = [];
   private whispers: string[] = [];
@@ -570,6 +571,14 @@ export class App {
       this.map.player = { x: life.player.x * 2, y: life.player.y * 2 };
       this.map.setWorld(w);
       body.append(h('div', { class: 'map-hint' }, 'Toca una región para ver lo que sabes de ella.'));
+      // Capas del mapa estratégico (solo con lo que sabes).
+      if (life.politics) {
+        const layers: [MapView['layer'], string][] = [['normal', 'Mapa'], ['politica', 'Territorios y relaciones'], ['comercio', 'Comercio'], ['conflictos', 'Conflictos']];
+        const bar = h('div', { class: 'map-layers' }, ...layers.map(([k, l]) => h('button', { class: `opt-chip ${this.mapLayer === k ? 'on' : ''}`, onclick: () => ((this.mapLayer = k), this.map && ((this.map.layer = k), this.map.refresh()), bar.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', layers[i][0] === k))) }, l)));
+        body.append(bar);
+        this.map.layer = this.mapLayer;
+        this.map.refresh();
+      }
       return;
     }
     const render = {

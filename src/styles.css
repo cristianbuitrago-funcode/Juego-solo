@@ -301,3 +301,7 @@ body[data-motion="reduced"] .awaken p, body[data-motion="reduced"] .awaken butto
 .daycard button { animation-delay: 3.6s; }
 body[data-motion="reduced"] .flash-modal p, body[data-motion="reduced"] .flash-modal .dlg-choices, body[data-motion="reduced"] .daycard h2 { animation: none; opacity: 1; filter: none; }
 .modal.flash-modal .close-x { background: rgba(233,220,192,0.12); color: #e9dcc0; }
+.map-layers { position: absolute; left: 8px; right: 8px; top: 8px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto; }
+.map-layers .opt-chip { background: rgba(243,232,207,0.92); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.map-layers .opt-chip.on { background: #2f5f63; color: #f3e8cf; }

@@ -74,6 +74,7 @@ export interface Persona {
   mourning?: number; // de luto hasta ese día
   away?: { to: number; back: number; why: string }; // de viaje
   plans: Plan[];
+  strike?: number; // de huelga hasta ese día (Fase 4)
 }
 
 export type Kin = 'pareja' | 'hermanos' | 'progenitor' | 'expareja';

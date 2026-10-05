@@ -11,6 +11,11 @@ import { seedRumor } from './gossip';
 import { ensurePeople, logEvent, societyOf, trait } from './society';
 import type { Folk, FolkRole } from './types';
 import { T } from './types';
+import { lawFx } from './politics';
+
+const CRAFTS: FolkRole[] = ['artesano', 'carpintero', 'tejedor'];
+const bordersClosed = (w: WorldState, id: number) => !!w.life!.politics && lawFx(w, id).closedBorders;
+const guilds = (w: WorldState, id: number) => !!w.life!.politics && lawFx(w, id).guilds;
 
 /**
  * Población, vivienda, migraciones y oficios. La gente nace, muere, se va
@@ -35,7 +40,11 @@ export function attraction(w: WorldState, regionId: number, folk?: Folk): number
   const m = marketOf(w, regionId);
   const t = w.life!.towns[regionId];
   const crowd = t ? Math.max(0, r.population / (Math.max(1, t.houses) * 60) - 1.05) : 0;
-  return m.prosperity + bonus - (r.flags.guerra ? 0.35 : 0) - crowd * 0.4 - (r.flags.fiebre ? 0.1 : 0);
+  // Las leyes también pesan: con impuestos altos, a los comerciantes no les sale a cuenta quedarse.
+  const fx = w.life!.politics ? lawFx(w, regionId) : undefined;
+  const taxed = fx && folk && (folk.role === 'comerciante' || folk.role === 'posadero') ? (fx.tax - 0.06) * 4 : 0;
+  const closed = fx?.closedBorders && folk && folk.regionId !== regionId ? 0.6 : 0;
+  return m.prosperity + bonus - (r.flags.guerra ? 0.35 : 0) - crowd * 0.4 - (r.flags.fiebre ? 0.1 : 0) - taxed - closed;
 }
 
 /** Un día de vida demográfica en un pueblo: nacimientos y muertes del motor. */
@@ -72,7 +81,7 @@ export function migrationDay(w: WorldState, rng: Rng): string[] {
       const folkA = Math.max(1, w.life!.folk.filter((f) => f.alive && f.regionId === a).length);
       const push = clamp(marketOf(w, a).hungry / folkA) * 0.14;
       const diff = A[b] - A[a] + push;
-      if (diff < 0.1 || A[b] < 0.35) continue;
+      if (diff < 0.1 || A[b] < 0.35 || bordersClosed(w, b)) continue;
       const n = Math.min(ra.population * 0.012, ra.population * 0.0016 * (diff - 0.1) * 10 * (0.5 + route.traffic));
       if (n < 0.3) continue;
       ra.population -= n;
@@ -150,6 +159,7 @@ export function arrivals(w: WorldState, rng: Rng, regionId: number): string | nu
   const s = societyOf(w) as ReturnType<typeof societyOf> & { lastArrival?: Record<number, number> };
   const last = (s.lastArrival ??= {});
   const land = landOpportunity(w, regionId) > 0.1;
+  if (bordersClosed(w, regionId)) return null;
   if ((here.length >= want - 2 && !land) || !rng.chance(land ? 0.15 : 0.08) || (attraction(w, regionId) < 0.5 && !land) || w.day - (last[regionId] ?? -99) < 6) return null;
   last[regionId] = w.day;
   const role = land ? 'campesino' : mostWanted(w, regionId, here);
@@ -195,6 +205,7 @@ function mostWanted(w: WorldState, regionId: number, here: Folk[]): FolkRole {
   let best: FolkRole = 'campesino';
   let bw = -1;
   for (const role of CAN_DO) {
+    if (guilds(w, regionId) && CRAFTS.includes(role)) continue; // los gremios no dejan entrar a nadie de fuera
     const n = here.filter((f) => f.role === role).length;
     const v = wageOf(w, regionId, role) / (1 + n * 0.5);
     if (v > bw) (bw = v), (best = role);
@@ -216,6 +227,7 @@ export function careerDay(w: WorldState, rng: Rng, regionId: number, people: Fol
     for (const role of CAN_DO) {
       if (role === f.role) continue;
       if (role === 'comerciante' && p.coins < 12) continue;
+      if (CRAFTS.includes(role) && guilds(w, regionId)) continue;
       const others = people.filter((o) => o.role === role).length;
       const v = wageOf(w, regionId, role) / (1 + others * 0.25);
       if (v > bw) (bw = v), (best = role);

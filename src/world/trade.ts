@@ -7,6 +7,8 @@ import { seedRumor } from './gossip';
 import { roadPath } from './roadnet';
 import { folkById, logEvent, societyOf } from './society';
 import type { Folk } from './types';
+import { tariffOf, tradeAllowed } from './politics';
+import { secretRoute } from './intrigue';
 
 /**
  * Comercio entre pueblos. Los comerciantes miran lo que saben de otros
@@ -71,7 +73,14 @@ export function riskOf(w: WorldState, a: number, b: number): number {
   if (A.flags.guerra || B.flags.guerra || A.relations[b]?.war) r += 0.22;
   if (A.flags.bandidos || B.flags.bandidos) r += 0.14;
   if (Math.min(A.stability, B.stability) < 0.4) r += 0.05;
-  return clamp(r, 0, 0.6);
+  // La ley de seguridad de cada pueblo: más guardia, caminos más seguros.
+  for (const id of [a, b]) {
+    const sec = w.life?.politics?.govs[id]?.laws.seguridad;
+    if (sec === 'alta') r -= 0.03;
+    else if (sec === 'baja') r += 0.04;
+  }
+  if (secretRoute(w, a, b)) r *= 0.5; // el paso del monte que pocos conocen
+  return clamp(r, 0.005, 0.6);
 }
 
 /** Lo que un mercado sabe de los precios de otro (puede estar anticuado). */
@@ -112,7 +121,7 @@ export function bestDeal(w: WorldState, from: number, people: number, budget: nu
   const m = marketOf(w, from);
   let best: { to: number; good: Good; qty: number; profit: number; dist: number } | null = null;
   for (const r of w.regions) {
-    if (r.id === from) continue;
+    if (r.id === from || !tradeAllowed(w, from, r.id)) continue;
     const dist = distanceOf(w, from, r.id);
     if (!Number.isFinite(dist) || dist > 260) continue;
     const news = knownPrices(w, from, r.id);
@@ -121,7 +130,7 @@ export function bestDeal(w: WorldState, from: number, people: number, budget: nu
     for (const g of GOODS) {
       const there = news.price[g];
       if (!there) continue;
-      const unit = there * 0.86 * (1 - risk) - m.price[g] * 1.04 - transportCost(g, dist);
+      const unit = there * 0.86 * (1 - risk) * (1 - tariffOf(w, from, r.id)) - m.price[g] * 1.04 - transportCost(g, dist);
       if (unit <= 0.05) continue;
       const qty = Math.floor(Math.min(cap, surplus(m, g, people), budget / Math.max(0.1, m.price[g])));
       if (qty < 3) continue;
@@ -136,6 +145,8 @@ export function tradeDay(w: WorldState, rng: Rng, regionId: number, people: Folk
   const t = tradeOf(w);
   const m = marketOf(w, regionId);
   const r = w.regions[regionId];
+  // Con los puestos cerrados en protesta no sale ninguna caravana del pueblo.
+  if (r.flags.boicot) return;
   // Comerciantes del pueblo.
   for (const f of people) {
     if (f.role !== 'comerciante' || !f.p || f.p.away || (f.p.sick ?? -1) >= w.day || f.p.coins < 8) continue;
@@ -155,7 +166,7 @@ export function tradeDay(w: WorldState, rng: Rng, regionId: number, people: Folk
   for (const route of w.routes) {
     if (route.status !== 'abierta' || (route.a !== regionId && route.b !== regionId)) continue;
     const other = route.a === regionId ? route.b : route.a;
-    if (!rng.chance(0.22 + route.traffic * 0.3)) continue;
+    if (!tradeAllowed(w, regionId, other) || !rng.chance(0.22 + route.traffic * 0.3)) continue;
     const there = marketOf(w, other);
     const dist = distanceOf(w, regionId, other);
     if (!Number.isFinite(dist)) continue;
@@ -240,20 +251,26 @@ function arrive(w: WorldState, c: Convoy): void {
   const src = marketOf(w, c.from);
   let paid = 0;
   const owner = c.kind === 'mercader' ? folkById(w, c.owner) : undefined;
+  // Aranceles: lo que viene de fuera paga a la entrada (salvo tratado de comercio).
+  const duty = tariffOf(w, c.from, c.to);
   for (const [g, n] of Object.entries(c.cargo) as [Good, number][]) {
     if (c.kind === 'carretero') {
       // El carretero vende al precio de allí; el pueblo de origen cobra su parte.
       const value = n * dest.price[g] * 0.85;
-      const pay = Math.min(dest.cash, value);
-      dest.cash -= pay;
+      const gross = Math.min(dest.cash, value);
+      const pay = gross * (1 - duty);
+      dest.cash -= gross;
+      dest.treasury += gross - pay;
       dest.stock[g] += n;
       src.cash += Math.min(pay, c.cost);
       dest.treasury += Math.max(0, pay - c.cost) * 0.5;
       paid += pay;
     } else {
       // Quien trae la mercancía la vende a buen precio (mejor que el productor local).
-      const pay = Math.min(dest.cash, n * dest.price[g] * 0.88);
-      dest.cash -= pay;
+      const gross = Math.min(dest.cash, n * dest.price[g] * 0.88);
+      const pay = gross * (1 - duty);
+      dest.cash -= gross;
+      dest.treasury += gross - pay;
       dest.stock[g] += n;
       if (owner?.p) owner.p.coins += pay;
       paid += pay;

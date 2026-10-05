@@ -471,7 +471,10 @@ export function updateStanding(w: WorldState): StandingNews[] {
     const before = id.standing[r.id] ?? 0;
     let rank = id.rank[r.id] ?? 0;
     // Perder la confianza cuesta el cargo.
-    if (rank >= 4 && byScore < rank - 1) {
+    // (Quien gobierna por elección o por la fuerza no pierde el cargo así: lo pierde en las urnas o en la calle.)
+    const governs = w.life?.politics?.govs[r.id]?.ruler === 'jugador';
+    if (governs) rank = id.rank[r.id] = 6;
+    if (rank >= 4 && byScore < rank - 1 && !governs) {
       news.push({ regionId: r.id, text: `El consejo de ${r.name} te retira su confianza. Ya no hablas en su nombre.` });
       story(w, `Perdió su lugar en el consejo de ${r.name}.`, 'error');
       rank = id.rank[r.id] = Math.max(0, byScore >= 4 ? 4 : 0);

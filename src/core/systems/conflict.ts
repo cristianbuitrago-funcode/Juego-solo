@@ -18,7 +18,7 @@ export function tickConflict(ctx: Ctx): void {
     for (const [idStr, rel] of Object.entries(r.relations)) {
       const id = Number(idStr);
       const o = w.regions[id];
-      if (o.isHome || rel.war) continue;
+      if (o.isHome || rel.war || r.flags[`paz_${id}`]) continue;
       if (rel.tension > 0.72 && r.militancy > 0.6 && rel.opinion < -0.2) {
         // El mundo aprendió que el jugador media: primero le piden ayuda.
         if ((w.player.patterns.dialogo ?? 0) >= 3 && !r.flags[`pidioMediacion_${id}`]) {
@@ -32,6 +32,8 @@ export function tickConflict(ctx: Ctx): void {
     // Incursiones contra tu gente si el rencor es enorme.
     if (r.neighbors.includes(w.player.home) && r.attitude.resentment > 0.72 && r.militancy > 0.6 && rng.chance(0.06)) raidHome(ctx, r);
   }
+  // Con la capa política del mundo (Fase 4), las guerras se libran allí: ejércitos, suministros, terreno.
+  if (w.sim?.worldPolitics) return;
   for (const r of w.regions) {
     for (const [idStr, rel] of Object.entries(r.relations)) {
       const id = Number(idStr);

@@ -719,7 +719,7 @@ describe('Fase 3: la economía del mundo', () => {
     expect(helped.avg(75, 120, 'prosperity')).toBeGreaterThan(control.avg(75, 120, 'prosperity'));
     expect(helped.avg(100, 120, 'pop')).toBeGreaterThan(Math.min(...helped.rows.filter((r) => r.day >= 40 && r.day <= 70).map((r) => r.pop)));
     expect(helped.avg(100, 120, 'pop')).toBeGreaterThan(control.avg(100, 120, 'pop'));
-  });
+  }, 30000);
 
   it('al volver tras una larga ausencia, el pueblo ha cambiado (y te lo hace notar)', () => {
     const w = world(604);

@@ -109,8 +109,9 @@ export function playerBuy(w: WorldState, regionId: number, g: Good, n: number): 
   if (coins(w).coins < cost) return { ok: false, text: `Cuesta ${cost} monedas. No te llega.`, notes: [] };
   const before = m.stock[g];
   coins(w).coins -= cost;
-  m.cash += cost * 0.94;
-  m.treasury += cost * 0.06;
+  const tax = m.law?.tax ?? 0.06;
+  m.cash += cost * (1 - tax);
+  m.treasury += cost * tax;
   m.stock[g] -= n;
   // El precio reacciona en el acto.
   m.price[g] = Math.round(m.price[g] * (1 + (0.45 * n) / Math.max(1, before)) * 100) / 100;
