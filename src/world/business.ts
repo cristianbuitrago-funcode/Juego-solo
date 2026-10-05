@@ -10,6 +10,11 @@ import { deed, gain, story, type GainNote } from './identity';
 import { folkById, logEvent, memorize, societyOf } from './society';
 import { depart, distanceOf, tradeOf } from './trade';
 import type { Folk } from './types';
+import { createHeirloom } from './estate';
+import { recordHist } from './history';
+import { playerLabel } from './genstate';
+
+const cap1 = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
 /**
  * El jugador en la economía, desde abajo: compra y vende (y al hacerlo mueve
@@ -207,6 +212,9 @@ export function openBusiness(w: WorldState, regionId: number, kind: BusinessKind
   m.treasury += cost * 0.5;
   const b: Business = { id: `nb${++societyOf(w).seq}`, kind, regionId, opened: w.day, cash: 0, stock: {}, workers: [], wage: 1, log: [], route: kind === 'transporte' && opts.to !== undefined && opts.good ? { to: opts.to, good: opts.good } : undefined };
   pe.businesses.push(b);
+  // La llave del negocio: un objeto que pasará de mano en mano (Fase 5).
+  createHeirloom(w, 'llave', `La llave del ${kind === 'puesto' ? 'puesto' : kind === 'granja' ? 'campo' : 'carro'} de ${w.regions[regionId].name}`, `Se abrió el día ${w.day}, en ${w.regions[regionId].name}.`);
+  recordHist(w, { kind: 'negocio', regionId, text: `${cap1(playerLabel(w))} abre ${kind === 'puesto' ? 'un puesto en el mercado' : kind === 'granja' ? 'un campo' : 'un negocio de transporte'} en ${w.regions[regionId].name}.`, actor: playerLabel(w), gen: w.life!.player.generation, importance: 1, fame: 0.3, witnessed: true });
   const what = kind === 'puesto' ? 'un puesto en el mercado' : kind === 'granja' ? 'un campo en arriendo' : 'un negocio de transporte';
   story(w, `Abrió ${what} en ${w.regions[regionId].name}.`, 'logro');
   logEvent(w, regionId, 'negocio', `El forastero ha abierto ${what}.`, []);

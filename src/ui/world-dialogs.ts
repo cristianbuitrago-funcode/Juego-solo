@@ -30,6 +30,7 @@ import type { App } from './app';
 import { h, vibrate } from './dom';
 import { openAction } from './screens/composer';
 import { marketSuspicion, politicalChoices, townAffairs, warDialog } from './politics';
+import { homeChoices, lifeChoices, recordsChoice } from './generations';
 
 /**
  * Las decisiones salen del menú y entran en el mundo: se toman hablando con
@@ -272,6 +273,8 @@ function talk(app: App, folkId: string): void {
   if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60 || (f.p?.sick ?? -1) >= w.day)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
   // La política: votaciones, grupos, quien gobierna, lo que sabe, la oposición, la guerra (Fase 4).
   choices.splice(Math.min(choices.length, 1), 0, ...politicalChoices(app, f));
+  // La vida: pareja, hijos, enseñar, aprendices, acoger (Fase 5).
+  choices.splice(Math.min(choices.length, 2), 0, ...lifeChoices(app, f));
   // Su vida con los demás: pleitos en los que puedes intervenir y gente por la que preguntar.
   for (const c of arcChoices(w, f)) choices.splice(Math.min(choices.length, 1), 0, { label: c.label, hint: c.hint, run: () => arcRun(app, folkId, c.id) });
   if (f.age >= 10) choices.push({ label: '👥 Preguntar por alguien', run: () => askAbout(app, folkId) });
@@ -436,6 +439,7 @@ function building(app: App, regionId: number, kind: string): void {
       }
       return void dialogue(app, 'Tu casa', `${life.player.name}, ${life.player.age} años`, [life.player.family.length ? 'El fuego sigue encendido. Tu familia te espera.' : 'El fuego sigue encendido. La casa huele a tuya.'], [
         { label: '🌙 Dormir hasta el amanecer', run: () => app.sleep('casa'), primary: true },
+        ...homeChoices(app),
         { label: '⏳ Descansar tres horas', run: () => (app.passTime(180), app.toast('Descansas un rato.')) },
         { label: '🪞 Quién soy', run: () => app.setView('familia') },
         { label: '💾 Guardar o cargar', run: () => app.saves() },
@@ -470,6 +474,7 @@ function building(app: App, regionId: number, kind: string): void {
     case 'templo':
       return void dialogue(app, `Templo de ${r.name}`, '', templeElders(w, regionId), [
         { label: '📚 Estudiar con los ancianos', hint: 'Historia, costumbres y lenguas.', run: () => outcome(app, 'El templo', study(w, regionId, 'templo')) },
+        ...recordsChoice(app, regionId),
         ...(r.flags.fiebre ? [{ label: '🌿 Atender a los enfermos', hint: hasTalent(id, 'sanador') ? 'Sabes cómo frenar esta fiebre.' : 'Necesitarías saber mucho de medicina.', run: () => outcome(app, 'Los enfermos', tendSick(w, regionId)) }] : []),
         ...(!id.housed ? [{ label: '🕯 Pedir refugio para dormir', hint: 'Gratis, en un banco frío.', run: () => app.sleep('templo') }] : []),
         { label: 'Salir', run: () => app.refresh() },

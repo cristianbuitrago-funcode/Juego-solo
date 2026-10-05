@@ -162,6 +162,8 @@ export interface Identity {
   worked: Record<string, number>; // vecino → último día en que trabajaste con él
   inbox?: string[]; // noticias sobre ti pendientes de contar
   temper?: string; // carácter (los herederos lo traen de nacimiento)
+  /** Lo que la edad y la salud hacen al cuerpo y a la mente (Fase 5; lo escribe generations.ts cada día). */
+  vigor?: { body: number; mind: number; learn: number; teach: number; social: number };
 }
 
 const blankTraits = <K extends string>(ids: K[]): Record<K, Trait> => Object.fromEntries(ids.map((k) => [k, { xp: 0, level: 0, found: -1 }])) as Record<K, Trait>;
@@ -291,7 +293,10 @@ export function levelOf(id: Identity, key: SkillId | `k:${KnowId}`): number {
 /** Probabilidad de éxito de algo según la habilidad (difficulty 0 fácil … 3 muy difícil). */
 export function chanceOf(id: Identity, skill: SkillId, difficulty = 1): number {
   const lv = id.skills[skill].level;
-  return Math.max(0.08, Math.min(0.95, 0.42 + lv * 0.13 - difficulty * 0.12));
+  // La edad cuenta: el cuerpo para lo físico, la experiencia para lo demás.
+  const v = id.vigor;
+  const age = v ? (['combate', 'agricultura', 'artesania', 'supervivencia', 'sigilo'].includes(skill) ? (v.body - 1) * 0.3 : (v.mind - 1) * 0.35) : 0;
+  return Math.max(0.08, Math.min(0.95, 0.42 + lv * 0.13 - difficulty * 0.12 + age));
 }
 
 export interface GainNote {
@@ -314,7 +319,10 @@ export function gain(w: WorldState, key: SkillId | `k:${KnowId}`, amount: number
   const latent = id.latent[key] ?? 0;
   const notes: GainNote[] = [];
   const before = t.level;
-  t.xp += amount * (1 + latent * 0.35);
+  // Se aprende más deprisa de joven; los saberes, mejor con los años.
+  const v = id.vigor;
+  const pace = v ? (isKnow ? (v.learn + v.mind) / 2 : v.learn) : 1;
+  t.xp += amount * (1 + latent * 0.35) * pace;
   let lv = 0;
   for (let i = 1; i <= MAX_LEVEL; i++) if (t.xp >= LEVEL_XP[i]) lv = i;
   const name = isKnow ? KNOWS[k as KnowId].name : SKILLS[k as SkillId].name;
@@ -393,7 +401,7 @@ export function tickNeeds(id: Identity, minutes: number): NeedsTick {
   const n = id.needs;
   const h = minutes / 60;
   n.hunger = Math.min(1, n.hunger + h * 0.05 * (hasTalent(id, 'superviviente') ? 0.5 : 1));
-  n.fatigue = Math.min(1, n.fatigue + h * 0.03);
+  n.fatigue = Math.min(1, n.fatigue + h * 0.03 * (id.vigor ? 1.45 - id.vigor.body * 0.45 : 1));
   const notes: string[] = [];
   const level = n.hunger >= 0.95 || n.fatigue >= 0.95 ? 3 : n.hunger >= 0.8 || n.fatigue >= 0.85 ? 2 : n.hunger >= 0.6 ? 1 : 0;
   if (level > n.warned) {
@@ -418,7 +426,8 @@ export function rest(id: Identity, full: boolean): void {
 /** Más lento con hambre o cansancio. */
 export function speedFactor(id: Identity | undefined): number {
   if (!id || id.mode === 'gobernante') return 1;
-  return id.needs.hunger >= 0.85 || id.needs.fatigue >= 0.85 ? 0.72 : 1;
+  const age = id.vigor ? 0.7 + Math.min(1, id.vigor.body) * 0.3 : 1;
+  return (id.needs.hunger >= 0.85 || id.needs.fatigue >= 0.85 ? 0.72 : 1) * age;
 }
 
 // ---------------------------------------------------------------------------

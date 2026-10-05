@@ -566,6 +566,7 @@ export function mournDeaths(w: WorldState, dead: Folk[]): void {
   ensurePeople(w);
   const s = societyOf(w);
   for (const d of dead) {
+    d.died ??= w.day;
     const close = tiesOf(w, d.id).filter((t) => t.kin || t.aff >= 40);
     for (const t of close) {
       const o = folkById(w, other(t, d.id));
@@ -599,7 +600,7 @@ export function welcomeBirth(w: WorldState, baby: Folk, parent: Folk | undefined
     const pf = folkById(w, pid);
     if (pf?.p) (pf.p.emo.felicidad = clamp(pf.p.emo.felicidad + 0.4)), memorize(w, pf, { kind: 'nacimiento', about: baby.id, text: `Nació ${baby.name}.`, w: 0.8, src: 'propio' });
   }
-  for (const k of kinOf(w, parent.id)) if (k.rel === 'hijo' || k.rel === 'hija') Object.assign(ensureTie(w, k.id, baby.id), { kin: 'hermanos', aff: 40, fam: 80 });
+  for (const k of kinOf(w, parent.id)) if ((k.rel === 'hijo' || k.rel === 'hija') && k.id !== baby.id) Object.assign(ensureTie(w, k.id, baby.id), { kin: 'hermanos', aff: 40, fam: 80 });
   baby.house = parent.house;
   logEvent(w, parent.regionId, 'nacimiento', `Ha nacido ${baby.name}, ${partner ? `de ${parent.name} y ${folkById(w, partner)?.name}` : `de ${parent.name}`}.`, [parent.id, baby.id]);
   seedRumor(w, { regionId: parent.regionId, kind: 'nacimiento', subject: parent.id, witnesses: [parent.id, partner ?? parent.id], extra: { baby: baby.id } });

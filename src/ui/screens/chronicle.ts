@@ -6,6 +6,7 @@ import { empty, ENTRY_ICON } from './common';
 import { ensureLife } from '../../world/life';
 import { seasonOf, yearOf } from '../../world/clock';
 import { storyLine, type StoryEntry } from '../../world/identity';
+import { historyView } from '../generations';
 
 /**
  * Crónica (registro de acontecimientos) e historial de consecuencias.
@@ -25,8 +26,9 @@ export function renderChronicle(app: App): Node[] {
         h('button', { class: app.chronicleTab === 'vida' ? 'on' : '', onclick: () => ((app.chronicleTab = 'vida'), draw()) }, 'Tu historia'),
         h('button', { class: app.chronicleTab === 'dias' ? 'on' : '', onclick: () => ((app.chronicleTab = 'dias'), draw()) }, 'El mundo'),
         h('button', { class: app.chronicleTab === 'cadenas' ? 'on' : '', onclick: () => ((app.chronicleTab = 'cadenas'), draw()) }, 'Consecuencias'),
+        h('button', { class: app.chronicleTab === 'historia' ? 'on' : '', onclick: () => ((app.chronicleTab = 'historia'), draw()) }, 'Historia'),
       ),
-      ...(app.chronicleTab === 'vida' ? personal(w) : app.chronicleTab === 'dias' ? days(app, draw) : chains(w)),
+      ...(app.chronicleTab === 'vida' ? personal(w) : app.chronicleTab === 'dias' ? days(app, draw) : app.chronicleTab === 'historia' ? historyView(app) : chains(w)),
     );
   };
   draw();

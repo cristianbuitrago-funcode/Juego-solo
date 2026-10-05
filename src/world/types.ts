@@ -76,12 +76,21 @@ export interface Folk {
   gender?: 'f' | 'm';
   /** La persona: carácter, necesidades, emociones, objetivos, recuerdos propios (Fase 2). */
   p?: import('./society').Persona;
+  /** Día en que murió (para archivar a los muertos con el tiempo). */
+  died?: number;
+  /** Lo que ha aprendido de otros (de su familia, del jugador): habilidad → nivel. */
+  learned?: Partial<Record<import('./genstate').LearnKey, number>>;
+  /** Familia (casa) a la que pertenece. */
+  houseId?: string;
 }
 
 export interface Kin {
   name: string;
-  relation: 'hijo' | 'hija' | 'aprendiz' | 'sobrino' | 'sobrina';
+  relation: 'hijo' | 'hija' | 'aprendiz' | 'sobrino' | 'sobrina' | 'pareja' | 'hermano' | 'hermana' | 'nieto' | 'nieta' | 'amigo' | 'amiga' | 'madre' | 'padre';
   age: number;
+  /** El vecino de carne y hueso (Fase 5: la familia vive en el mundo). */
+  folkId?: string;
+  adopted?: boolean;
 }
 
 export interface Ancestor {
@@ -90,6 +99,10 @@ export interface Ancestor {
   toDay: number;
   title: string;
   relation: string; // relación con el siguiente
+  fem?: boolean;
+  age?: number;
+  /** Su crónica de vida (Fase 5). */
+  chronicle?: string[];
 }
 
 export interface Avatar {
@@ -104,6 +117,10 @@ export interface Avatar {
   lineage: Ancestor[];
   inventory: { comida: number; hierbas: number; reliquias: number };
   pendingDeath: boolean;
+  /** Cómo y cuándo murió (Fase 5). */
+  death?: { day: number; cause: string; text: string; regionId: number };
+  /** De dónde viene (para quien hereda: «Nació en…»). */
+  origin?: string;
   /** Aspecto elegido por el jugador (capa, túnica, pelo…); lo interpreta el render. */
   look?: { cloak: string; tunic: string; hair: string; hairColor: string; fem: boolean; beard: string; skin: number };
 }
@@ -171,6 +188,8 @@ export interface Life {
   society?: import('./society').Society;
   /** Política, organizaciones, diplomacia, información y guerra (Fase 4). */
   politics?: import('./polstate').Politics;
+  /** Generaciones, herencia y memoria histórica (Fase 5). */
+  gens?: import('./genstate').Generations;
 }
 
 export const DAY_MINUTES = 1440;

@@ -114,7 +114,12 @@ src/
 │   ├── war.ts             Ejércitos, suministro, terreno, batallas, ocupación y fronteras
 │   ├── forecast.ts        Hipótesis sobre el mundo vivo
 │   ├── poltalk.ts         Lo que se dice de política en la calle y en la posada
-│   ├── legacy.ts          Lo que deja una vida (preparación de la Fase 5)
+│   ├── legacy.ts          Lo que deja una vida (resumen para la herencia)
+│   ├── genstate.ts        Datos de las generaciones: lazos, salud, objetos, testamento, archivo
+│   ├── generations.ts     Etapas de la vida, salud y muerte, familia, enseñanza, herencia de rasgos
+│   ├── estate.ts          Testamento, reparto según la ley, disputas, deudas, objetos, fama familiar
+│   ├── succession.ts      Quién continúa, crónica de una vida, el relevo generacional
+│   ├── history.ts         Archivo histórico, leyendas que se deforman, monumentos, casas del mundo
 │   ├── folk.ts            Vecinos con memoria y disposición a ayudar
 │   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
 │   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
@@ -140,6 +145,7 @@ src/
 │   ├── app.ts             Controlador: HUD mínimo, reloj del mundo, diario, modales
 │   ├── world-dialogs.ts   Decisiones dentro del mundo (almacén, consejo, líderes, fronteras…)
 │   ├── politics.ts        Salón, grupos, votaciones, presión, negociación, guerra, secretos
+│   ├── generations.ts     «Tu historia continúa», testamento, familia, enseñar, línea temporal
 │   ├── map/               Mapa del mundo (en el diario)
 │   └── screens/           crónica, hipótesis, investigación, consejo, linaje, menú, ayuda…
 ├── audio/audio.ts         Música ambiental generativa (Web Audio) según el estado del mundo
@@ -339,6 +345,24 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - **Escalas de decisión**: persona, familia, pueblo, región, varios pueblos y el mundo conocido. **Legado**: leyes, tratados, grupos fundados, guerras, derrotas y traiciones quedan registrados con su autor y generación, y siguen en el mundo aunque el protagonista muera (preparado para la Fase 5: herencia de propiedad, reputación y conocimiento en `src/world/legacy.ts`).
 - **La prueba** (en `tests/politics.test.ts`): desde cero, el jugador se da a conocer, gana influencia, entra en un grupo, lleva su causa al consejo y convence a quienes votan, la ley cambia, firma un tratado como diplomático, media la paz en una guerra entre vecinos y acaba ganando unas elecciones. También: un mercader rico con influencia sin cargo, gobiernos que deciden distinto, impuestos que llenan las arcas y vacían bolsillos, la cadena hasta la conspiración (y cómo cortarla), un acaparador destapado y una guerra que come del mercado.
 - Código: `src/world/polstate.ts` (datos), `politics.ts` (leyes, gobiernos, votos, elecciones, rebelión, consecuencias retardadas), `orgs.ts` (grupos, descontento, acción colectiva, el jugador dentro), `influence.ts`, `diplomacy.ts`, `intrigue.ts`, `war.ts`, `forecast.ts`, `poltalk.ts` (la política en la calle), `legacy.ts` y `src/ui/politics.ts`.
+
+**Fase 5 — generaciones, muerte, herencia y legado.** El protagonista no es eterno, pero la historia no termina cuando muere: la muerte es una transición, no un «fin de la partida».
+
+- **Envejecer poco a poco**: canas desde los 40, arrugas, espalda encorvada; el cuerpo pierde fuerza y la cabeza gana experiencia. **Cinco etapas** con ventajas propias: infancia (aprende muy deprisa), adolescencia (aprende rápido, decide sola), adultez (plena fuerza), madurez (experiencia e influencia: se negocia y dirige mejor) y vejez (enseña mejor que nadie y su palabra pesa). Afecta al aprendizaje, a las probabilidades de cada habilidad (lo físico frente a lo mental), a la velocidad y al cansancio. La escala del tiempo es la del mundo: un año son 20 días.
+- **Salud con causas**: fiebres del pueblo, heridas de guerra, hambre, agotamiento, achaques de la edad; las medicinas y el descanso curan. Se puede quedar incapacitado (sin trabajar ni luchar, pero hablando, enseñando y dejando las cosas en orden). **La muerte nunca es un dado sin sentido**: la edad, la salud y lo que se arrastra deciden; también se puede morir en una batalla.
+- **Familia real y opcional**: la pareja, los hijos y los aprendices son vecinos de carne y hueso que viven en el mundo. Se puede cortejar, casarse, hablar de tener hijos (o no), acoger a un huérfano, tomar aprendices o quedarse solo. Nada de eso es obligatorio para progresar.
+- **Enseñar**: el protagonista transmite habilidades, saberes y secretos a quien quiera (hijos, aprendices, amigos). Lo enseñado sigue vivo en esa persona y pasa a sus hijos; los vecinos aprenden en casa el oficio de sus padres (y quien sabe más trabaja mejor).
+- **Los vecinos también envejecen y se reemplazan**: los niños crecen, eligen oficio, tienen hijos que se parecen a ellos (carácter mezclado), heredan el negocio familiar, mueren; los gobernantes tienen sucesores. Un niño al que ayudaste te dirá veinte años después: «No sé si me recuerdas. Yo era el niño que…». Los viejos recuerdan a tus antepasados.
+- **Testamento y herencia**: dinero, casa, carga y carro, negocios, objetos y conocimiento se reparten según el testamento o, si no lo hay, según la ley del pueblo (con tierra comunal, una parte va a las arcas). La herencia puede romper una familia: un hermano reclama el puesto, y se puede repartir, ceder o ir a juicio ante el consejo (alguien saldrá perdiendo, y quizá se vaya del pueblo). También se heredan deudas (sueldos sin pagar) y enemigos.
+- **Objetos con historia**: el colgante, la espada de la primera batalla, el anillo de boda, la llave del negocio. Guardan quién los tuvo y lo que pasó mientras los llevaban; alguien puede reconocerlos décadas después («Ese acero lo llevaba…»).
+- **Reputación familiar**: la familia toma un nombre y una fama (honrada, comerciante, de política, de armas, generosa… o de poco fiar) que se diluye con las generaciones y que cada descendiente puede mejorar o destruir. «Tu familia no es bienvenida aquí», «Todos esperan que seas como tu madre».
+- **«Tu historia continúa»**: al morir se cuenta la vida con lo que pasó de verdad («Vivió 68 años. Llegó al valle sin recordar su pasado. Abrió un puesto… Tuvo un hijo… Se apagó de viejo, en primavera») y se elige quién sigue: un hijo o una hija, la pareja, un aprendiz, un hermano, una amistad, un socio, alguien del grupo o, si no hay nadie, alguien a quien inspiraste. Cada opción enseña su carácter, lo que sabe, lo que heredaría y lo que le pesaría. Si es menor, **el mundo sigue sin ti** hasta que crezca. Se puede honrar el legado o seguir un camino propio.
+- **Otra persona, no una copia**: quien continúa trae su carácter, sus habilidades (lo que aprendió en su vida), su familia, sus amistades y enemistades; hereda parte del dinero, de la reputación y de lo que sabía el anterior (solo si se lo dejó o se lo contó). Los cargos no se heredan (salvo un señorío, si se honra el legado).
+- **Memoria histórica**: un archivo con solo lo importante (rendimiento en Android) —llegada, bodas, nacimientos, negocios, leyes, tratados, guerras, gobiernos, rebeliones, fronteras, muertes— que **se deforma con los años**: hecho → recuerdo («Se cuenta que…») → leyenda («Dicen los viejos que… salvó al pueblo») → mito («Según la leyenda… derrotó a un ejército») → verdad olvidada. Lo muy recordado tiene **monumento** en la plaza y **fiesta** en su aniversario; los registros del templo son más fieles que la gente, pero incompletos.
+- **Línea temporal, crónica del mundo y familias**: año por año, con información imperfecta; guerras y paces, gobiernos y leyes, pueblos, descubrimientos, y las **casas del mundo** (también las de los vecinos) que suben, se convierten en las más poderosas, pierden su poder o se extinguen. Tu linaje con la crónica de cada vida.
+- **Rendimiento**: los muertos de hace más de 25 años pasan al archivo, el registro del motor se poda y el archivo tiene un tope (`gens.scale`, preparado para la Fase 6).
+- **Las pruebas** (en `tests/generations.test.ts`): generación 1 → 2 → 3 (llegar sin memoria, aprender, abrir negocio, casarse, tener un hijo, enseñarle, testar, envejecer y morir; el hijo hereda parte; luego continúa una amistad), la muerte con causas, los niños que crecen y recuerdan, la herencia que rompe una familia, la historia que se deforma, y **ocho generaciones seguidas** con un mundo que no se queda sin gente ni crece sin control.
+- Código: `src/world/genstate.ts` (datos), `generations.ts` (etapas, salud, muerte, familia, enseñanza, herencia de rasgos), `estate.ts` (testamento, reparto, disputas, deudas, objetos, fama), `succession.ts` (quién continúa, crónica de una vida, el relevo), `history.ts` (archivo, deformación, monumentos, línea temporal, casas) y `src/ui/generations.ts`.
 
 **Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
 

@@ -332,6 +332,13 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   return ap;
 }
 
+function mixHex(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ch = (sh: number) => Math.round(((pa >> sh) & 255) * (1 - t) + ((pb >> sh) & 255) * t);
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
+}
+
 /** El personaje del jugador: diseño propio y personalizable. */
 export interface PlayerLook {
   cloak: string;
@@ -349,28 +356,30 @@ export function playerAppearance(p: Avatar): Appearance {
   const look = (p.look as PlayerLook | undefined) ?? DEFAULT_PLAYER_LOOK;
   const r = prng(seedOf(`${p.generation}:${p.birthDay}`) ^ p.generation);
   const skin = SKINS[look.skin % SKINS.length];
-  const old = p.age >= 58;
+  // Se envejece poco a poco: canas desde los 40, arrugas y espalda con los años (Fase 5).
+  const gray = Math.max(0, Math.min(1, (p.age - 40) / 30));
+  const young = p.age < 18 ? 0.85 + (p.age - 12) * 0.025 : 1;
   return {
     seed: seedOf(`${p.generation}:${p.birthDay}`),
-    height: 1.03,
+    height: 1.03 * Math.max(0.8, young) * (p.age > 70 ? 0.97 : 1),
     build: 1.02,
     fem: look.fem,
     age: p.age,
     skin,
     skinShade: shade(skin, 0.82),
     lips: shade(skin, 0.78),
-    hair: { style: look.hair, color: old ? '#cfcac0' : look.hairColor },
+    hair: { style: p.age > 72 && !look.fem && look.hair === 'corto' ? 'calvo' : look.hair, color: mixHex(look.hairColor, '#d4d0c8', gray) },
     beard: look.fem ? 'ninguna' : look.beard,
     jaw: look.fem ? 0.9 : 1.04,
     faceLen: 1,
     eye: { size: 1.08, color: '#3f5f7a', spacing: 1 },
-    brow: { thick: look.fem ? 0.75 : 1.05, color: shade(look.hairColor, 0.8), tilt: 0 },
+    brow: { thick: look.fem ? 0.75 : 1.05, color: mixHex(shade(look.hairColor, 0.8), '#cfcac0', gray), tilt: 0 },
     nose: 0.9 + r() * 0.4,
     mouthW: 1,
     ears: 1,
     freckles: false,
-    wrinkles: old ? 0.6 : p.age > 45 ? 0.25 : 0,
-    stoop: old ? 0.3 : 0,
+    wrinkles: Math.max(0, Math.min(0.9, (p.age - 38) / 45)),
+    stoop: Math.max(0, Math.min(0.8, (p.age - 60) / 28)),
     important: true,
     outfit: {
       top: 'jubon',

@@ -305,3 +305,8 @@ body[data-motion="reduced"] .flash-modal p, body[data-motion="reduced"] .flash-m
 .map-layers .opt-chip { background: rgba(243,232,207,0.92); }
 .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .map-layers .opt-chip.on { background: #2f5f63; color: #f3e8cf; }
+.continues { text-align: center; }
+.continues h2 { margin: 4px 0 10px; }
+.continues p { margin: 6px 0; }
+.continues h3 { margin-top: 18px; letter-spacing: 0.04em; }
+.years-pass { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(20, 14, 10, 0.92); color: #f3e8cf; font: 600 1.3em Georgia, serif; z-index: 60; }
