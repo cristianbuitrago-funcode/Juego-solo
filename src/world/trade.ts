@@ -1,7 +1,9 @@
 import type { Rng } from '../core/rng';
+import { roadFactor } from './roads';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
-import { seasonOf, weatherOf } from './clock';
+import { seasonOf } from './clock';
+import { weatherIn } from './geography';
 import { FOODS, GOOD, GOODS, marketOf, type Good, type Market } from './economy';
 import { seedRumor } from './gossip';
 import { roadPath } from './roadnet';
@@ -80,6 +82,7 @@ export function riskOf(w: WorldState, a: number, b: number): number {
     else if (sec === 'baja') r += 0.04;
   }
   if (secretRoute(w, a, b)) r *= 0.5; // el paso del monte que pocos conocen
+  r *= roadFactor(w, a, b).risk; // una calzada vigilada es más segura que un sendero de maleza
   return clamp(r, 0.005, 0.6);
 }
 
@@ -192,11 +195,12 @@ export function depart(w: WorldState, rng: Rng, o: Omit<Convoy, 'id' | 'depart' 
   const hour = (life.clock % 1440) / 60 + 6;
   const start = nowOf(w) + Math.max(0, (8 - hour) * 60) + rng.int(0, 120);
   // Una carreta va despacio: medio paso por minuto.
-  const minutes = Math.max(240, (dist / 0.45) * (o.kind === 'jugador' ? 1.05 : 1));
+  // El estado del camino y lo abrupto del terreno cuentan.
+  const minutes = Math.max(240, (dist / 0.45 / roadFactor(w, o.from, o.to).speed) * (o.kind === 'jugador' ? 1.05 : 1));
   const c: Convoy = { ...o, id: `cv${++societyOf(w).seq}`, depart: start, arrive: start + minutes, status: 'viaje' };
   const risk = riskOf(w, o.from, o.to) * (o.guarded ? 0.35 : 1);
   if (rng.chance(risk)) c.stopAt = rng.range(0.25, 0.8);
-  if (weatherOf(w, w.day) === 'tormenta' || (seasonOf(w.day) === 'invierno' && weatherOf(w, w.day) === 'nieve')) {
+  if (weatherIn(w, o.from) === 'tormenta' || (seasonOf(w.day) === 'invierno' && weatherIn(w, o.from) === 'nieve')) {
     c.arrive += 240;
     c.note = 'el mal tiempo la retrasa';
   }

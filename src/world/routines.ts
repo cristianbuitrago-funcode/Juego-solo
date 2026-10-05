@@ -1,7 +1,8 @@
 import { prologueRoutine } from './prologue';
 import { routineMood, socialOverride } from './social';
 import type { WorldState } from '../core/types';
-import { hourOf, weatherOf } from './clock';
+import { hourOf } from './clock';
+import { weatherIn } from './geography';
 import { doorOf, getLayout, type Village } from './layout';
 import type { Folk } from './types';
 
@@ -52,7 +53,7 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
   const war = !!r.flags.guerra;
   const night = h < 6 || h >= 21.5;
   // Con lluvia o tormenta la gente busca refugio: el ocio al aire libre se suspende.
-  const weather = weatherOf(w, w.day);
+  const weather = weatherIn(w, f.regionId);
   const wet = weather === 'lluvia' || weather === 'tormenta';
   const shelter = (t: RoutineTarget): RoutineTarget => (wet && !t.inside && /plaza|juega|sol|charla|vaga|pasea|explora/.test(t.activity) ? atHome('se refugia de la lluvia') : t);
 

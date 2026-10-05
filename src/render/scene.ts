@@ -1,6 +1,8 @@
 import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
-import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf, weatherOf } from '../world/clock';
+import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
+import { weatherIn } from '../world/geography';
+import { playerRegion } from '../world/society';
 import { getLayout, doorOf, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, explore, housesFor } from '../world/life';
 import { findPath, passable } from '../world/path';
@@ -11,7 +13,7 @@ import { overheard } from '../world/gossip';
 import { convoyPositions } from '../world/trade';
 import { GOOD_COLOR, marketLook } from '../world/marketview';
 import type { Good } from '../world/economy';
-import { idx, speedOf } from '../world/terrain';
+import { idx, speedOf, walkable } from '../world/terrain';
 import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
 import { CHUNK, ChunkCache, type StaticObject } from './chunks';
@@ -44,7 +46,9 @@ export type Target =
   | { kind: 'messenger'; petitionId: string; label: string }
   | { kind: 'signpost'; regionId: number; label: string }
   | { kind: 'item'; id: string; label: string }
-  | { kind: 'convoy'; id: string; label: string };
+  | { kind: 'convoy'; id: string; label: string }
+  | { kind: 'settlement'; id: string; label: string }
+  | { kind: 'poi'; id: string; label: string };
 
 export interface SceneCallbacks {
   advance(minutes: number): void;
@@ -585,7 +589,7 @@ export class WorldScene {
     const me = ensureLife(w).player;
     const keep = new Set<string>();
     const h = hourOf(ensureLife(w).clock);
-    const weather = weatherOf(w, w.day);
+    const weather = weatherIn(w, playerRegion(w));
     const out = h < 7 || h > 21 || weather === 'lluvia' || weather === 'tormenta';
     for (const v of this.l.villages) {
       const r = w.regions[v.regionId];
@@ -734,7 +738,7 @@ export class WorldScene {
 
   private moveBirds(dt: number): void {
     const h = hourOf(ensureLife(this.w).clock);
-    const weather = weatherOf(this.w, this.w.day);
+    const weather = weatherIn(this.w, playerRegion(this.w));
     const want = this.reduceMotion || this.quality === 'baja' || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
     const vw = this.vw / this.cam.z;
     const vh = this.vh / this.cam.z;
@@ -848,6 +852,14 @@ export class WorldScene {
         const p = this.l.places.find((x) => x.id === t.id);
         return p ? { x: p.x + 0.5, y: p.y + 0.5 } : undefined;
       }
+      case 'settlement': {
+        const st = life.atlas?.settlements.find((x) => x.id === t.id);
+        return st ? { x: st.x + 0.5, y: st.y + 2 } : undefined;
+      }
+      case 'poi': {
+        const p = life.atlas?.pois.find((x) => x.id === t.id);
+        return p ? { x: p.x + 0.5, y: p.y + 0.5 } : undefined;
+      }
       case 'encounter': {
         const e = life.encounters.find((x) => x.id === t.id);
         return e ? { x: e.x, y: e.y } : undefined;
@@ -902,6 +914,11 @@ export class WorldScene {
     for (const cv of convoyPositions(w)) consider({ kind: 'convoy', id: cv.c.id, label: cv.c.status === 'atacada' ? 'Una carreta volcada' : cv.c.kind === 'jugador' ? 'Tu carreta' : `Caravana de ${cv.c.ownerName}` }, cv.x, cv.y, radius * 1.4);
     for (const it of prologueItems(w)) if (it.label) consider({ kind: 'item', id: it.id, label: it.label }, it.x, it.y, radius * 1.1);
     for (const p of this.l.places) if (life.places[p.id]?.discovered) consider({ kind: 'place', id: p.id, label: p.name }, p.x + 0.5, p.y + 0.5, radius * 1.3);
+    // Lo que la historia ha levantado (o tirado): asentamientos, ruinas, monumentos, cuevas…
+    if (life.atlas) {
+      for (const st of life.atlas.settlements) consider({ kind: 'settlement', id: st.id, label: st.state === 'vivo' ? st.name : st.state === 'ruinas' ? `Ruinas de ${st.name}` : `${st.name} (abandonado)` }, st.x + 0.5, st.y + 2, radius * 1.6);
+      for (const p of life.atlas.pois) consider({ kind: 'poi', id: p.id, label: p.found !== undefined ? p.name : '¿Qué es eso?' }, p.x + 0.5, p.y + 0.5, radius * 1.3);
+    }
     // Los encuentros tienen prioridad sobre las personas que participan en ellos.
     for (const e of life.encounters) {
       if (e.resolved) continue;
@@ -946,7 +963,7 @@ export class WorldScene {
     const x1 = this.cam.x + this.vw / 2 / z;
     const y1 = this.cam.y + this.vh / 2 / z;
     const season = seasonOf(w.day);
-    const weather = weatherOf(w, w.day);
+    const weather = weatherIn(w, playerRegion(w));
     const look = (season === 'invierno' || weather === 'nieve' ? 'invierno' : season) as S.SeasonLook;
     const stateKey = this.chunks.stateKey(season);
     const CPX = CHUNK * TILE;
@@ -993,6 +1010,8 @@ export class WorldScene {
       const known = life.places[p.id]?.discovered;
       items.push({ y: p.y * TILE + 16, draw: () => S.drawSprite(g, S.placeSprite(p.kind), p.x * TILE + 8, p.y * TILE + 16, known ? 1 : 0.9) });
     }
+    // Asentamientos y lugares con historia (Fase 6).
+    if (life.atlas) this.atlasDrawables(life.atlas, items, inView);
     // Lo que dejó el prólogo por el mundo: la cabaña, la mochila, la caja.
     for (const it of prologueItems(w)) {
       if (!inView(it.x * TILE, it.y * TILE)) continue;
@@ -1128,6 +1147,36 @@ export class WorldScene {
   private hueOf(regionId: number): number {
     const r = this.w.regions[regionId];
     return (r.isHome ? PLAYER_CULTURE : CULTURES.find((c) => c.id === r.culture) ?? PLAYER_CULTURE).hue;
+  }
+
+  /** Asentamientos que nacen y mueren, ruinas, monumentos, cuevas, pecios… en el mundo físico. */
+  private atlasDrawables(a: NonNullable<ReturnType<typeof ensureLife>['atlas']>, items: Drawable[], inView: (x: number, y: number, m?: number) => boolean): void {
+    const g = this.g;
+    for (const st of a.settlements) {
+      if (!inView(st.x * TILE, st.y * TILE, 12 * TILE)) continue;
+      const style = this.styleOf(st.regionId);
+      const n = st.state === 'ruinas' ? 3 : { campamento: 3, aldea: 4, pueblo: 6, ciudad: 8, metropolis: 10 }[st.tier];
+      for (let i = 0; i < n; i++) {
+        // Las casas en corro alrededor del centro (siempre en el mismo sitio).
+        const ang = (i / n) * Math.PI * 2 + hash(st.id, i) * 0.5;
+        const rad = 3 + (i % 2) * 2.5 + n * 0.2;
+        const tx = st.x + Math.cos(ang) * rad * 1.4;
+        const ty = st.y + Math.sin(ang) * rad;
+        // Solo se construye en tierra firme y libre (nunca sobre el agua ni encima de otra cosa).
+        const k = idx(Math.floor(tx), Math.floor(ty));
+        if (!walkable(this.l.terrain.tiles[k]) || this.l.blocked[k]) continue;
+        const hx = tx * TILE;
+        const hy = ty * TILE;
+        const spr = st.state === 'ruinas' ? S.placeSprite('ruinas') : st.tier === 'campamento' && st.state === 'vivo' ? S.tent(style.roof) : S.house(style, st.state === 'abandonado' ? 'abandonada' : 'normal', Math.floor(hash(st.id, i + 9) * 3), 3 + (i % 2));
+        items.push({ y: hy, draw: () => S.drawSprite(g, spr, hx, hy) });
+      }
+      if (st.state === 'vivo' && st.tier !== 'campamento') items.push({ y: (st.y + 0.5) * TILE, draw: () => S.drawSprite(g, S.prop('pozo'), st.x * TILE, (st.y + 0.5) * TILE) });
+    }
+    for (const p of a.pois) {
+      if (!inView(p.x * TILE, p.y * TILE)) continue;
+      const kind = { ruinas: p.clue === 'antiguos' ? 'templo' : 'ruinas', monumento: 'circulo', batalla: 'campamento', cueva: 'cueva', oasis: 'bosque', pecio: 'abandonada', cantera: 'mina' }[p.kind];
+      items.push({ y: p.y * TILE + 16, draw: () => S.drawSprite(g, S.placeSprite(kind), p.x * TILE + 8, p.y * TILE + 16) });
+    }
   }
 
   private styleOf(regionId: number): S.Style {
@@ -1282,7 +1331,7 @@ export class WorldScene {
     }
     // Hoguera de la plaza al anochecer.
     const hh = hourOf(life.clock);
-    if ((hh > 19 || hh < 1) && !r.abandoned && weatherOf(w, w.day) !== 'lluvia' && weatherOf(w, w.day) !== 'tormenta') {
+    if ((hh > 19 || hh < 1) && !r.abandoned && weatherIn(w, playerRegion(w)) !== 'lluvia' && weatherIn(w, playerRegion(w)) !== 'tormenta') {
       const spot = this.fireSpot(regionId);
       const px = spot.x * TILE;
       const py = spot.y * TILE;
@@ -1328,7 +1377,7 @@ export class WorldScene {
     if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 44, k: 0.9 });
     const sec = t / 1000;
     const lifeW = ensureLife(w);
-    const weather = weatherOf(w, w.day);
+    const weather = weatherIn(w, playerRegion(w));
     // Guardias según la tensión; campamentos si hay guerra.
     const war = a.relations[b.id]?.war;
     const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
@@ -1882,7 +1931,7 @@ export class WorldScene {
   /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
   private marchPose(dx: number, dy: number, phase: number, expr: Expr, px: number, py: number, slow: boolean): Pose {
     const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
-    const weather = weatherOf(this.w, this.w.day);
+    const weather = weatherIn(this.w, playerRegion(this.w));
     return { facing, flip: dx < 0, phase: slow ? phase * 0.8 : phase, action: 'walk', t: phase, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
   }
 }

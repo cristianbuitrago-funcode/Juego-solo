@@ -1,7 +1,11 @@
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
 import { routesOf } from '../core/world';
-import { seasonOf, weatherOf } from './clock';
+import { seasonOf } from './clock';
+import { weatherIn } from './geography';
+import { harvestNature, natureFactor } from './nature';
+import { techFactor } from './knowledge';
+import { cultureOf, profileOf } from './culture';
 import { eatSeeds, farmDay, farmOf, nearTiles, waterOf, type FarmNews } from './farming';
 import { societyOf, trait } from './society';
 import type { Folk, FolkRole } from './types';
@@ -233,6 +237,7 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   const add = (f: Folk, c: number) => income.set(f, (income.get(f) ?? 0) + c);
   const workers = people.filter((f) => working(w, f));
   const lawK = m.law?.effort ?? 1;
+  const diet = w.life?.atlas ? profileOf(cultureOf(w, regionId)).diet : [];
   const effort = (f: Folk) => (0.7 + trait(f, 'trabajador') / 170 - trait(f, 'perezoso') / 400) * lawK;
   const extract = m.law?.extract ?? 1;
   // Herramientas: sin ellas se trabaja mucho peor (y se gastan).
@@ -245,6 +250,13 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   const made = zero();
   const produce = (f: Folk, g: Good, n: number) => {
     if (n <= 0) return;
+    // La naturaleza manda (Fase 6): un bosque talado da menos madera; lo que se saca, se agota.
+    if (g === 'madera' || g === 'carne' || g === 'pescado' || g === 'hierro') {
+      n *= natureFactor(w, regionId, f.role);
+      harvestNature(w, regionId, f.role, n);
+    }
+    // Lo que se sabe hacer: las técnicas que han llegado al pueblo.
+    n *= techFactor(w, regionId, g);
     made[g] += n;
     add(f, sellToMarket(m, g, n, f));
   };
@@ -253,7 +265,7 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   const rock = nearTiles(w, regionId, (t) => t === T.Mountain || t === T.Rock);
   const water = waterOf(w, regionId);
   const season = seasonOf(w.day);
-  const weather = weatherOf(w, w.day);
+  const weather = weatherIn(w, regionId);
   for (const f of workers) {
     const k = effort(f) * tools;
     switch (f.role) {
@@ -336,7 +348,8 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
     const poor = wealth < 4;
     const need = members.reduce((s, f) => s + (f.age < 14 ? 0.5 : 0.85), 0) * (rich ? 1.15 : poor ? 0.9 : 1);
     // Orden de preferencia: las casas ricas comen mejor; las pobres, lo más barato.
-    const order = rich ? (['carne', 'fruta', 'pescado', 'trigo', 'verdura'] as Good[]) : ([...FOODS].sort((a, b) => m.price[a] - m.price[b]));
+    // (Fase 6) Cada cultura tiene su cocina: a igualdad de precio, se compra lo de siempre.
+    const order = rich ? (['carne', 'fruta', 'pescado', 'trigo', 'verdura'] as Good[]) : ([...FOODS].sort((a, b) => m.price[a] * (diet.includes(a) ? 0.85 : 1) - m.price[b] * (diet.includes(b) ? 0.85 : 1)));
     let got = 0;
     // Quien produce comida guarda algo para su casa.
     const own = members.some((f) => ['campesino', 'pastor', 'pescador'].includes(f.role)) ? Math.min(need * 0.45, 1.2) : 0;
@@ -449,7 +462,8 @@ export function economyDayFull(w: WorldState, regionId: number, people: Folk[]):
   if (newFood < oldFood * 0.88 && oldFood > 1.5) notes.push('baja-comida');
   if (hungry >= Math.max(2, people.length * 0.25)) notes.push('hambre');
   // Lo que se echa a perder (la comida no dura para siempre).
-  for (const g of ['verdura', 'fruta', 'pescado', 'carne'] as Good[]) m.stock[g] *= 0.94;
+  const keep = r.techs.includes('salazon') ? 0.97 : 0.94; // con salazón la comida dura más
+  for (const g of ['verdura', 'fruta', 'pescado', 'carne'] as Good[]) m.stock[g] *= keep;
   m.stock.trigo *= 0.995;
   for (const g of GOODS) m.stock[g] = Math.round(m.stock[g] * 100) / 100;
   m.cash = Math.round(m.cash * 100) / 100;

@@ -6,6 +6,11 @@ import { hops } from '../../core/world';
 import { regionColor } from './colors';
 import { stanceOf } from '../../world/diplomacy';
 import { convoyPositions, tradeOf } from '../../world/trade';
+import { statesOf } from '../../world/states';
+import { TIER_ORDER } from '../../world/atlas';
+import { hashString } from '../../core/rng';
+
+const STATE_TINT: [number, number, number][] = [[176, 92, 70], [70, 120, 170], [120, 150, 70], [160, 110, 170], [200, 160, 60], [80, 150, 140]];
 
 /**
  * Mapa 2D interactivo dibujado en canvas.
@@ -60,7 +65,7 @@ export class MapView {
   smokeAt = new Set<number>();
   reduceMotion = false;
   /** Capa estratégica: territorios y relaciones, comercio, conflictos (o la vista normal). */
-  layer: 'normal' | 'politica' | 'comercio' | 'conflictos' = 'normal';
+  layer: 'normal' | 'politica' | 'estados' | 'comercio' | 'conflictos' = 'normal';
 
   constructor(private parent: HTMLElement, private cb: MapCallbacks) {
     this.canvas = document.createElement('canvas');
@@ -162,12 +167,18 @@ export class MapView {
     const w = this.w;
     if (!w || !this.image) return;
     const owner = w.regions.map((r) => w.life?.politics?.owner[r.id] ?? r.id);
+    const states = this.layer === 'estados' && w.life?.society ? statesOf(w) : [];
     const lut = w.regions.map((r) => {
       const c = regionColor(w, r.id, r.id === this.selected);
       // Fronteras dinámicas: un territorio ocupado toma el color de quien lo controla.
       if (owner[r.id] !== r.id && w.intel[r.id].level > 0) {
         const o = regionColor(w, owner[r.id], false);
         return c.map((v, i) => Math.round(v * 0.45 + o[i] * 0.55)) as [number, number, number];
+      }
+      if (this.layer === 'estados' && (w.intel[r.id].level > 0 || r.isHome)) {
+        // Cada estado, un color: los pueblos del mismo dueño o federación se tiñen igual.
+        const st = states.find((x) => x.regions.includes(r.id));
+        if (st && st.regions.length > 1) return c.map((v, i) => Math.round(v * 0.45 + STATE_TINT[hashString(st.id) % STATE_TINT.length][i] * 0.55)) as [number, number, number];
       }
       if (this.layer === 'politica' && w.intel[r.id].level > 0) {
         const fed = w.life?.politics?.federations.find((f) => f.members.includes(r.id));
@@ -414,6 +425,7 @@ export class MapView {
     this.drawRiver(g);
     this.drawRoutes(g, t);
     this.drawLayer(g, t);
+    this.drawAtlas(g);
     this.drawGlyphs(g);
     this.drawParticles(g, animate);
     // Capa en coordenadas de pantalla (texto nítido a cualquier zoom).
@@ -613,6 +625,70 @@ export class MapView {
         if (pol.secrets.some((s) => s.known && !s.public && s.regionId === r.id)) icons.push('🗝');
         if (icons.length) g.fillText(icons.join(' '), r.center.x + 34, r.center.y - 30);
       }
+    }
+  }
+
+  /** Lo que la historia ha puesto en el mapa: asentamientos, ruinas, puertos y rutas por mar (solo lo que sabes). */
+  private drawAtlas(g: CanvasRenderingContext2D): void {
+    const w = this.w!;
+    const a = w.life?.atlas;
+    if (!a) return;
+    const known = (id: number) => w.regions[id].isHome || w.intel[id].level > 0;
+    // Rutas por mar: líneas discontinuas entre puertos.
+    g.setLineDash([4, 6]);
+    g.strokeStyle = 'rgba(40,70,110,0.55)';
+    g.lineWidth = 3;
+    for (const sr of a.seaRoutes) if (known(sr.a) && known(sr.b)) {
+      const A = w.regions[sr.a].center;
+      const B = w.regions[sr.b].center;
+      g.beginPath();
+      g.moveTo(A.x, A.y);
+      g.quadraticCurveTo((A.x + B.x) / 2 + 60, (A.y + B.y) / 2, B.x, B.y);
+      g.stroke();
+    }
+    g.setLineDash([]);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (const [id] of Object.entries(a.ports)) if (known(Number(id))) {
+      const c = w.regions[Number(id)].center;
+      g.font = '16px system-ui, sans-serif';
+      g.fillText('⚓', c.x - 30, c.y + 26);
+    }
+    for (const s of a.settlements) {
+      if (!known(s.regionId)) continue;
+      const x = s.x * 2;
+      const y = s.y * 2;
+      if (s.state !== 'vivo') {
+        g.font = '14px system-ui, sans-serif';
+        g.fillStyle = '#5a4a3a';
+        g.fillText('⌂', x, y);
+        continue;
+      }
+      const size = 3 + TIER_ORDER.indexOf(s.tier) * 2;
+      g.fillStyle = s.byPlayer ? '#e9b44c' : '#f3e3b5';
+      g.strokeStyle = '#4a3324';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.rect(x - size, y - size, size * 2, size * 2);
+      g.fill();
+      g.stroke();
+      g.font = '600 11px Georgia, serif';
+      g.fillStyle = '#2b1e15';
+      g.fillText(s.name, x, y + size + 9);
+    }
+    for (const p of a.pois) if (p.found !== undefined) {
+      g.font = '13px system-ui, sans-serif';
+      g.fillText({ ruinas: '🏚', monumento: '🗿', batalla: '⚔', cueva: '🕳', oasis: '🌴', pecio: '⛵', cantera: '⛏' }[p.kind], p.x * 2, p.y * 2);
+    }
+    // Nombres de los estados (capa «Estados»).
+    if (this.layer === 'estados' && w.life?.society) for (const st of statesOf(w)) if (st.regions.length > 1 && known(st.capital)) {
+      const c = w.regions[st.capital].center;
+      g.font = '700 15px Georgia, serif';
+      g.lineWidth = 4;
+      g.strokeStyle = 'rgba(244,233,206,0.9)';
+      g.strokeText(st.name, c.x, c.y + 44);
+      g.fillStyle = '#3a2418';
+      g.fillText(st.name, c.x, c.y + 44);
     }
   }
 

@@ -190,7 +190,7 @@ describe('Fase 4: política, influencia y consecuencias', () => {
 
   it('las leyes tienen consecuencias en cadena: impuestos altos llenan las arcas y vacían los bolsillos de los comerciantes', { timeout: 30000 }, () => {
     const run = (tax: 'medio' | 'alto') => {
-      const w = world(905);
+      const w = world(906);
       const h = w.player.home;
       setLaw(w, h, 'impuestos', tax);
       let treasury = 0;

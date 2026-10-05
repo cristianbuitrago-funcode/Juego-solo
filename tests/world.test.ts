@@ -692,9 +692,9 @@ describe('Fase 3: la economía del mundo', () => {
 
   it('la prueba de la Fase 3: sequía → mala cosecha → precios → hambre → emigración; con semilla, el pueblo se recupera', () => {
     const drought = (w: WorldState) => w.day === 2 && startDrought(w, w.player.home, 45);
-    const base = sim(502, 120);
-    const control = sim(502, 120, drought);
-    const helped = sim(502, 120, (w) => {
+    const base = sim(504, 120);
+    const control = sim(504, 120, drought);
+    const helped = sim(504, 120, (w) => {
       drought(w);
       // El jugador consigue semilla (la compra fuera) y la reparte antes de la siembra.
       if (w.day === 40) {

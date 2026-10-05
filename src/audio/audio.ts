@@ -15,6 +15,13 @@ const SCALES: Record<Mood, number[]> = {
 const ROOT: Record<Mood, number> = { calma: 50, tension: 45, crisis: 40, descubrimiento: 52 };
 const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
 
+export interface Ambience {
+  biome: 'montana' | 'bosque' | 'llanura' | 'pantano' | 'costa' | 'valle';
+  weather: string;
+  war: boolean;
+  night: boolean;
+}
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -26,6 +33,11 @@ export class AudioEngine {
   private drone: { osc: OscillatorNode; gain: GainNode } | null = null;
   musicVolume = 0.6;
   sfxVolume = 0.7;
+  /** El paisaje sonoro de donde se está (Fase 6): viento, mar, lluvia, pájaros, tambores. */
+  private amb: Ambience = { biome: 'llanura', weather: 'despejado', war: false, night: false };
+  private beds: Partial<Record<'viento' | 'mar' | 'lluvia', { gain: GainNode; lfo?: OscillatorNode }>> = {};
+  private noise: AudioBuffer | null = null;
+  private ambTimer: number | null = null;
 
   /** Debe llamarse tras un gesto del usuario (política de autoplay). */
   unlock(): void {
@@ -56,6 +68,92 @@ export class AudioEngine {
     this.sfxBus.connect(this.master);
     this.setVolumes(this.musicVolume, this.sfxVolume);
     this.startLoop();
+    this.startAmbience();
+  }
+
+  /** Cambia el paisaje sonoro (se llama al moverse o al cambiar el tiempo). */
+  setAmbience(a: Ambience): void {
+    this.amb = a;
+    this.updateBeds();
+  }
+
+  private startAmbience(): void {
+    const ctx = this.ctx!;
+    const len = ctx.sampleRate * 2;
+    this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = this.noise.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      // Ruido «marrón»: más grave y suave que el blanco.
+      last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+      d[i] = last * 3.5;
+    }
+    const bed = (type: BiquadFilterType, freq: number, lfoHz = 0) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = type;
+      f.frequency.value = freq;
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(f).connect(gain).connect(this.sfxBus);
+      src.start();
+      let lfo: OscillatorNode | undefined;
+      if (lfoHz) {
+        // Las olas van y vienen.
+        lfo = ctx.createOscillator();
+        lfo.frequency.value = lfoHz;
+        const depth = ctx.createGain();
+        depth.gain.value = 300;
+        lfo.connect(depth).connect(f.frequency);
+        lfo.start();
+      }
+      return { gain, lfo };
+    };
+    this.beds = { viento: bed('bandpass', 500), mar: bed('lowpass', 500, 0.12), lluvia: bed('highpass', 2500) };
+    this.updateBeds();
+    const tick = () => {
+      this.ambientEvent();
+      this.ambTimer = window.setTimeout(tick, 1800 + Math.random() * 2600);
+    };
+    tick();
+  }
+
+  private updateBeds(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.beds.viento) return;
+    const a = this.amb;
+    const stormy = a.weather === 'tormenta';
+    const wind = (a.biome === 'montana' ? 0.5 : a.biome === 'costa' ? 0.3 : 0.15) + (stormy ? 0.5 : a.weather === 'nieve' ? 0.25 : 0);
+    const sea = a.biome === 'costa' ? 0.55 : 0;
+    const rain = a.weather === 'lluvia' ? 0.45 : stormy ? 0.7 : 0;
+    const set = (k: 'viento' | 'mar' | 'lluvia', v: number) => this.beds[k]!.gain.gain.setTargetAtTime(v * 0.5, ctx.currentTime, 1.5);
+    set('viento', wind);
+    set('mar', sea);
+    set('lluvia', rain);
+  }
+
+  /** Sonidos sueltos del lugar: pájaros de día en el bosque, grillos de noche, tambores en la guerra. */
+  private ambientEvent(): void {
+    const ctx = this.ctx;
+    if (!ctx || this.sfxVolume <= 0) return;
+    const a = this.amb;
+    const t = ctx.currentTime + 0.05;
+    if (a.war && Math.random() < 0.6) {
+      for (let i = 0; i < 3; i++) this.tone(70, t + i * 0.45, 0.35, 0.18, 'sine', 200, this.sfxBus);
+      return;
+    }
+    const dry = a.weather === 'despejado' || a.weather === 'nublado';
+    if (!a.night && dry && (a.biome === 'bosque' || a.biome === 'valle' || a.biome === 'llanura') && Math.random() < 0.7) {
+      // Un pájaro: dos o tres notas agudas y rápidas.
+      const base = 2200 + Math.random() * 1600;
+      for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) this.tone(base * (1 + (Math.random() - 0.5) * 0.2), t + i * 0.12, 0.09, 0.03, 'sine', 8000, this.sfxBus);
+    } else if (a.night && dry && Math.random() < 0.6) {
+      for (let i = 0; i < 4; i++) this.tone(4200, t + i * 0.07, 0.04, 0.012, 'square', 6000, this.sfxBus);
+    } else if (a.biome === 'costa' && Math.random() < 0.3) {
+      this.tone(1300, t, 0.4, 0.02, 'triangle', 3000, this.sfxBus); // una gaviota a lo lejos
+    }
   }
 
   setVolumes(music: number, sfx: number): void {
@@ -188,6 +286,7 @@ export class AudioEngine {
 
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.ambTimer) clearTimeout(this.ambTimer);
   }
 }
 

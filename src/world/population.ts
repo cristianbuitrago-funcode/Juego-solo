@@ -44,7 +44,10 @@ export function attraction(w: WorldState, regionId: number, folk?: Folk): number
   const fx = w.life!.politics ? lawFx(w, regionId) : undefined;
   const taxed = fx && folk && (folk.role === 'comerciante' || folk.role === 'posadero') ? (fx.tax - 0.06) * 4 : 0;
   const closed = fx?.closedBorders && folk && folk.regionId !== regionId ? 0.6 : 0;
-  return m.prosperity + bonus - (r.flags.guerra ? 0.35 : 0) - crowd * 0.4 - (r.flags.fiebre ? 0.1 : 0) - taxed - closed;
+  // Nadie se muda a donde se pasa hambre (la noticia corre por los caminos).
+  const folkHere = Math.max(1, w.life!.folk.filter((f) => f.alive && f.regionId === regionId).length);
+  const hunger = clamp(m.hungry / folkHere) * 0.6;
+  return m.prosperity + bonus - (r.flags.guerra ? 0.35 : 0) - crowd * 0.4 - (r.flags.fiebre ? 0.1 : 0) - taxed - closed - hunger;
 }
 
 /** Un día de vida demográfica en un pueblo: nacimientos y muertes del motor. */
@@ -55,9 +58,13 @@ export function demographyDay(w: WorldState, regionId: number): void {
   const people = Math.max(1, w.life!.folk.filter((f) => f.alive && f.regionId === regionId).length);
   const days = foodDays(w, regionId);
   const room = t ? Math.max(0, Math.max(1, t.houses) * 60 - r.population) : 50;
-  const births = r.population * 0.0018 * (days > 3 ? 1 : 0.3) * (room > 10 ? 1 : 0.35);
+  // Con casas vacías y tierra libre nacen más niños (el pueblo se recupera tras una mala época).
+  const vacancy = t ? clamp(room / Math.max(60, t.houses * 60)) : 0;
   const hungry = m.hungry / people;
-  const deaths = r.population * (0.0011 + hungry * 0.008 + (r.flags.fiebre ? 0.002 : 0));
+  // Con hambre en las casas nacen menos niños.
+  const births = r.population * 0.0018 * (days > 3 ? 1 : 0.3) * (room > 10 ? 1 + vacancy * 1.5 : 0.35) * (1 - clamp(hungry * 1.5, 0, 0.8));
+  // El hambre mata de verdad cuando falta comida; si la hay, a los pobres les llega algo (vecinos, sopa del templo).
+  const deaths = r.population * (0.0011 + hungry * 0.008 * (days < 3 ? 1 : 0.35) + (r.flags.fiebre ? 0.002 : 0));
   r.population = Math.max(40, Math.round((r.population + births - deaths) * 10) / 10);
 }
 

@@ -1,3 +1,7 @@
+import { geoOf, weatherIn } from '../world/geography';
+import { warOf } from '../world/war';
+import { darkness } from '../world/clock';
+import { renderWorld } from './screens/world';
 import { advanceDay, createWorld, type DayReport } from '../core/api';
 import { loadLegacy } from '../core/legacy';
 import { hashString } from '../core/rng';
@@ -35,7 +39,7 @@ import { renderFamily } from './screens/family';
 import { approachDialog, arrive, dialogue, focusButtons, showFragment } from './world-dialogs';
 import { successionScreen } from './generations';
 
-export type View = 'mapa' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
+export type View = 'mapa' | 'mundo' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
 /**
  * Controlador de la interfaz. Durante la exploración solo hay un HUD mínimo:
@@ -341,6 +345,8 @@ export class App {
     const l = getLayout(w);
     const me = life.player;
     const region = l.terrain.region[Math.floor(me.y) * 500 + Math.floor(me.x)];
+    // El paisaje sonoro: el bosque, la costa, el viento del monte, la lluvia, los tambores de guerra.
+    if (region >= 0) audio.setAmbience({ biome: geoOf(w, region).biome, weather: weatherIn(w, region), war: !!warOf(w, region), night: darkness(life.clock) > 0.5 });
     // Observación directa cada hora de juego.
     const hour = Math.floor(life.clock / 60);
     if (hour !== this.lastHour && region >= 0) {
@@ -545,6 +551,7 @@ export class App {
       ['mapa', '🗺 Mapa'],
       ['familia', '🪞 Quién soy'],
       ['cronica', '📜 Crónica'],
+      ['mundo', '🏛 Mundo'],
       ...((auth >= 4 || curious ? [['investigar', '🔎 Investigación']] : []) as [View, string][]),
       ...((auth >= 4 ? [['hipotesis', '🧪 Hipótesis'], ['decisiones', '⚖ Consejo']] : []) as [View, string][]),
       ...((auth >= 5 ? [['objetivos', '★ Objetivos']] : []) as [View, string][]),
@@ -574,7 +581,7 @@ export class App {
       body.append(h('div', { class: 'map-hint' }, 'Toca una región para ver lo que sabes de ella.'));
       // Capas del mapa estratégico (solo con lo que sabes).
       if (life.politics) {
-        const layers: [MapView['layer'], string][] = [['normal', 'Mapa'], ['politica', 'Territorios y relaciones'], ['comercio', 'Comercio'], ['conflictos', 'Conflictos']];
+        const layers: [MapView['layer'], string][] = [['normal', 'Mapa'], ['estados', 'Estados'], ['politica', 'Relaciones'], ['comercio', 'Comercio'], ['conflictos', 'Conflictos']];
         const bar = h('div', { class: 'map-layers' }, ...layers.map(([k, l]) => h('button', { class: `opt-chip ${this.mapLayer === k ? 'on' : ''}`, onclick: () => ((this.mapLayer = k), this.map && ((this.map.layer = k), this.map.refresh()), bar.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', layers[i][0] === k))) }, l)));
         body.append(bar);
         this.map.layer = this.mapLayer;
@@ -584,6 +591,7 @@ export class App {
     }
     const render = {
       cronica: renderChronicle,
+      mundo: renderWorld,
       hipotesis: renderHypotheses,
       investigar: renderResearch,
       decisiones: renderDecisions,

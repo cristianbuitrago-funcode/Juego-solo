@@ -1,3 +1,4 @@
+import { poiDialog, settlementDialog, worldChoices } from './world6';
 import { ACTIONS, answerPetition, freeAgents, hasAuthority } from '../core/api';
 import { ROLES } from '../core/content/roles';
 import type { WorldState } from '../core/types';
@@ -195,6 +196,10 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       return [b(t.id === 'mochila' ? '🎒 Mirar' : t.id === 'caja' ? '📦 Mirar' : t.id === 'cabana' ? '🚪 Entrar' : '🔎 Examinar', () => arrive(app, t), true)];
     case 'convoy':
       return [b(t.label.startsWith('Una carreta') ? '🔎 Examinar' : '💬 Hablar', () => arrive(app, t), true)];
+    case 'settlement':
+      return [b('🏘 Visitar', () => arrive(app, t), true)];
+    case 'poi':
+      return [b('🔎 Examinar', () => arrive(app, t), true)];
   }
 }
 
@@ -227,6 +232,10 @@ export function arrive(app: App, t: Target): void {
       return;
     case 'convoy':
       return convoyDialog(app, t.id);
+    case 'settlement':
+      return settlementDialog(app, t.id);
+    case 'poi':
+      return poiDialog(app, t.id);
   }
 }
 
@@ -275,6 +284,8 @@ function talk(app: App, folkId: string): void {
   choices.splice(Math.min(choices.length, 1), 0, ...politicalChoices(app, f));
   // La vida: pareja, hijos, enseñar, aprendices, acoger (Fase 5).
   choices.splice(Math.min(choices.length, 2), 0, ...lifeChoices(app, f));
+  // El mundo grande: técnicas que viajan con la gente, fundar un lugar (Fase 6).
+  choices.splice(Math.min(choices.length, 3), 0, ...worldChoices(app, f));
   // Su vida con los demás: pleitos en los que puedes intervenir y gente por la que preguntar.
   for (const c of arcChoices(w, f)) choices.splice(Math.min(choices.length, 1), 0, { label: c.label, hint: c.hint, run: () => arcRun(app, folkId, c.id) });
   if (f.age >= 10) choices.push({ label: '👥 Preguntar por alguien', run: () => askAbout(app, folkId) });
