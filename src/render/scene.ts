@@ -8,6 +8,9 @@ import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { prologueBlocks, prologueItems } from '../world/prologue';
 import { overheard } from '../world/gossip';
+import { convoyPositions } from '../world/trade';
+import { GOOD_COLOR, marketLook } from '../world/marketview';
+import type { Good } from '../world/economy';
 import { idx, speedOf } from '../world/terrain';
 import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
@@ -40,7 +43,8 @@ export type Target =
   | { kind: 'encounter'; id: string; label: string }
   | { kind: 'messenger'; petitionId: string; label: string }
   | { kind: 'signpost'; regionId: number; label: string }
-  | { kind: 'item'; id: string; label: string };
+  | { kind: 'item'; id: string; label: string }
+  | { kind: 'convoy'; id: string; label: string };
 
 export interface SceneCallbacks {
   advance(minutes: number): void;
@@ -854,6 +858,8 @@ export class WorldScene {
         return this.l.villages[t.regionId].sign;
       case 'item':
         return prologueItems(w).find((x) => x.id === t.id);
+      case 'convoy':
+        return convoyPositions(w).find((x) => x.c.id === t.id);
     }
   }
 
@@ -893,6 +899,7 @@ export class WorldScene {
       consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
+    for (const cv of convoyPositions(w)) consider({ kind: 'convoy', id: cv.c.id, label: cv.c.status === 'atacada' ? 'Una carreta volcada' : cv.c.kind === 'jugador' ? 'Tu carreta' : `Caravana de ${cv.c.ownerName}` }, cv.x, cv.y, radius * 1.4);
     for (const it of prologueItems(w)) if (it.label) consider({ kind: 'item', id: it.id, label: it.label }, it.x, it.y, radius * 1.1);
     for (const p of this.l.places) if (life.places[p.id]?.discovered) consider({ kind: 'place', id: p.id, label: p.name }, p.x + 0.5, p.y + 0.5, radius * 1.3);
     // Los encuentros tienen prioridad sobre las personas que participan en ellos.
@@ -1190,13 +1197,15 @@ export class WorldScene {
       this.lights.push({ x: px, y: py, r: 36, k: 0.95 });
       items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
     }
-    // Mercado: puestos llenos, vacíos o abandonados.
-    const traffic = w.routes.filter((x) => (x.a === regionId || x.b === regionId) && x.status === 'abierta').reduce((s, x) => s + x.traffic, 0);
-    const active = r.flags.sinComercio ? 2 : Math.max(2, Math.min(v.stalls.length, 6, Math.round(2 + traffic * 3 + (r.population / 400))));
-    v.stalls.slice(0, active).forEach((s, i) => {
-      const full = food > 5 && !r.flags.hambre && !(r.flags.sinComercio && i > 0);
-      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(full, `hsl(${(hue + i * 40) % 360} 50% 55%)`, i), s.x * TILE, s.y * TILE) });
+    // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
+    const look = marketLook(w, regionId);
+    v.stalls.slice(0, Math.min(v.stalls.length, 6)).forEach((s, i) => {
+      const stallGoods = look.stalls[i];
+      if (stallGoods === undefined) return; // sin comerciante: no hay puesto
+      const open = stallGoods.length > 0;
+      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
     });
+    void food;
     // Empalizada.
     if (town?.walls) {
       const R = v.wallR;
@@ -1364,23 +1373,8 @@ export class WorldScene {
     const day = h > 6.5 && h < 20;
     const clock = life.clock;
     for (const road of this.l.roads) {
-      const route = w.routes[road.routeId];
       const len = road.path.length;
       if (len < 4) continue;
-      // Caravanas comerciales: su número depende del tráfico real de la ruta.
-      if (route.status === 'abierta' && day) {
-        const n = Math.round(route.traffic * 2.2);
-        for (let i = 0; i < n; i++) {
-          const phase = ((clock * 1.2) / len + i / n + road.routeId * 0.37) % 2;
-          const fwd = phase < 1;
-          const pos = along(road.path, fwd ? phase : 2 - phase);
-          const px = pos.x * TILE;
-          const py = pos.y * TILE;
-          if (!inView(px, py)) continue;
-          const flip = (fwd ? pos.dx : -pos.dx) < 0;
-          items.push({ y: py, draw: () => S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, flip, '#d9c08a'), px, py) });
-        }
-      }
       // Soldados en marcha entre regiones en guerra.
       if (w.regions[road.a].relations[road.b]?.war) {
         for (let i = 0; i < 5; i++) {
@@ -1395,6 +1389,17 @@ export class WorldScene {
           items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
         }
       }
+    }
+    // Caravanas de verdad: cada carreta lleva una carga concreta de un pueblo a otro.
+    for (const cv of convoyPositions(w)) {
+      const px = cv.x * TILE;
+      const py = cv.y * TILE;
+      if (!inView(px, py)) continue;
+      const main = Object.keys(cv.c.cargo)[0] as Good | undefined;
+      const color = cv.c.status === 'atacada' ? '#5a4a3a' : main ? GOOD_COLOR[main] : '#d9c08a';
+      const moving = cv.c.status === 'viaje' && day;
+      items.push({ y: py, draw: () => S.drawSprite(g, S.cart(moving ? Math.floor(t / 250) % 4 : 0, cv.dx < 0, color), px, py) });
+      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => S.drawSprite(g, S.prop('cajas', 1), px + 26, py + 8) });
     }
     // Refugiados: caminan de verdad de su región a la de destino.
     for (const r of w.regions) {

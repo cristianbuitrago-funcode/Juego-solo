@@ -3,6 +3,9 @@ import { drawPortrait } from '../../render/human';
 import { KNOWS, MAX_LEVEL, questions, SKILLS, STANDING, TALENTS, tryFragment, whoAmI, type KnowId, type SkillId } from '../../world/identity';
 import { ensureLife, heirs } from '../../world/life';
 import { ROLE_TITLE } from '../../world/folk';
+import { playerEco } from '../../world/business';
+import { GOOD } from '../../world/economy';
+import { priceBook } from '../market';
 import { emotionOf } from '../../world/society';
 import { showFragment } from '../world-dialogs';
 import { yearOf } from '../../world/clock';
@@ -72,6 +75,7 @@ export function renderFamily(app: App): Node[] {
         )
       : null,
     metFolk.length ? section('Gente que conoces', ...people(app)) : null,
+    ...economySections(app),
     memories.length ? section('Recuerdos', ...memories.map((e) => h('p', { class: 'quote' }, e.text))) : null,
     lookEditor(app),
     section('Familia',
@@ -137,4 +141,18 @@ function people(app: App): Node[] {
       h('div', { class: 'txt' }, h('b', null, f.name), ` · ${ROLE_TITLE[f.role]}${where} · ${how}`, ...known.map((k) => h('div', { class: 'tiny' }, k))),
     );
   });
+}
+
+/** Tu cuaderno de precios y tus negocios (solo si ya has empezado a comerciar). */
+function economySections(app: App): (HTMLElement | null)[] {
+  const w = app.w!;
+  if (!ensureLife(w).society) return [];
+  const pe = playerEco(w);
+  const book = priceBook(app);
+  const out: (HTMLElement | null)[] = [];
+  if (book.length) out.push(section('Tu cuaderno de precios', ...book.map((b) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '📓'), h('div', { class: 'txt' }, h('b', null, b.title), ...b.lines.map((l) => h('div', { class: 'tiny' }, l)))))));
+  if (pe.businesses.length) out.push(section('Tus negocios', ...pe.businesses.map((b) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, b.kind === 'puesto' ? '🏪' : b.kind === 'granja' ? '🌾' : '🛞'), h('div', { class: 'txt' }, h('b', null, `${b.kind === 'puesto' ? 'Puesto' : b.kind === 'granja' ? 'Campo' : 'Transporte'} en ${w.regions[b.regionId].name}`), h('div', { class: 'tiny' }, `Caja: ${Math.floor(b.cash)} · ${b.workers.length ? `${b.workers.length} trabajando` : 'sin nadie'}`), ...b.log.slice(-2).map((l) => h('div', { class: 'tiny' }, l.text)))))));
+  const contracts = pe.contracts.filter((c) => !c.done);
+  if (contracts.length) out.push(section('Encargos', ...contracts.map((c) => h('p', null, `Llevar ${c.qty} de ${GOOD[c.good].name} a ${w.regions[c.to].name} (${c.due - w.day >= 0 ? `quedan ${c.due - w.day} días` : 'vas tarde'}) · ${c.pay} 🪙`))));
+  return out;
 }

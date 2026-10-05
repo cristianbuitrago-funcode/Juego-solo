@@ -380,6 +380,8 @@ export function makePersona(w: WorldState, f: Folk): Persona {
  */
 export function ensurePeople(w: WorldState): void {
   const life = w.life!;
+  // Fase 3: la comida y la población las decide la economía de cada pueblo.
+  if (!w.sim?.worldEconomy) w.sim = { ...(w.sim ?? {}), worldEconomy: true };
   const fresh: Folk[] = [];
   for (const f of life.folk) {
     if (!f.gender) f.gender = genderFor(f);

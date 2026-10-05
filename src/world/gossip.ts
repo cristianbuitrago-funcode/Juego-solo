@@ -2,6 +2,7 @@ import type { Rng } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
 import { ROLE_TITLE } from './folk';
+import { foodIndex } from './economy';
 import { folkById, memorize, other, shortName, societyOf, standingOf, tieOf, tiesOf, trait } from './society';
 import type { Folk } from './types';
 
@@ -290,7 +291,7 @@ export function overheard(w: WorldState, a: Folk, b: Folk, seed: number): string
   if (t && t.aff <= -25) opts.push('«…y no vuelvas a hablarme así»', '«…eso no es lo que pasó»');
   if (t && t.aff >= 40) opts.push('«…ja, ja, ¿te acuerdas de aquella vez?»', '«…mañana te ayudo con eso»');
   const m = s.market[a.regionId];
-  if (m && m.price.comida > 1.8) opts.push('«…a este paso no comemos este invierno»', '«…otra vez ha subido el pan»');
+  if (m && m.v === 3 && foodIndex(m) > 1.8) opts.push('«…a este paso no comemos este invierno»', '«…otra vez ha subido el pan»');
   if (!opts.length) opts.push('«…y entonces le dije que no»', '«…el tiempo está cambiando»', '«…mañana hay mercado»');
   return opts[Math.abs(seed) % opts.length];
 }

@@ -224,7 +224,7 @@ export function changeJob(w: WorldState, f: Folk, to: FolkRole, why: string): vo
 }
 
 /** Un vecino (con su pareja e hijos pequeños) se va a vivir a otra región. */
-export function migrate(w: WorldState, f: Folk, to: number): Folk[] {
+export function migrate(w: WorldState, f: Folk, to: number, adjustPop = true): Folk[] {
   const life = w.life!;
   const from = f.regionId;
   const gone = [f];
@@ -242,11 +242,12 @@ export function migrate(w: WorldState, f: Folk, to: number): Folk[] {
     g.regionId = to;
     g.house = (g.house + 1) % 3;
     if (g.p) g.p.events.push({ day: w.day, text: `Se fue a vivir a ${w.regions[to].name}.` });
+    if (g.p) (g.p as { moved?: number }).moved = w.day;
   }
   // La región pierde gente de verdad (la simulación del motor lo nota).
   const R = w.regions[from];
   const D = w.regions[to];
-  const n = gone.length * 9;
+  const n = adjustPop ? gone.length * 9 : 0;
   R.population = Math.max(40, R.population - n);
   D.population += n;
   void life;

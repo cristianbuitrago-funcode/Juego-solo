@@ -65,6 +65,18 @@ export function tickEconomy(ctx: Ctx): void {
   updateTraffic(ctx);
   const delta = new Array(w.regions.length).fill(0);
 
+  // Con la economía viva (Fase 3), la comida y la gente las decide cada pueblo: aquí solo quedan
+  // el tráfico, las banderas de comercio y el hambre.
+  if (w.sim?.worldEconomy) {
+    for (const r of w.regions) {
+      if (r.isHome) continue;
+      r.foodHistory.push(Math.round(r.food * 10) / 10);
+      if (r.foodHistory.length > 30) r.foodHistory.shift();
+      updateTradeFlags(ctx, r);
+      updateHunger(ctx, r);
+    }
+    return;
+  }
   for (const r of w.regions) {
     if (r.isHome) continue;
     delta[r.id] += production(ctx, r) - CONSUMPTION;

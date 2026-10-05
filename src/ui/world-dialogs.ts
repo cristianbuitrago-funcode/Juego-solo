@@ -14,6 +14,9 @@ import { answerOffer, chooseFragment, gain, hasTalent, levelOf, STANDING, story,
 import { ensureLife, heirs, succeed } from '../world/life';
 import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
 import { arcAct, arcChoices } from '../world/arcs';
+import { convoyDialog, marketDialog } from './market';
+import { playerEco } from '../world/business';
+import { describeMarket } from '../world/marketview';
 import { opinionOf, seedRumor, type Approach } from '../world/gossip';
 import { answerApproach, noticeConversation } from '../world/social';
 import { Rng } from '../core/rng';
@@ -188,6 +191,8 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       return [b('🧭 Viajar', () => arrive(app, t), true)];
     case 'item':
       return [b(t.id === 'mochila' ? '🎒 Mirar' : t.id === 'caja' ? '📦 Mirar' : t.id === 'cabana' ? '🚪 Entrar' : '🔎 Examinar', () => arrive(app, t), true)];
+    case 'convoy':
+      return [b(t.label.startsWith('Una carreta') ? '🔎 Examinar' : '💬 Hablar', () => arrive(app, t), true)];
   }
 }
 
@@ -218,6 +223,8 @@ export function arrive(app: App, t: Target): void {
       if (t.id === 'cabana') return hut(app);
       prologueAt(app, { kind: 'item', id: t.id });
       return;
+    case 'convoy':
+      return convoyDialog(app, t.id);
   }
 }
 
@@ -253,6 +260,8 @@ function talk(app: App, folkId: string): void {
   if (job && id.mode === 'forastero') choices.push({ label: job.label, hint: `${Math.round(job.minutes / 60)} h · ${job.pay.coins ? 'algo de dinero' : job.pay.comida ? 'algo de comida' : 'aprendes'}`, run: () => outcome(app, job.label.slice(2), work(w, folkId)), primary: !choices.length });
   if (id.mode === 'forastero') choices.push({ label: '❓ Preguntar por ti', run: () => outcome(app, f.name, askAboutMe(w, folkId)) });
   if (f.role === 'comerciante') choices.push({ label: `🍞 Comprarle comida (${priceOf(w, f.regionId, 1)} 🪙)`, run: () => outcome(app, f.name, buyFood(w, f.regionId)) });
+  if (f.role === 'comerciante' && id.mode === 'forastero') choices.push({ label: '⚖ Comerciar', hint: 'Comprar, vender, preguntar precios, encargos', run: () => marketDialog(app, f.regionId, f.id) });
+  if (f.role === 'campesino' && (playerEco(w).cargo.semillas ?? 0) >= 1) choices.push({ label: '🌱 Darle semilla para sembrar', run: () => marketDialog(app, f.regionId) });
   if (f.role === 'comerciante' && inv.reliquias > 0) choices.push({ label: '💰 Venderle algo de valor', run: () => outcome(app, f.name, sellRelic(w, f.regionId)) });
   if (f.resentment > 0.3 || f.trust < 0.35) choices.push({ label: hasTalent(id, 'lengua') ? '🗣 Convencerle (lengua de plata)' : '🗣 Intentar convencerle', run: () => outcome(app, f.name, convince(w, folkId)) });
   if (id.mode === 'forastero' && f.role !== 'nino') choices.push({ label: '🌒 Contarle una mentira para sacar algo', hint: 'Si te pillan, se sabrá.', run: () => outcome(app, f.name, deceive(w, folkId)) });
@@ -434,7 +443,8 @@ function building(app: App, regionId: number, kind: string): void {
           { label: `${ACTIONS.explotar.icon} Exigir parte de sus recursos`, run: () => openAction(app, 'explotar', { region: regionId, inPerson: 1 }) },
           { label: 'Salir', run: () => {} },
         ]);
-      return void dialogue(app, `Almacén de ${r.name}`, '', [home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
+      return void dialogue(app, `Almacén de ${r.name}`, '', [describeMarket(w, regionId)[0], home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
+        { label: '🧺 Ir al mercado', run: () => marketDialog(app, regionId), primary: true },
         { label: '🙏 Pedir algo de comer', run: () => outcome(app, 'El almacén', charity(w, regionId)) },
         { label: 'Salir', run: () => {} },
       ]);

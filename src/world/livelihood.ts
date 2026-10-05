@@ -7,7 +7,7 @@ import { remember } from './folk';
 import { addScore, chanceOf, deed, eat, gain, hasTalent, levelOf, rest, story, tryFragment, type FragmentEvent, type GainNote, type KnowId, type SkillId } from './identity';
 import { ensureLife } from './life';
 import { getLayout } from './layout';
-import { foodPrice, marketOf, trade } from './economy';
+import { foodPrice, foodStock, marketOf, trade } from './economy';
 import type { Folk } from './types';
 import { T } from './types';
 
@@ -218,7 +218,7 @@ export function buyFood(w: WorldState, regionId: number): Outcome {
   const life = ensureLife(w);
   const id = life.identity!;
   const price = priceOf(w, regionId, 1);
-  if (life.society && marketOf(w, regionId).stock.comida < 1) return none(['No queda nada en los puestos. Hoy no se vende comida.']);
+  if (life.society && foodStock(marketOf(w, regionId)) < 1) return none(['No queda nada en los puestos. Hoy no se vende comida.']);
   if (id.needs.coins < price) return none([`Una hogaza y algo de queso: ${price} moneda${price > 1 ? 's' : ''}. No te llega.`]);
   id.needs.coins -= price;
   if (life.society) trade(w, regionId, 'comida', 1);

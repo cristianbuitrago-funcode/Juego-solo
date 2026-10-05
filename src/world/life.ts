@@ -12,6 +12,7 @@ import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember, 
 import { setupPrologue } from './prologue';
 import { chooseParent, comingOfAge, mournDeaths, planToday, societyDay, startFirstStory, welcomeBirth } from './social';
 import { ensurePeople, logEvent } from './society';
+import { marketOf } from './economy';
 import { walkable } from './terrain';
 import { findPath } from './path';
 import { createIdentity, legacyIdentity, story, syncAuthority, updateStanding, type Identity } from './identity';
@@ -203,7 +204,8 @@ function updateTown(ctx: Ctx, life: Life, regionId: number): void {
   const t: TownState = (life.towns[regionId] ??= { houses: housesFor(w, regionId), burned: [], abandoned: 0, walls: false, tower: false, tier: tierOf(r.population) });
   const target = housesFor(w, regionId);
   // Crecimiento y decadencia: una casa nueva cada pocos días, o casas que se vacían.
-  if (target > t.houses && rng.chance(0.5)) t.houses++;
+  // Construir cuesta madera y piedra (y alguien que la venda): sin materiales, la gente se apiña.
+  if (target > t.houses && rng.chance(0.5) && buildHouse(w, regionId)) t.houses++;
   if (target < t.houses - 2) t.abandoned = Math.min(t.houses - 2, t.houses - target);
   else if (t.abandoned > 0 && target >= t.houses) t.abandoned--;
   // Guerra: arden casas. Paz: se reconstruyen.
@@ -248,6 +250,19 @@ function updateTown(ctx: Ctx, life: Life, regionId: number): void {
   }
 }
 
+/** Una casa nueva se hace con madera y piedra del mercado (si las hay). */
+function buildHouse(w: WorldState, regionId: number): boolean {
+  if (!w.life?.society) return true;
+  const m = marketOf(w, regionId);
+  if (m.stock.madera < 6 || m.stock.piedra < 4) return false;
+  m.stock.madera -= 6;
+  m.stock.piedra -= 4;
+  const pay = Math.min(m.treasury, 4);
+  m.treasury -= pay;
+  m.cash += pay;
+  return true;
+}
+
 function findWarEnd(w: WorldState, regionId: number): string | undefined {
   return [...w.entries].reverse().find((e) => e.kind === 'conflicto' && e.text.startsWith('Termina la guerra') && e.regions.includes(regionId))?.id;
 }
@@ -269,7 +284,7 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
     }
     if (f.charId) continue; // los personajes con nombre los gestiona el motor
     let p = f.age > 64 ? (f.age - 64) * 0.003 : 0;
-    if (r.flags.hambre) p += 0.004;
+    if (r.flags.hambre) p += w.sim?.worldEconomy ? 0.002 : 0.004;
     if (r.flags.guerra) p += f.role === 'guardia' ? 0.03 : 0.008;
     if (r.flags.fiebre) p += 0.004;
     if (rng.chance(p)) {
@@ -280,7 +295,8 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
       if (f.lastMet >= 0) record(ctx, { kind: 'personaje', text: `Te enteras de que ${f.name}, a quien conociste en ${r.name}, murió ${how}.`.replace(' murió de vieja', ' murió de vieja edad'), regions: [f.regionId], causeId: cause, known: true });
     }
     // Emigración: los vecinos se van con las familias que huyen.
-    const mig = r.flags.emigrando;
+    // Con la economía viva, las migraciones las decide population.ts (con nombre y motivo).
+    const mig = w.sim?.worldEconomy ? undefined : r.flags.emigrando;
     if (mig && rng.chance(0.12) && f.role !== 'lider') {
       const to = Number(mig.data?.to);
       if (!Number.isNaN(to) && w.regions[to]) {

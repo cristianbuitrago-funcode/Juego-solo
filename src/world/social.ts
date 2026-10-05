@@ -1,11 +1,15 @@
-import { record } from '../core/chronicle';
 import { Rng, hashString } from '../core/rng';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
-import { commitCtx, makeCtx } from '../core/world';
-import { activeArcOf, arcDay, changeJob, migrate, startArc } from './arcs';
+
+import { activeArcOf, arcDay, changeJob, startArc } from './arcs';
 import { hourOf, seasonOf, weatherOf } from './clock';
-import { economyDay, marketOf, stallLook } from './economy';
+import { economyDayFull, foodIndex, GOOD, GOODS, marketOf, prosperityDay, stallLook, type EconomyNotes, type Good } from './economy';
+import { impactEcho, businessDay } from './business';
+import { climateOf, nearTiles, startDrought } from './farming';
+import { arrivals, careerDay, demographyDay, migrationDay } from './population';
+import { convoyTick, tradeDay } from './trade';
+import { T } from './types';
 import { ROLE_TITLE } from './folk';
 import { learnFact, rumorsKnownBy, seedRumor, spreadRumors, versionsFor, type Approach } from './gossip';
 import { getLayout } from './layout';
@@ -35,8 +39,13 @@ export function societyDay(w: WorldState): void {
     const people = byRegion.get(r.id) ?? [];
     if (!people.length) continue;
     const detail = r.id === here || r.isHome ? 2 : life.visited[r.id] !== undefined ? 1 : 0;
-    const notes = economyDay(w, r.id, people);
-    chainsFromEconomy(w, rng, r.id, people, notes, detail);
+    const eco = economyDayFull(w, r.id, people);
+    chainsFromEconomy(w, rng, r.id, people, eco, detail);
+    tradeDay(w, rng, r.id, people);
+    demographyDay(w, r.id);
+    prosperityDay(w, r.id, people);
+    if (detail > 0 || rng.chance(0.3)) careerDay(w, rng, r.id, people);
+    arrivals(w, rng, r.id);
     for (const f of people) {
       updateNeeds(w, f, people);
       updateEmotion(w, f);
@@ -52,9 +61,14 @@ export function societyDay(w: WorldState): void {
     maybeNewArc(w, rng, r.id, people, detail);
     if (detail === 2) planDay(w, rng, r.id, people);
   }
+  migrationDay(w, rng);
+  convoyTick(w);
+  businessDay(w);
+  climateDay(w, rng);
   playerDeedsToRumors(w);
   if (here >= 0) makeApproaches(w, rng, here);
   s.lastSeen[here] = w.day;
+  snapshot(w, here);
   s.approaches = s.approaches.filter((a) => a.until >= w.day);
   s.festivals = s.festivals.filter((x) => x.day >= w.day);
   for (const r of s.rumors) if (r.heat < 0.05 && w.day - r.day > 40) r.heat = 0;
@@ -363,54 +377,95 @@ function autonomousEvents(w: WorldState, rng: Rng, regionId: number, people: Fol
     changeJob(w, f, 'anciano', 'al hacerse mayor');
     logEvent(w, regionId, 'retiro', `${f.name} ha dejado de trabajar de ${ROLE_TITLE[from]}: ya tiene sus años.`, [f.id]);
   }
-  // Paro: si sobran comerciantes o falta trabajo, alguien cambia de oficio.
-  for (const f of adults) if (f.p!.needs.trabajo < 0.35 && f.role !== 'anciano' && f.role !== 'lider' && !f.charId && rng.chance(0.08 * k)) {
-    const to: FolkRole = rng.pick(['campesino', 'campesino', 'pastor', w.regions[regionId].resource === 'hierro' ? 'minero' : 'carpintero']);
-    if (to === f.role) continue;
-    const from = f.role;
-    changeJob(w, f, to, 'porque en lo suyo ya no había trabajo');
-    logEvent(w, regionId, 'oficio', `${f.name} ha dejado de ser ${ROLE_TITLE[from]}: no había trabajo. Ahora es ${ROLE_TITLE[to]}.`, [f.id]);
-    seedRumor(w, { regionId, kind: 'oficio', subject: f.id, witnesses: witnesses(0.2), extra: { role: ROLE_TITLE[to] } });
-  }
-  // Migración: quien ya no puede más se va (con su familia). La región se vacía de verdad.
-  for (const f of adults) {
-    if (!f.p!.goals.some((g) => g.kind === 'mudarse') || f.role === 'lider' || f.charId || !rng.chance(0.06 * (detail === 0 ? 1 : k))) continue;
-    const dest = w.regions.filter((x) => x.id !== regionId && !x.flags.guerra && !x.flags.hambre).sort((a, b) => b.food - a.food)[0];
-    if (!dest) continue;
-    const gone = migrate(w, f, dest.id);
-    logEvent(w, regionId, 'migracion', `${f.name}${gone.length > 1 ? ' y su familia' : ''} se ha${gone.length > 1 ? 'n' : ''} ido a vivir a ${dest.name}. Aquí ya no podía${gone.length > 1 ? 'n' : ''} más.`, gone.map((g) => g.id));
-    if (f.lastMet >= 0) {
-      const ctx = makeCtx(w);
-      record(ctx, { kind: 'migracion', text: `${f.name} se fue de ${r.name} a ${dest.name}.`, regions: [regionId, dest.id], known: true });
-      commitCtx(ctx);
-    }
-    break;
-  }
+  // Los cambios de oficio por salario, las migraciones y las llegadas los decide population.ts.
 }
 
-/** Cadenas de consecuencias de la economía: mala cosecha → escasez → precios → enfado → peleas → migración. */
-function chainsFromEconomy(w: WorldState, rng: Rng, regionId: number, people: Folk[], notes: string[], detail: number): void {
+/**
+ * Cadenas de consecuencias de la economía: sequía → mala cosecha → escasez →
+ * precios → enfado → peleas → bandidos → migración (y al revés, cuando la
+ * tierra vuelve a dar).
+ */
+function chainsFromEconomy(w: WorldState, rng: Rng, regionId: number, people: Folk[], eco: EconomyNotes, detail: number): void {
   const m = marketOf(w, regionId);
+  const r = w.regions[regionId];
   const merchants = people.filter((f) => f.role === 'comerciante');
-  // Una mala cosecha (plaga, granizo) a veces, en verano y otoño.
-  const season = seasonOf(w.day);
-  if (!m.shock && (season === 'verano' || season === 'otoño') && rng.chance(weatherOf(w, w.day) === 'tormenta' ? 0.12 : 0.012)) {
-    m.shock = { factor: 0.45, until: w.day + rng.int(5, 9), why: weatherOf(w, w.day) === 'tormenta' ? 'el granizo' : 'una plaga' };
-    logEvent(w, regionId, 'cosecha', `En ${w.regions[regionId].name}, ${m.shock.why} ha estropeado buena parte de la cosecha.`, []);
-    seedRumor(w, { regionId, kind: 'cosecha', subject: people[0].id, witnesses: people.filter((f) => f.role === 'campesino').map((f) => f.id), versions: [`${cap(m.shock.why)} ha estropeado la cosecha.`, 'Dicen que este año no habrá grano para todos.', 'Dicen que el pueblo pasará hambre este invierno.'], tone: -0.2 });
-    for (const f of people) if (f.role === 'campesino') f.p!.emo.estres = clamp(f.p!.emo.estres + 0.3);
+  const farmers = people.filter((f) => f.role === 'campesino').map((f) => f.id);
+  const s = societyOf(w) as ReturnType<typeof societyOf> & { ecoSeen?: Record<string, number> };
+  const seen = (s.ecoSeen ??= {});
+  const once = (key: string, days: number) => {
+    const k = `${regionId}:${key}`;
+    if ((seen[k] ?? -999) > w.day - days) return false;
+    seen[k] = w.day;
+    return true;
+  };
+  // Lo que pasa en los campos.
+  for (const n of eco.farm) {
+    if (!once(n.kind, 6)) continue;
+    logEvent(w, regionId, n.kind === 'cosecha-buena' ? 'cosecha' : n.kind === 'cosecha-mala' ? 'cosecha' : n.kind, n.text, []);
+    const versions = n.kind === 'cosecha-mala' ? [n.text, 'Dicen que este año no habrá grano para todos.', 'Dicen que el pueblo pasará hambre este invierno.'] : n.kind === 'cosecha-buena' ? [n.text, 'Dicen que nunca se vio una cosecha igual.'] : [n.text, 'Dicen que la tierra está maldita.'];
+    seedRumor(w, { regionId, kind: `campo-${n.kind}`, subject: farmers[0] ?? people[0].id, witnesses: farmers, versions, tone: n.kind === 'cosecha-buena' ? 0.3 : -0.2 });
+    for (const f of people) if (f.role === 'campesino') f.p!.emo.estres = clamp(f.p!.emo.estres + (n.kind === 'cosecha-buena' ? -0.3 : 0.3));
   }
-  if (m.shock && m.shock.until < w.day) delete m.shock;
-  if (notes.includes('sube-comida') && merchants.length) {
+  if (eco.notes.includes('sube-comida') && merchants.length && once('precio', 4)) {
     const mer = rng.pick(merchants);
-    logEvent(w, regionId, 'precio', `La comida ha subido de precio en el mercado.`, [mer.id]);
+    logEvent(w, regionId, 'precio', `La comida ha subido de precio en el mercado de ${r.name}.`, [mer.id]);
     seedRumor(w, { regionId, kind: 'precio', subject: mer.id, witnesses: people.filter(() => rng.chance(0.3)).map((f) => f.id) });
     for (const f of people) if (f.role !== 'comerciante' && f.p!.coins < 6) bond(w, f.id, mer.id, -4, 0), (f.p!.emo.enojo = clamp(f.p!.emo.enojo + 0.15));
   }
-  if (notes.includes('hambre') && detail > 0) logEvent(w, regionId, 'hambre', `En ${w.regions[regionId].name} hay familias que no tienen qué comer.`, []);
+  if (eco.notes.includes('baja-comida') && once('baja', 6)) logEvent(w, regionId, 'precio', `En ${r.name} la comida vuelve a estar a buen precio.`, []);
+  if (eco.notes.includes('hambre') && detail > 0 && once('hambre', 5)) logEvent(w, regionId, 'hambre', `En ${r.name} hay familias que no tienen qué comer.`, []);
+  // Sin hierro, el herrero no forja; sin herramientas, el campo rinde menos.
+  if (eco.notes.includes('sin-hierro') && once('sin-hierro', 10)) {
+    const smith = people.find((f) => f.role === 'artesano');
+    const echo = impactEcho(w, regionId, 'hierro');
+    logEvent(w, regionId, 'escasez', `${smith?.name ?? 'El herrero'} no tiene hierro: no puede hacer herramientas.${echo ? ' ' + echo : ''}`, smith ? [smith.id] : []);
+    seedRumor(w, { regionId, kind: 'escasez', subject: smith?.id ?? people[0].id, witnesses: people.filter(() => rng.chance(0.3)).map((f) => f.id), versions: [`${smith?.name ?? 'El herrero'} se ha quedado sin hierro.`, echo ? 'Dicen que el forastero se llevó todo el hierro del pueblo.' : 'Dicen que no llega hierro de ninguna parte.', 'Dicen que este año no habrá herramientas para nadie.'], tone: -0.2 });
+  }
+  if (eco.notes.includes('sin-herramientas') && once('sin-herramientas', 10)) logEvent(w, regionId, 'escasez', `En ${r.name} faltan herramientas: azadas rotas, redes sin remendar. Se trabaja peor.`, []);
+  // Quiebras: un comerciante sin dinero ni crédito cierra su puesto.
+  for (const n of eco.notes.filter((x) => x.startsWith('quiebra:'))) {
+    const f = folkById(w, n.split(':')[1]);
+    if (!f || !once(`quiebra-${f.id}`, 30)) continue;
+    changeJob(w, f, rng.chance(0.5) ? 'campesino' : 'carpintero', 'después de arruinarse');
+    logEvent(w, regionId, 'quiebra', `${f.name} ha cerrado su puesto: se ha arruinado. Ahora trabaja de ${ROLE_TITLE[f.role]}.`, [f.id]);
+    seedRumor(w, { regionId, kind: 'quiebra', subject: f.id, witnesses: people.filter(() => rng.chance(0.4)).map((x) => x.id), versions: [`${f.name} se ha arruinado.`, `Dicen que ${f.name} debe dinero a medio pueblo.`, `Dicen que ${f.name} lo ha perdido todo jugando.`], tone: -0.3 });
+    f.p!.emo.tristeza = clamp(f.p!.emo.tristeza + 0.4);
+  }
+  // Bandidos: con hambre y poco orden, hay quien sale a los caminos.
+  const desperate = m.hungry >= Math.max(3, people.length * 0.3) && r.stability < 0.55;
+  if (desperate && !r.flags.bandidos && rng.chance(0.15)) {
+    r.flags.bandidos = { since: w.day };
+    logEvent(w, regionId, 'bandidos', `Hay bandidos en los caminos de ${r.name}. Gente desesperada, dicen.`, []);
+    seedRumor(w, { regionId, kind: 'bandidos', subject: people[0].id, witnesses: merchants.map((f) => f.id), versions: [`Hay bandidos en los caminos de ${r.name}.`, 'Dicen que los bandidos son vecinos que pasan hambre.', 'Dicen que nadie que salga de noche vuelve.'], tone: -0.3 });
+  } else if (r.flags.bandidos && !desperate && w.day - r.flags.bandidos.since > 8 && rng.chance(0.2)) {
+    delete r.flags.bandidos;
+    logEvent(w, regionId, 'bandidos', `Los caminos de ${r.name} vuelven a ser seguros.`, []);
+  }
+  // Una mina nueva (a veces): alguien encuentra una veta en los montes.
+  if (!m.mine && r.resource !== 'hierro' && rng.chance(0.0025) && nearTiles(w, regionId, (t) => t === T.Mountain || t === T.Rock) > 25) {
+    const f = people.find((x) => x.role === 'minero' || x.role === 'exploradora' || trait(x, 'curioso') > 75);
+    if (f) {
+      m.mine = true;
+      logEvent(w, regionId, 'mina', `${f.name} ha encontrado una veta de hierro en los montes de ${r.name}.`, [f.id]);
+      seedRumor(w, { regionId, kind: 'mina', subject: f.id, witnesses: people.map((x) => x.id), versions: [`${f.name} ha encontrado hierro en los montes.`, 'Dicen que en los montes hay hierro para cien años.', 'Dicen que en los montes hay oro.'], tone: 0.3 });
+    }
+  }
 }
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** El clima también tiene sus años: a veces, una sequía cae sobre una comarca. */
+function climateDay(w: WorldState, rng: Rng): void {
+  const c = climateOf(w);
+  if (c.drought && c.drought.until < w.day) {
+    for (const id of c.drought.regions) logEvent(w, id, 'lluvia', `Vuelve a llover en ${w.regions[id].name}. La tierra respira.`, []);
+    delete c.drought;
+  }
+  const season = seasonOf(w.day);
+  if (!c.drought && (season === 'primavera' || season === 'verano') && rng.chance(0.006)) {
+    const r = rng.pick(w.regions);
+    startDrought(w, r.id, rng.int(8, 26));
+    for (const id of climateOf(w).drought!.regions) logEvent(w, id, 'sequia', `Hace semanas que no llueve en ${w.regions[id].name}.`, []);
+  }
+}
 
 function comeBack(w: WorldState, f: Folk): void {
   const a = f.p!.away!;
@@ -419,7 +474,7 @@ function comeBack(w: WorldState, f: Folk): void {
   if (a.why === 'desaparicion') logEvent(w, f.regionId, 'regreso', `${f.name} ha vuelto. Dice que se perdió en el bosque; no todos le creen.`, [f.id]);
   else {
     logEvent(w, f.regionId, 'regreso', `${f.name} ha vuelto de ${dest} con noticias.`, [f.id]);
-    if (f.role === 'comerciante') marketOf(w, f.regionId).stock.comida += 4;
+    if (f.role === 'comerciante') marketOf(w, f.regionId).stock.trigo += 4;
   }
 }
 
@@ -771,6 +826,18 @@ export function socialOverride(w: WorldState, f: Folk, clock: number): SocialOve
   const plan = p.plans.find((x) => x.day === day && h >= x.from && h < x.to);
   if (plan) return { kind: 'plan', x: plan.x, y: plan.y, activity: plan.activity };
   if (p.sick !== undefined && p.sick >= day && h >= 7 && h < 21) return { kind: 'casa', activity: 'guarda cama, con fiebre' };
+  // Quien trabaja para el forastero, va a su negocio.
+  const employer = (p as { employer?: string }).employer;
+  if (employer && h >= 8 && h < 18) {
+    const b = (societyOf(w) as { player?: { businesses: { id: string; kind: string; regionId: number }[] } }).player?.businesses.find((x) => x.id === employer);
+    if (b && b.regionId === f.regionId) {
+      const v = getLayout(w).villages[b.regionId];
+      const st = v.stalls[Math.min(v.stalls.length - 1, 5)] ?? { x: v.cx + 2, y: v.cy + 2 };
+      if (b.kind === 'puesto') return { kind: 'plan', x: st.x + 0.4, y: st.y + 1.1, activity: 'atiende el puesto del forastero' };
+      if (b.kind === 'granja') return { kind: 'plan', x: v.cx + 9, y: v.cy + 7, activity: 'trabaja el campo del forastero' };
+      if (b.kind === 'transporte') return { kind: 'fuera', activity: 'lleva la carreta del forastero' };
+    }
+  }
   if (p.mourning !== undefined && p.mourning >= day && h >= 8 && h < 20 && trait(f, 'trabajador') < 70) return { kind: 'casa', activity: 'está de luto, no sale de casa' };
   // Tormenta: nadie va al campo.
   const weather = weatherOf(w, day);
@@ -826,7 +893,66 @@ export function catchUp(w: WorldState, regionId: number): string[] {
   const news = s.events.filter((e) => e.regionId === regionId && e.day > last && e.day < w.day && ['boda', 'muerte', 'nacimiento', 'migracion', 'oficio', 'pelea', 'reconciliacion', 'separacion', 'robo', 'marcha', 'enemistad', 'pueblo', 'herencia', 'cosecha'].includes(e.kind));
   const relevant = news.filter((e) => e.who.some((id) => known(id) >= 0) || e.kind === 'cosecha' || e.kind === 'pueblo').slice(-4);
   for (const e of relevant) if (!s.heard.includes(e.id)) s.heard.push(e.id);
-  return relevant.map((e) => `Mientras no estabas: ${e.text.charAt(0).toLowerCase()}${e.text.slice(1)}`);
+  const out = [...economyChanges(w, regionId), ...relevant.map((e) => `Mientras no estabas: ${e.text.charAt(0).toLowerCase()}${e.text.slice(1)}`)];
+  snapshot(w, regionId);
+  return out;
+}
+
+interface Snap {
+  day: number;
+  food: number;
+  pop: number;
+  folk: number;
+  houses: number;
+  abandoned: number;
+  prosperity: number;
+  closed: number;
+  goods: string[];
+}
+
+/** Lo que el jugador recuerda de un pueblo la última vez que estuvo (para notar los cambios al volver). */
+function snapshot(w: WorldState, regionId: number): void {
+  const s = societyOf(w) as ReturnType<typeof societyOf> & { snaps?: Record<number, Snap> };
+  const m = marketOf(w, regionId);
+  const t = w.life!.towns[regionId];
+  (s.snaps ??= {})[regionId] = {
+    day: w.day,
+    food: foodIndex(m),
+    pop: w.regions[regionId].population,
+    folk: w.life!.folk.filter((f) => f.alive && f.regionId === regionId).length,
+    houses: t?.houses ?? 0,
+    abandoned: t?.abandoned ?? 0,
+    prosperity: m.prosperity,
+    closed: m.closedStalls,
+    goods: GOODS.filter((g) => m.stock[g] >= 2),
+  };
+}
+
+/** Al volver: precios, gente, casas, mercancías… lo que ha cambiado (sin cifras). */
+function economyChanges(w: WorldState, regionId: number): string[] {
+  const s = societyOf(w) as ReturnType<typeof societyOf> & { snaps?: Record<number, Snap> };
+  const old = s.snaps?.[regionId];
+  if (!old || w.day - old.day < 3) return [];
+  const m = marketOf(w, regionId);
+  const t = w.life!.towns[regionId];
+  const out: string[] = [];
+  const food = foodIndex(m);
+  if (food > old.food * 1.4) out.push('La comida está mucho más cara que cuando te fuiste.');
+  else if (food < old.food * 0.7) out.push('La comida está más barata que la última vez.');
+  const folk = w.life!.folk.filter((f) => f.alive && f.regionId === regionId).length;
+  const pop = w.regions[regionId].population;
+  if (pop < old.pop * 0.88 || folk < old.folk - 1) out.push('Faltan caras conocidas: hay menos gente por la calle que antes.');
+  else if (pop > old.pop * 1.12 || folk > old.folk + 1) out.push('Hay gente nueva en el pueblo. Caras que no conoces.');
+  if ((t?.houses ?? 0) > old.houses) out.push('Han levantado casas nuevas desde la última vez.');
+  if ((t?.abandoned ?? 0) > old.abandoned) out.push('Hay casas cerradas que antes estaban habitadas.');
+  if (m.closedStalls > old.closed) out.push('Algún puesto del mercado ha cerrado.');
+  const fresh = GOODS.filter((g) => m.stock[g] >= 2 && !old.goods.includes(g));
+  const gone = old.goods.filter((g) => m.stock[g as Good] < 0.5);
+  if (fresh.length) out.push(`En el mercado ahora hay ${GOOD[fresh[0]].name}, que antes no había.`);
+  if (gone.length) out.push(`Ya no se encuentra ${GOOD[gone[0] as Good].name} en el mercado.`);
+  if (m.prosperity > old.prosperity + 0.12) out.push('Se nota más vida: más gente trabajando, más ruido en la plaza.');
+  else if (m.prosperity < old.prosperity - 0.12) out.push('El pueblo parece más apagado que cuando te fuiste.');
+  return out.slice(0, 4).map((x) => `Al volver: ${x.charAt(0).toLowerCase()}${x.slice(1)}`);
 }
 
 /** El pueblo de un vistazo: para describir cómo está (sin cifras). */

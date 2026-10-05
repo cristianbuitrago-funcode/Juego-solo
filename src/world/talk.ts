@@ -11,7 +11,7 @@ import { ensureLife } from './life';
 import { routineOf } from './routines';
 import type { Folk } from './types';
 import { hourOf, weatherOf } from './clock';
-import { foodPrice, stallLook } from './economy';
+import { foodPrice, GOOD, GOODS, marketOf, stallLook } from './economy';
 import { chatter, learnFact, rumorsKnownBy } from './gossip';
 import { EMOTION_WORD, emotionOf, societyOf, trait } from './society';
 
@@ -92,6 +92,19 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
     const lost = f.p.mourning !== undefined && f.p.mourning >= w.day ? f.p.mem.find((m) => m.kind === 'muerte') : undefined;
     const look = stallLook(w, r.id);
     const festLine = fest && fest.kind !== 'funeral' ? (fest.kind === 'boda' ? `¿Vendrás esta tarde a la boda de ${fest.who.map((id) => life.folk.find((x) => x.id === id)?.name).join(' y ')}? Habrá música.` : 'Esta noche es la fiesta de la cosecha. ¡Ni se te ocurra perdértela!') : undefined;
+    // Los comerciantes saben de otros mercados (por las caravanas): lo cuentan si se fían.
+    if (f.role === 'comerciante' && open > 0.35) {
+      const m = marketOf(w, r.id);
+      const news = Object.entries(m.news).filter(([id]) => Number(id) !== r.id).sort((a, b) => b[1].day - a[1].day)[0];
+      if (news) {
+        const there = Number(news[0]);
+        const g = GOODS.filter((x) => news[1].price[x] !== undefined).sort((a, b) => news[1].price[b]! / m.price[b] - news[1].price[a]! / m.price[a])[0];
+        if (g && news[1].price[g]! > m.price[g] * 1.4) {
+          lines.push(`Dicen los carreteros que en ${w.regions[there].name} pagan el ${GOOD[g].name} a precio de oro. Aquí sobra.`);
+          learned.push(`En ${w.regions[there].name}, ${GOOD[g].name} caro`);
+        }
+      }
+    }
     lines.push(...chatter(w, f, ctx.rng, hourOf(life.clock), weatherOf(w, w.day), { price: foodPrice(w, r.id), scarce: look === 'escaso' || look === 'vacio', festival: festLine, mourningFor: lost?.text.replace(/^Murió /, '').replace(/\.$/, '') }));
   }
 

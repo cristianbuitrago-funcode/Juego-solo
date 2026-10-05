@@ -793,8 +793,8 @@ export function keyBuilding(kind: string, st: Style, extra = ''): Sprite {
 // ---------------------------------------------------------------------------
 // Mercado, campamentos, fronteras
 // ---------------------------------------------------------------------------
-export function stall(full: boolean, color: string, v = 0): Sprite {
-  return makeK(`st:${full}:${color}:${v % 3}`, 46, 46, 23, 43, 0.8, (g) => {
+export function stall(full: boolean, color: string, v = 0, goods?: string[]): Sprite {
+  return makeK(`st:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 46, 46, 23, 43, 0.8, (g) => {
     g0 = g;
     E(23, 43, 20, 4, 'rgba(0,0,0,0.22)');
     R(4, 14, 3, 29, '#7a5532');
@@ -805,9 +805,11 @@ export function stall(full: boolean, color: string, v = 0): Sprite {
     for (let i = 0; i < 6; i++) poly([i * 7.7, 16, i * 7.7 + 7.7, 16, i * 7.7 + 6.5, 4, i * 7.7 + 1.2, 4], i % 2 ? color : '#f0e8d8');
     for (let i = 0; i < 6; i++) E(i * 7.7 + 3.8, 16, 3.8, 2.2, i % 2 ? shade(color, 0.85) : '#e0d8c8');
     if (full) {
-      const goods = [['#d9a441', '#c06a2a', '#e0c070'], ['#a8c25a', '#6a9a3a', '#d9473a'], ['#c0503a', '#8a4a8a', '#e8d8a0']][v % 3];
-      for (let i = 0; i < 6; i++) E(7 + i * 6.4, 26.5, 3.4, 2.8, goods[i % 3]);
-      R(30, 18, 10, 9, '#a07a3e');
+      // Lo que se vende de verdad (o, si no se sabe, un surtido).
+      const shown = goods?.length ? goods : [['#d9a441', '#c06a2a', '#e0c070'], ['#a8c25a', '#6a9a3a', '#d9473a'], ['#c0503a', '#8a4a8a', '#e8d8a0']][v % 3];
+      const n = goods ? Math.min(6, goods.length * 2) : 6;
+      for (let i = 0; i < n; i++) E(7 + i * 6.4, 26.5, 3.4, 2.8, shown[i % shown.length]);
+      if (!goods || goods.length > 2) R(30, 18, 10, 9, '#a07a3e');
     } else {
       R(8, 22, 10, 6, '#6a4a2a');
       R(26, 23, 8, 5, '#5a3a22');

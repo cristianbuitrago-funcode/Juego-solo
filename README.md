@@ -100,6 +100,11 @@ src/
 │   ├── economy.ts         Mercado local: producción, consumo, inventario y precios
 │   ├── gossip.ts          Rumores que se deforman, versiones, conversación dinámica
 │   ├── arcs.ts            Conflictos largos entre vecinos (≈100 días) y cómo intervenir
+│   ├── farming.ts         Clima, sequías, semillas, siembra y cosecha
+│   ├── trade.ts           Caravanas entre pueblos, distancia, riesgo, noticias de precios
+│   ├── population.ts      Nacimientos, vivienda, migraciones y regresos, oficios por salario
+│   ├── business.ts        El jugador en la economía: carga, compraventa, negocios, encargos
+│   ├── marketview.ts      Lo que se ve del mercado (sin números)
 │   ├── folk.ts            Vecinos con memoria y disposición a ayudar
 │   ├── routines.ts        Rutinas diarias según la hora y el estado de la región
 │   ├── talk.ts            Conversaciones (reconocimiento, rumores, mentiras, historia oculta)
@@ -286,6 +291,23 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - **El mundo no se detiene.** Si te quedas días sin salir, el pueblo sigue. Al volver te ponen al día («Mientras no estabas…»). Simulación por distancia: tu región y tu pueblo con todo detalle; las visitadas, con detalle medio; el resto, abstracta.
 - **Lo que se ve:** expresiones que salen de la emoción de cada uno, frases sueltas al pasar junto a quienes charlan, gritos de quienes discuten, la plaza llena en las bodas, el templo en los funerales, los puestos cerrados cuando no hay qué vender.
 - Código: `src/world/society.ts` (personas, lazos, memoria), `social.ts` (el día a día), `economy.ts`, `gossip.ts` (rumores, conversación), `arcs.ts` (conflictos largos).
+
+**Fase 3 — simulación del mundo.** El mundo produce, consume, comercia, crece, sufre crisis y cambia solo. El jugador entra desde abajo, sin poder político.
+
+- **17 bienes**: trigo, verdura, fruta, carne, pescado · madera, piedra, hierro, lana · herramientas, ropa, armas, muebles, medicinas · semillas · sal y ámbar (recursos regionales).
+- **Cadenas de producción**: mina → hierro → herrero → herramientas → campesino → trigo → mercado → familias; bosque → leñador → madera → carpintero → muebles; rebaño → lana → tejedor → ropa; sanadora → medicinas. Sin herramientas se trabaja peor; sin hierro, el herrero no forja.
+- **Agricultura y clima**: tierra (fertilidad), humedad (lluvia diaria de cada valle, riego del río), semillas guardadas, siembra en primavera, crecimiento en verano, cosecha en otoño, barbecho en invierno. Las sequías (que surgen solas y afectan a una comarca), las tormentas y la falta de semilla o de brazos dan malas cosechas; con hambre, las familias se comen la semilla y el año siguiente se siembra menos.
+- **Consumo según el bolsillo**: las casas ricas comen carne y fruta, compran ropa y muebles; las pobres, pan y verdura. Con los graneros llenos, las arcas pagan el pan de quien no puede.
+- **Dinero que circula de verdad**: el mercado paga a los productores con la caja del comercio; las familias compran y devuelven el dinero a la caja; una tasa del mercado llena las arcas, que pagan a guardias y consejo y financian obras. Los comerciantes con ahorros reinvierten. Nadie cobra dinero que no exista.
+- **Precios** según oferta, demanda, guerra, aislamiento y distancia; **salarios reales** por oficio (lo que gana cada uno); la gente **cambia de oficio** cuando en lo suyo ya no se gana la vida (el campo se juzga por lo que vale el grano, no por la semana); oficios nuevos: leñador y tejedor (además de posadero, minero y carpintero).
+- **Comercio entre pueblos**: los comerciantes buscan oportunidades con lo que saben de otros mercados (noticias que traen las caravanas, a veces viejas); los carreteros llevan excedentes por las rutas abiertas. La distancia y el peso encarecen; los caminos cerrados lo impiden (las caravanas esperan o cambian de ruta); la guerra y los bandidos (que aparecen con el hambre) las asaltan. Cada caravana existe: sale, recorre el camino, se puede hablar con quien la lleva, comprarle, o encontrar sus restos tras un asalto.
+- **Población, vivienda y migración**: nacimientos y muertes según comida y casas; las casas nuevas necesitan madera y piedra; la gente se va de donde se vive peor a donde se vive mejor (el hambre empuja), familias con nombre incluidas, y **vuelve** cuando su tierra se recupera (la tierra con semilla y sin manos atrae a los campesinos). Llegan trabajadores nuevos cuando hay oportunidades.
+- **Prosperidad interna** (comida, hambre, empleo, dinero, seguridad, vivienda, comercio) que nunca se muestra como número.
+- **Eventos económicos que surgen solos**: quiebras, minas nuevas, cosechas excepcionales y malas, subidas y bajadas de precios, caravanas asaltadas, rutas comerciales nuevas, puestos cerrados, llegada de trabajadores, bandidos.
+- **El jugador en la economía**: comprar y vender (y al hacerlo mueve los precios), carga a pie, con mula o con carreta, encargos de transporte, preguntar precios (se apuntan en el **cuaderno de precios**, con su antigüedad: el conocimiento es ventaja), repartir comida o semilla, abrir un **puesto**, arrendar un **campo** o montar un **transporte**, contratar a vecinos (que dejan el trabajo si no les pagas). Taller, herrería y posada quedan preparados para más adelante. Las consecuencias no se anuncian: si te llevas todo el hierro, días después el herrero no forja y el pueblo lo comenta.
+- **Lo que se ve**: puestos con la mercancía que hay de verdad, puestos cerrados, carretas en los caminos con su carga, campos sin sembrar o agrietados, casas nuevas o abandonadas, menos gente por la calle, caras de preocupación. Al volver tras una ausencia: «La comida está mucho más cara que cuando te fuiste», «Faltan caras conocidas», «Han levantado casas nuevas»…
+- **La prueba** (en `tests/world.test.ts`): una sequía en el pueblo hunde la cosecha, dispara los precios, trae hambre y emigración y vacía el pueblo; si el jugador trae semilla antes de la siembra, la cosecha vuelve, los precios bajan, la gente vuelve y el pueblo prospera. Nada de eso está escrito como misión: lo deciden los sistemas.
+- Código: `src/world/economy.ts`, `farming.ts`, `trade.ts`, `population.ts`, `business.ts`, `marketview.ts` y `src/ui/market.ts`.
 
 **Versión 4 — pixel art.** Toda la parte visual pasa a un lenguaje único de pixel art (referencias de RPG de pixel art de alta calidad, sin copiar ningún diseño):
 

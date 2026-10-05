@@ -42,7 +42,9 @@ export type FolkRole =
   | 'exploradora'
   | 'posadero'
   | 'minero'
-  | 'carpintero';
+  | 'carpintero'
+  | 'lenador'
+  | 'tejedor';
 
 export interface FolkMemory {
   day: number;
