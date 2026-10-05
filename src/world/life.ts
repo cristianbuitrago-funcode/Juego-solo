@@ -11,7 +11,9 @@ import { dayOf, yearOf } from './clock';
 import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember, ROLE_TITLE } from './folk';
 import { setupPrologue } from './prologue';
 import { chooseParent, comingOfAge, mournDeaths, planToday, societyDay, startFirstStory, welcomeBirth } from './social';
-import { ensurePeople, logEvent } from './society';
+import { ensurePeople, folkById, logEvent, partnerOf } from './society';
+import { educate, inheritTraits } from './generations';
+import { generationsDay } from './succession';
 import { marketOf } from './economy';
 import { walkable } from './terrain';
 import { findPath } from './path';
@@ -181,9 +183,12 @@ export function dailyLife(w: WorldState): void {
   // La sociedad: economía, necesidades, emociones, lazos, acontecimientos, rumores, conflictos.
   societyDay(w);
   ageAvatar(ctx, life);
+  // Fase 5: salud, muerte con causa, familia, herencias, archivo histórico, casas del mundo.
+  const gnews = generationsDay(w);
   const news = updateStanding(w);
   const id = life.identity;
   if (id) for (const n of news) (id.inbox ??= []).push(n.text);
+  if (id && gnews.length) (id.inbox ??= []).push(...gnews.slice(0, 3));
   life.caravans = life.caravans.filter((c) => c.arrive > life.clock);
   life.encounters = life.encounters.filter((e) => !e.resolved && w.day - e.day < 2);
   // dailyLife usa su propio RNG: no altera la secuencia aleatoria del motor.
@@ -277,6 +282,7 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
     if ((w.day - f.born) % DAYS_PER_YEAR === 0 && w.day !== f.born) {
       f.age++;
       if (f.role === 'nino' && f.age >= 15) {
+        educate(w, f); // lo que aprendió en casa
         f.role = comingOfAge(w, rng, f);
         f.p?.jobs.push({ role: f.role, from: w.day });
         if (f.p) logEvent(w, f.regionId, 'oficio', `${f.name} ya es mayor: empieza a trabajar de ${ROLE_TITLE[f.role]}.`, [f.id]);
@@ -289,6 +295,7 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
     if (r.flags.fiebre) p += 0.004;
     if (rng.chance(p)) {
       f.alive = false;
+      f.died = w.day;
       died.push(f);
       const cause = r.flags.guerra?.causeId ?? r.flags.hambre?.causeId ?? r.flags.fiebre?.causeId;
       const how = f.age > 64 && !cause ? 'de vieja' : r.flags.guerra ? 'en la guerra' : r.flags.hambre ? 'durante la escasez' : r.flags.fiebre ? 'de fiebre' : '';
@@ -318,6 +325,10 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
       baby.born = w.day;
       life.folk.push(baby);
       welcomeBirth(w, baby, parent);
+      // Se parece a sus padres (en parte) y pertenece a su casa.
+      const partner = parent ? folkById(w, partnerOf(w, parent.id) ?? '') : undefined;
+      if (parent) inheritTraits(w, baby, [parent, ...(partner ? [partner] : [])]);
+      baby.houseId = parent?.houseId;
       if (parent && parent.lastMet >= 0) record(ctx, { kind: 'personaje', text: `A ${parent.name}, de ${r.name}, le ha nacido un hijo: ${baby.name}.`, regions: [r.id], known: true });
     }
   }
@@ -336,9 +347,10 @@ function ageAvatar(ctx: Ctx, life: Life): void {
   const p = life.player;
   if ((w.day - p.birthDay) % DAYS_PER_YEAR !== 0 || w.day === p.birthDay) return;
   p.age++;
-  for (const k of p.family) k.age++;
-  // Puede nacer alguien más en la familia (si ha echado raíces en algún sitio).
-  const rooted = life.identity?.mode === 'gobernante' || (life.identity?.housed && (life.identity.standing[w.player.home] ?? 0) >= 2);
+  for (const k of p.family) if (!k.folkId) k.age++;
+  if (life.identity?.mode !== 'gobernante') return; // Fase 5: la familia, la salud y la muerte del forastero van en generations.ts
+  // Partidas antiguas (gobernante): familia abstracta y riesgo por edad.
+  const rooted = true;
   if (p.age < 46 && rooted && rng.chance(0.18)) {
     const name = personName(rng, PLAYER_CULTURE.syllables, new Set(p.family.map((k) => k.name)));
     const rel = rng.chance(0.5) ? 'hija' : 'hijo';

@@ -16,6 +16,8 @@ import { playerEco } from './business';
 import { adjustRep, orgsOf } from './orgs';
 import { govOf, recordDecision } from './politics';
 import { relOf, signTreaty, treatiesOf } from './diplomacy';
+import { die, healthOf, injure } from './generations';
+import { createHeirloom } from './estate';
 import { nid, polOf, type Army, type Battle, type Terrain, type War } from './polstate';
 
 /**
@@ -244,6 +246,7 @@ function killFolk(w: WorldState, rng: Rng, regionId: number, war: War): void {
   const f = pool.length ? rng.pick(pool) : undefined;
   if (!f) return;
   f.alive = false;
+  f.died = w.day;
   logEvent(w, regionId, 'muerte', `${f.name} ha muerto en la guerra contra ${w.regions[enemyOf(war, regionId)].name}.`, [f.id]);
   mournDeaths(w, [f]);
 }
@@ -324,7 +327,14 @@ export function enlist(w: WorldState, war: War, side: number): { lines: string[]
   id.needs.fatigue = Math.min(1, id.needs.fatigue + 0.45);
   deed(id, 'combatir');
   const hurt = !rng.chance(chanceOf(id, 'combate', 1.5));
-  if (hurt) id.needs.hunger = Math.min(1, id.needs.hunger + 0.2);
+  createHeirloom(w, 'espada', `La espada de ${w.life!.player.name}`, `La empuñó por primera vez en la guerra entre ${w.regions[war.a].name} y ${w.regions[war.b].name}.`);
+  if (hurt) {
+    id.needs.hunger = Math.min(1, id.needs.hunger + 0.2);
+    // Una herida de verdad (y, si el cuerpo ya no aguanta, la muerte en el campo).
+    const sev = rng.range(0.25, 0.7) * (1.4 - (id.vigor?.body ?? 1) * 0.4);
+    injure(w, sev, `una batalla en ${w.regions[war.front].name}`);
+    if (sev > 0.6 && healthOf(w).value < 0.35 && rng.chance(0.35)) die(w, 'guerra', `en la batalla de ${w.regions[war.front].name}`);
+  }
   // Pelear la batalla ahora mismo.
   const b = battle(w, rng, war);
   b.player = side === b.winner ? 'victoria' : 'derrota';

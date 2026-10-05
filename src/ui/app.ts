@@ -32,7 +32,8 @@ import { renderMenu, objectivesDialog, renderSettingsInline, savesDialog } from 
 import { openRegionSheet } from './screens/region';
 import { renderResearch } from './screens/research';
 import { renderFamily } from './screens/family';
-import { approachDialog, arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
+import { approachDialog, arrive, dialogue, focusButtons, showFragment } from './world-dialogs';
+import { successionScreen } from './generations';
 
 export type View = 'mapa' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
@@ -46,9 +47,9 @@ export class App {
   settings: Settings = loadSettings();
   scene: WorldScene | null = null;
   lastReport: DayReport | null = null;
-  chronicleTab: 'vida' | 'dias' | 'cadenas' = 'vida';
+  chronicleTab: 'vida' | 'dias' | 'cadenas' | 'historia' = 'vida';
   waypoint: number | null = null;
-  private stage: HTMLElement | null = null;
+  stage: HTMLElement | null = null;
   private hud: HTMLElement | null = null;
   private prompt: HTMLElement | null = null;
   private whisperBox: HTMLElement | null = null;
@@ -328,7 +329,7 @@ export class App {
     saveGame(w, 'auto');
     this.scene?.setWorld(w);
     if (report.ended) window.setTimeout(() => showEnd(this), 300);
-    if (ensureLife(w).player.pendingDeath) window.setTimeout(() => succession(this), 600);
+    if (ensureLife(w).player.pendingDeath) window.setTimeout(() => successionScreen(this), 600);
     this.renderHud();
     if (this.diary) this.renderDiary();
   }
@@ -621,6 +622,8 @@ export class App {
   /** Redibuja lo que depende del estado del mundo. */
   refresh(): void {
     if (!this.w) return;
+    // La muerte puede llegar a mitad del día (una batalla): la historia continúa igual.
+    if (ensureLife(this.w).player.pendingDeath && !this.modals.length) window.setTimeout(() => successionScreen(this), 400);
     this.renderHud();
     if (this.diary) this.renderDiary();
     if (this.focus) this.setFocus(this.focus);

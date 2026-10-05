@@ -159,6 +159,7 @@ export function crateSpotOf(w: WorldState): Pt {
   const l = getLayout(w);
   const v = l.villages[w.player.home];
   const st = v.keys.find((k) => k.kind === 'almacen') ?? v.keys[0];
+  if (!st) return nearestWalkable(l, v.cx + 2, v.cy + 2);
   const cart = v.props.filter((pr) => pr.kind === 'carro').sort((a, b) => Math.hypot(a.x - st.x, a.y - st.y) - Math.hypot(b.x - st.x, b.y - st.y))[0];
   if (cart && Math.hypot(cart.x - st.x, cart.y - st.y) < 9) return nearestWalkable(l, cart.x + 1.4, cart.y + 0.6);
   return nearestWalkable(l, st.x + st.w + 1.5, st.y + st.h + 1.5);

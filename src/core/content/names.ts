@@ -31,6 +31,16 @@ export function personName(rng: Rng, syllables: string[], used: Set<string>): st
       return n;
     }
   }
+  // Si ya se han usado los nombres cortos, se prueban nombres más largos antes de numerar.
+  for (let i = 0; i < 80; i++) {
+    let m = '';
+    for (let p = 0; p < 3 + (i % 2); p++) m += rng.pick(syllables);
+    m = m.charAt(0).toUpperCase() + m.slice(1);
+    if (m.length <= 12 && !used.has(m)) {
+      used.add(m);
+      return m;
+    }
+  }
   const n = `Ana${used.size}`;
   used.add(n);
   return n;

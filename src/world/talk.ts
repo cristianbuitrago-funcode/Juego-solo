@@ -1,4 +1,7 @@
 import { politicalTalk } from './poltalk';
+import { ancestorRel, generationalLine, talkedWith } from './generations';
+import { familyTalk, recognizeHeirloom } from './estate';
+import { legendFor } from './history';
 import { record, revealRegionHistory } from '../core/chronicle';
 import { hearsay } from '../core/intel';
 import { mysteryHooks } from '../core/systems/mystery';
@@ -51,8 +54,7 @@ function ancestorWord(w: WorldState, gen: number): string {
   const life = ensureLife(w);
   const a = life.player.lineage[gen - 1];
   if (!a) return 'alguien de tu familia';
-  const rel = a.relation;
-  return rel === 'aprendiz' ? `${a.name}, tu maestro` : `${a.name}, ${rel === 'hija' || rel === 'sobrina' ? 'tu madre' : 'tu padre'}`;
+  return `${a.name}, ${ancestorRel(w, gen)}`;
 }
 
 /** Lo que dice un vecino. Tiene efectos: conoces rumores, historia oculta y datos de oídas. */
@@ -87,6 +89,13 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
     }
   } else lines.push(pick(ctx, ROLE_GREET[f.role] ?? ['¿Sí?']));
 
+  // 1a) El tiempo (Fase 5): niños que crecieron y te recuerdan, viejos que conocieron a tus antepasados,
+  // la fama de tu familia, objetos que alguien reconoce, historias que se cuentan.
+  talkedWith(w, f);
+  if (life.gens && open > 0.25) {
+    const gl = generationalLine(w, f, ctx.rng) ?? recognizeHeirloom(w, f) ?? (ctx.rng.chance(0.4) ? familyTalk(w, f, ctx.rng) : null) ?? (f.age >= 45 && ctx.rng.chance(0.35) ? legendFor(w, f) : null);
+    if (gl && !lines.some((l) => l.includes('Conocí a'))) lines.push(gl);
+  }
   // 1b) Su propia vida: ánimo, familia, amistades, lo que quiere, la hora, el clima, los precios.
   if (f.p) {
     const fest = societyOf(w).festivals.find((x) => x.regionId === r.id && x.day === w.day);

@@ -8,6 +8,7 @@ import { GOOD } from '../../world/economy';
 import { priceBook } from '../market';
 import { emotionOf, playerRegion } from '../../world/society';
 import { forecastDialog, politicsSections, secretsDialog } from '../politics';
+import { lifeSections } from '../generations';
 import { showFragment } from '../world-dialogs';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
@@ -75,6 +76,7 @@ export function renderFamily(app: App): Node[] {
           ...id.items.map((it) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '🔱'), h('div', { class: 'txt' }, it === 'colgante' ? 'Un colgante con un símbolo' : it, h('div', null, h('button', { class: 'btn small', onclick: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(app, ev); } }, 'Mirarlo'))))),
         )
       : null,
+    ...lifeSections(app),
     ...politicsSections(app),
     life.politics ? h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => forecastDialog(app, playerRegion(w)) }, '🧪 Hacer una predicción'), h('button', { class: 'btn small', onclick: () => secretsDialog(app) }, '🗝 Lo que sabes')) : null,
     metFolk.length ? section('Gente que conoces', ...people(app)) : null,
@@ -83,7 +85,7 @@ export function renderFamily(app: App): Node[] {
     lookEditor(app),
     section('Familia',
       p.family.length ? null : empty(id.past?.family && id.fragments.some((f) => f.id === 'sueno') ? 'Quizá tuviste una familia. No la recuerdas.' : 'No tienes familia.'),
-      ...p.family.map((k) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, k.relation === 'aprendiz' ? '🧑‍🎓' : '🧒'), h('div', { class: 'txt' }, `${k.name}, ${k.relation}`, h('div', { class: 'tiny' }, `${k.age} años${hs.includes(k) ? ' · podría sucederte' : ''}`)))),
+      ...p.family.map((k) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, k.relation === 'aprendiz' ? '🧑‍🎓' : k.relation === 'pareja' ? '💞' : k.age >= 18 ? '🧑' : '🧒'), h('div', { class: 'txt' }, `${k.name}, ${k.relation}`, h('div', { class: 'tiny' }, `${k.age} años${hs.includes(k) ? ' · podría sucederte' : ''}`)))),
     ),
     p.lineage.length
       ? section('Quienes vinieron antes', ...p.lineage.map((a) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '🕯'), h('div', { class: 'txt' }, `${a.name} · «${a.title}»`, h('div', { class: 'tiny' }, `del año ${yearOf(a.fromDay)} al año ${yearOf(a.toDay)}`)))))
