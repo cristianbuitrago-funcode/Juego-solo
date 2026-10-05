@@ -1,6 +1,7 @@
 import type { WorldState } from '../core/types';
 import type { Folk } from '../world/types';
 import type { Action, Expr } from './human';
+import { emotionOf, trait } from '../world/society';
 
 /**
  * Del estado del mundo a la cara y el cuerpo. La expresión de cada vecino
@@ -19,6 +20,21 @@ export function moodOf(w: WorldState, f: Folk): Expr {
   }
   if (f.resentment > 0.6) return 'hostil';
   if (f.fear > 0.6) return 'miedo';
+  // Su propia vida: lo que siente por sus necesidades, su gente y lo que le ha pasado.
+  if (f.p) {
+    const day = w.day;
+    const plan = f.p.plans.find((p) => p.day === day && /discute|pelea/.test(p.activity));
+    const h = w.life ? (6 + w.life.clock / 60) % 24 : 12;
+    if (plan && h >= plan.from && h < plan.to) return 'enfadado';
+    const e = emotionOf(f);
+    if (e === 'felicidad') return f.p.emo.felicidad > 0.75 ? 'feliz' : f.resentment > 0.4 ? 'desconfianza' : 'feliz';
+    if (e === 'tristeza') return 'triste';
+    if (e === 'miedo') return 'miedo';
+    if (e === 'enojo') return f.p.emo.enojo > 0.7 ? 'hostil' : 'enfadado';
+    if (e === 'estres') return 'preocupado';
+    if (f.resentment > 0.4) return 'desconfianza';
+    return trait(f, 'desconfiado') > 75 ? 'desconfianza' : 'neutral';
+  }
   if (r.flags.guerra) return f.role === 'guardia' ? 'enfadado' : f.age > 55 || f.role === 'nino' ? 'triste' : 'miedo';
   if (r.flags.hambre) return f.role === 'nino' ? 'triste' : 'preocupado';
   if (r.flags.fiebre) return 'triste';
@@ -32,14 +48,14 @@ export function moodOf(w: WorldState, f: Folk): Expr {
 
 /** Lo que hace el cuerpo según la actividad de la rutina (en palabras). */
 export function actionOf(activity: string): Action {
-  if (/forja|martill/.test(activity)) return 'hammer';
-  if (/campo|siembra|cosecha|taller|remedios/.test(activity)) return 'work';
+  if (/forja|martill|pica/.test(activity)) return 'hammer';
+  if (/campo|siembra|cosecha|taller|remedios|ayuda a su/.test(activity)) return 'work';
   if (/redes|pesca/.test(activity)) return 'fish';
   if (/cola|cuenta sus|vacío|no ha abierto/.test(activity)) return 'cross';
-  if (/charla|discute|historias|tratos|recibe|pide pan/.test(activity)) return 'talk';
+  if (/charla|discute|pelea|historias|tratos|recibe|pide pan|celebra|sirve/.test(activity)) return 'talk';
   if (/puesto/.test(activity)) return 'point';
   if (/vigila|ronda|patrulla|vaga/.test(activity)) return 'look';
   if (/sol|banco/.test(activity)) return 'sit';
-  if (/reza|bebe/.test(activity)) return 'listen';
+  if (/reza|bebe|despide/.test(activity)) return 'listen';
   return 'idle';
 }

@@ -16,6 +16,15 @@ import { examinePlace, listenTavern } from '../src/world/presence';
 import { roadPath } from '../src/world/roadnet';
 import { acequiaOptions, acequiaResolve, logDay, prologueBlocks, prologueChoose, prologueDawn, prologueItems, prologueOf, prologueScene, prologueTick, recap } from '../src/world/prologue';
 import { routineOf } from '../src/world/routines';
+import { arcAct, arcChoices } from '../src/world/arcs';
+import { FOODS, foodIndex, foodStock, GOOD, marketOf } from '../src/world/economy';
+import { seedRumor, spreadRumors } from '../src/world/gossip';
+import { catchUp, mournDeaths } from '../src/world/social';
+import { donate, openBusiness, playerBuy, playerEco, playerSell, stockBusiness } from '../src/world/business';
+import { farmOf, startDrought } from '../src/world/farming';
+import { convoyPositions, tradeOf } from '../src/world/trade';
+import { fadeMemories, kinOf, memorize } from '../src/world/society';
+import { Rng } from '../src/core/rng';
 import { giveTo, talkToFolk } from '../src/world/talk';
 import { idx } from '../src/world/terrain';
 import { T } from '../src/world/types';
@@ -418,6 +427,11 @@ describe('el prólogo: los primeros días', () => {
     prologueTick(w, v.cx, v.cy, at(1, 10));
     expect(p.crate).toBe('lost');
     expect(prologueItems(w).some((i) => i.id === 'caja')).toBe(true);
+    // Está donde dice el comerciante: junto al almacén, cerca de la plaza.
+    const store = getLayout(w).villages[w.player.home].keys.find((k) => k.kind === 'almacen')!;
+    expect(Math.hypot(p.crateSpot.x - (store.x + store.w / 2), p.crateSpot.y - (store.y + store.h / 2))).toBeLessThan(10);
+    expect(prologueChoose(w, 'merchant:lost', 'donde')!.lines[0]).toMatch(/de la plaza/);
+    expect(p.objective).toMatch(/caja/);
     prologueChoose(w, 'crate', 'vender');
     expect(p.crate).toBe('sold');
     w.day = 2;
@@ -474,5 +488,275 @@ describe('el prólogo: los primeros días', () => {
     expect(lines.join(' ')).toMatch(/decisión/);
     const back = importGame(exportGame(w))!;
     expect(back.life!.prologue!.bag.opened).toBe(true);
+  });
+});
+
+describe('Fase 2: el pueblo vive solo', () => {
+  it('cada vecino es una persona distinta, con familia y lazos', () => {
+    const w = world(501);
+    const life = w.life!;
+    const folk = life.folk.filter((f) => f.alive);
+    expect(folk.every((f) => f.p && f.gender)).toBe(true);
+    const kind = new Set(folk.map((f) => Math.round(f.p!.t.amable / 20)));
+    expect(kind.size).toBeGreaterThan(2);
+    const ties = Object.values(life.society!.ties);
+    expect(ties.some((t) => t.kin === 'pareja')).toBe(true);
+    expect(ties.some((t) => t.kin === 'progenitor')).toBe(true);
+    expect(ties.some((t) => t.aff >= 30)).toBe(true);
+    expect(ties.some((t) => t.aff < 0)).toBe(true);
+    expect(folk.some((f) => f.p!.tier === 1) && folk.some((f) => f.p!.tier === 2)).toBe(true);
+    // Desde el día 1 hay una historia en marcha con el comerciante del prólogo.
+    const arc = life.society!.arcs[0];
+    expect(arc).toBeTruthy();
+    expect(arc.a).toBe(life.prologue!.merchant);
+  });
+
+  it('cien días sin el jugador: discuten, cuentan versiones, cambian de oficio, el pueblo habla, las familias se implican y se resuelve', () => {
+    const w = world(502);
+    const life = w.life!;
+    const s = life.society!;
+    const arc = s.arcs[0];
+    const prices: number[] = [];
+    const stock: number[] = [];
+    const before = JSON.stringify(Object.values(s.ties).map((t) => Math.round(t.aff)));
+    let versions: typeof s.rumors = [];
+    for (let i = 0; i < 110; i++) {
+      advanceDay(w);
+      if (w.day === 22) versions = s.rumors.filter((r) => r.arc === arc.id && r.kind === 'version');
+      const m = s.market[w.player.home];
+      prices.push(foodIndex(m));
+      stock.push(Math.round(foodStock(m)));
+    }
+    // El conflicto ha recorrido sus etapas sin que nadie intervenga.
+    expect(arc.log.find((l) => /discutieron/.test(l.text))!.day).toBeLessThanOrEqual(10);
+    expect(arc.log.some((l) => /versión/.test(l.text))).toBe(true);
+    expect(arc.log.some((l) => /pueblo habla/.test(l.text))).toBe(true);
+    expect(arc.log.some((l) => /familia/i.test(l.text))).toBe(true);
+    expect(arc.outcome).toBeTruthy();
+    // Dos versiones distintas del mismo pleito circulan por el pueblo.
+    expect(versions.length).toBe(2);
+    expect(versions[0].versions[0]).not.toBe(versions[1].versions[0]);
+    // Los rumores se deforman al pasar de boca en boca.
+    expect(s.rumors.some((r) => Object.values(r.knownBy).some((v) => v > 0))).toBe(true);
+    // El mundo no se ha congelado: acontecimientos variados, economía que se mueve, relaciones que cambian.
+    const kinds = new Set(s.events.map((e) => e.kind));
+    expect(kinds.size).toBeGreaterThanOrEqual(6);
+    expect(Math.max(...prices)).toBeGreaterThan(Math.min(...prices));
+    expect(new Set(stock).size).toBeGreaterThan(5);
+    expect(JSON.stringify(Object.values(s.ties).map((t) => Math.round(t.aff)))).not.toBe(before);
+    expect(life.folk.some((f) => (f.p?.jobs.length ?? 0) > 1)).toBe(true);
+  });
+
+  it('el jugador puede intervenir: escuchar las dos versiones y mediar enfría el conflicto', () => {
+    const w = world(503);
+    const s = w.life!.society!;
+    const arc = s.arcs[0];
+    arc.stage = 2;
+    const A = w.life!.folk.find((f) => f.id === arc.a)!;
+    const B = w.life!.folk.find((f) => f.id === arc.b)!;
+    const lucky = { chance: () => true, next: () => 0, range: (a: number) => a, int: (a: number) => a, pick: <T,>(x: T[]) => x[0] } as never;
+    expect(arcChoices(w, A).map((c) => c.id)).toContain('escuchar');
+    arcAct(w, A, 'escuchar', lucky, () => 2);
+    arcAct(w, B, 'escuchar', lucky, () => 2);
+    expect(arcChoices(w, A).map((c) => c.id)).toContain('mediar');
+    const heat = arc.heat;
+    const res = arcAct(w, A, 'mediar', lucky, () => 3);
+    expect(arc.heat).toBeLessThan(heat);
+    expect(res.rumor?.kind).toBe('p_media');
+  });
+
+  it('información imperfecta: cada uno cree su versión, y un recuerdo menor se olvida', () => {
+    const w = world(504);
+    const life = w.life!;
+    const people = life.folk.filter((f) => f.alive && f.regionId === w.player.home);
+    const [a, b] = people;
+    const r = seedRumor(w, { regionId: w.player.home, kind: 'discusion', subject: a.id, target: b.id, witnesses: [a.id, b.id] });
+    for (let i = 0; i < 15; i++) spreadRumors(w, new Rng(900 + i), w.player.home, people);
+    expect(Object.keys(r.knownBy).length).toBeGreaterThan(3);
+    const minor = memorize(w, people[2], { kind: 'charla', about: people[3].id, text: 'Charlamos.', w: 0.1, src: 'propio' })!;
+    const grave = memorize(w, people[2], { kind: 'traicion', about: people[3].id, text: 'Me traicionó.', w: -0.9, src: 'propio' })!;
+    for (let i = 0; i < 60; i++) fadeMemories(w, people[2]);
+    expect(people[2].p!.mem.includes(minor)).toBe(false);
+    expect(people[2].p!.mem.includes(grave)).toBe(true);
+  });
+
+  it('lo que hace el jugador se cuenta, y la familia viene a preguntarle', () => {
+    const w = world(505);
+    const life = w.life!;
+    const f = life.folk.find((x) => x.alive && x.regionId === w.player.home && kinOf(w, x.id).some((k) => life.folk.find((o) => o.id === k.id)!.age >= 14))!;
+    giveTo(w, f.id, 'comida'); // sin comida no da nada
+    life.player.inventory.comida = 2;
+    giveTo(w, f.id, 'comida');
+    advanceDay(w);
+    const s = life.society!;
+    const rumor = s.rumors.find((r) => r.subject === 'jugador' && r.target === f.id);
+    expect(rumor).toBeTruthy();
+    expect(s.approaches.some((a) => a.kind === 'pariente' || a.kind === 'gracias')).toBe(true);
+  });
+
+  it('las conversaciones cambian con la vida de cada uno (precios, luto, ánimo)', () => {
+    const w = world(506);
+    const life = w.life!;
+    const merchant = life.folk.find((f) => f.alive && f.role === 'comerciante' && f.regionId === w.player.home)!;
+    const m = marketOf(w, w.player.home);
+    for (const g of FOODS) (m.stock[g] = 0), (m.price[g] = 4 * GOOD[g].base);
+    merchant.trust = 0.9;
+    const lines = Array.from({ length: 6 }, () => talkToFolk(w, merchant.id).lines.join(' ')).join(' ');
+    expect(lines).toMatch(/nubes|vuela|nada|carísimo|precio/);
+    // Si alguien muere, su familia guarda luto y hay funeral.
+    const dead = life.folk.find((f) => f.alive && f.regionId === w.player.home && kinOf(w, f.id).length)!;
+    const kin = kinOf(w, dead.id)[0];
+    dead.alive = false;
+    mournDeaths(w, [dead]);
+    const k = life.folk.find((f) => f.id === kin.id)!;
+    expect(k.p!.mourning).toBeGreaterThan(w.day);
+    expect(life.society!.festivals.some((x) => x.kind === 'funeral')).toBe(true);
+    expect(routineOf(w, k, (w.day - 1) * 1440 + 4 * 60).activity).toMatch(/luto|despide|reza/);
+  });
+
+  it('el guardado conserva la sociedad', () => {
+    const w = world(507);
+    advanceDay(w);
+    const back = importGame(exportGame(w))!;
+    expect(Object.keys(back.life!.society!.ties).length).toBe(Object.keys(w.life!.society!.ties).length);
+    expect(back.life!.folk[0].p!.t).toEqual(w.life!.folk[0].p!.t);
+  });
+});
+
+describe('Fase 3: la economía del mundo', () => {
+  /** Simula `days` días; `hook` se llama antes de cada día. */
+  function sim(seed: number, days: number, hook?: (w: WorldState) => void) {
+    const w = world(seed);
+    const h = w.player.home;
+    const rows: { day: number; price: number; hungry: number; pop: number; folk: number; prosperity: number; harvest: number; migr: number }[] = [];
+    let migr = 0;
+    for (let i = 0; i < days; i++) {
+      hook?.(w);
+      advanceDay(w);
+      const s = w.life!.society!;
+      for (const e of s.events) if (e.day === w.day && e.regionId === h && e.kind === 'migracion') migr++;
+      const m = marketOf(w, h);
+      rows.push({ day: w.day, price: foodIndex(m), hungry: m.hungry, pop: w.regions[h].population, folk: w.life!.folk.filter((f) => f.alive && f.regionId === h).length, prosperity: m.prosperity, harvest: farmOf(w, h).lastHarvest, migr });
+    }
+    return { w, rows, at: (d: number) => rows.find((r) => r.day === d)!, avg: (a: number, b: number, k: 'price' | 'prosperity' | 'pop') => { const xs = rows.filter((r) => r.day >= a && r.day <= b).map((r) => r[k]); return xs.reduce((x, y) => x + y, 0) / xs.length; } };
+  }
+
+  it('la producción forma cadenas, el dinero circula y los precios reaccionan a la oferta', () => {
+    const w = world(601);
+    const h = w.player.home;
+    const m = marketOf(w, h);
+    m.stock.hierro = 40;
+    const tools = m.stock.herramientas;
+    advanceDay(w);
+    advanceDay(w);
+    // El herrero convierte el hierro en herramientas; los productores cobran del mercado.
+    expect(m.stock.hierro).toBeLessThan(40);
+    expect(m.stock.herramientas).toBeGreaterThan(tools - 2);
+    expect(Object.keys(m.wages).length).toBeGreaterThan(3);
+    // Comprar mucho sube el precio; vender mucho lo baja.
+    const id = w.life!.identity!;
+    id.needs.coins = 200;
+    playerEco(w).vehicle = 'carreta';
+    const before = m.price.trigo;
+    expect(playerBuy(w, h, 'trigo', 25).ok).toBe(true);
+    expect(m.price.trigo).toBeGreaterThan(before);
+    const high = m.price.trigo;
+    playerSell(w, h, 'trigo', 25);
+    expect(m.price.trigo).toBeLessThan(high);
+  });
+
+  it('el jugador puede crear problemas sin querer: si se lleva todo el hierro, el herrero no forja', () => {
+    const w = world(602);
+    const h = w.player.home;
+    const m = marketOf(w, h);
+    w.life!.identity!.needs.coins = 500;
+    playerEco(w).vehicle = 'carreta';
+    m.stock.hierro = 20;
+    playerBuy(w, h, 'hierro', 20);
+    for (let i = 0; i < 3; i++) advanceDay(w);
+    const ev = w.life!.society!.events.find((e) => e.kind === 'escasez' && /hierro/.test(e.text));
+    expect(ev?.text).toMatch(/alguien se llevó casi todo el hierro/);
+  });
+
+  it('las caravanas existen: salen, viajan, llegan, y llevan noticias de precios', () => {
+    const w = world(603);
+    for (let i = 0; i < 25; i++) advanceDay(w);
+    const t = tradeOf(w);
+    expect(t.convoys.length).toBeGreaterThan(0);
+    expect(t.convoys.some((c) => c.status === 'llegada')).toBe(true);
+    expect(Object.keys(t.volume).length).toBeGreaterThan(0);
+    const home = marketOf(w, w.player.home);
+    expect(Object.keys(home.news).length).toBeGreaterThan(0);
+    expect(convoyPositions(w).length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('la prueba de la Fase 3: sequía → mala cosecha → precios → hambre → emigración; con semilla, el pueblo se recupera', () => {
+    const drought = (w: WorldState) => w.day === 2 && startDrought(w, w.player.home, 45);
+    const base = sim(502, 120);
+    const control = sim(502, 120, drought);
+    const helped = sim(502, 120, (w) => {
+      drought(w);
+      // El jugador consigue semilla (la compra fuera) y la reparte antes de la siembra.
+      if (w.day === 40) {
+        playerEco(w).cargo.semillas = 50;
+        donate(w, w.player.home, 'semillas', 50);
+      }
+    });
+    // Día 1: el pueblo produce suficiente comida.
+    expect(control.at(5).hungry).toBe(0);
+    // La sequía arruina la cosecha (frente a un año normal).
+    expect(control.at(20).harvest).toBeLessThan(base.at(20).harvest * 0.6);
+    // Los precios suben y las familias lo pasan mal.
+    expect(Math.max(...control.rows.filter((r) => r.day <= 40).map((r) => r.price))).toBeGreaterThan(control.at(5).price * 2);
+    expect(control.rows.some((r) => r.day > 25 && r.day <= 55 && r.hungry >= 4)).toBe(true);
+    // La gente se va y el pueblo cambia.
+    expect(control.at(70).migr).toBeGreaterThan(0);
+    expect(control.avg(50, 70, 'pop')).toBeLessThan(control.at(2).pop);
+    expect(control.avg(40, 60, 'prosperity')).toBeLessThan(base.avg(40, 60, 'prosperity') - 0.15);
+    // Con la semilla del jugador: la producción se recupera, los precios bajan, la gente vuelve.
+    expect(helped.at(80).harvest).toBeGreaterThan(control.at(80).harvest * 2);
+    expect(helped.avg(75, 120, 'price')).toBeLessThan(helped.avg(35, 60, 'price'));
+    expect(helped.avg(75, 120, 'prosperity')).toBeGreaterThan(control.avg(75, 120, 'prosperity'));
+    expect(helped.avg(100, 120, 'pop')).toBeGreaterThan(Math.min(...helped.rows.filter((r) => r.day >= 40 && r.day <= 70).map((r) => r.pop)));
+    expect(helped.avg(100, 120, 'pop')).toBeGreaterThan(control.avg(100, 120, 'pop'));
+  });
+
+  it('al volver tras una larga ausencia, el pueblo ha cambiado (y te lo hace notar)', () => {
+    const w = world(604);
+    const h = w.player.home;
+    catchUp(w, h); // el jugador está aquí el día 1… y se va lejos
+    const far = getLayout(w).villages.find((v) => v.regionId !== h)!;
+    Object.assign(w.life!.player, { x: far.cx + 0.5, y: far.cy + 0.5 });
+    startDrought(w, h, 40);
+    for (let i = 0; i < 40; i++) advanceDay(w);
+    const lines = catchUp(w, h);
+    expect(lines.some((l) => /Al volver|Mientras no estabas/.test(l))).toBe(true);
+  });
+
+  it('un negocio propio vende solo y paga a quien trabaja', () => {
+    const w = world(605);
+    const h = w.player.home;
+    const id = w.life!.identity!;
+    id.needs.coins = 80;
+    playerEco(w).vehicle = 'carreta';
+    expect(openBusiness(w, h, 'puesto').ok).toBe(true);
+    const b = playerEco(w).businesses[0];
+    const m = marketOf(w, h);
+    m.stock.ropa = 0;
+    playerEco(w).cargo.ropa = 10;
+    stockBusiness(w, b.id, 'ropa', 10);
+    for (let i = 0; i < 4; i++) advanceDay(w);
+    expect(b.cash).toBeGreaterThan(0);
+    expect((b.stock.ropa ?? 0)).toBeLessThan(10);
+  });
+
+  it('el estado económico se guarda y continúa', () => {
+    const w = world(606);
+    for (let i = 0; i < 6; i++) advanceDay(w);
+    const back = importGame(exportGame(w))!;
+    expect(marketOf(back, back.player.home).stock).toEqual(marketOf(w, w.player.home).stock);
+    expect(farmOf(back, back.player.home).seeds).toBeCloseTo(farmOf(w, w.player.home).seeds);
+    expect(tradeOf(back).convoys.length).toBe(tradeOf(w).convoys.length);
+    expect(back.sim?.worldEconomy).toBe(true);
   });
 });

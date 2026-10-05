@@ -10,6 +10,10 @@ import { openness, remember, ROLE_TITLE } from './folk';
 import { ensureLife } from './life';
 import { routineOf } from './routines';
 import type { Folk } from './types';
+import { hourOf, weatherOf } from './clock';
+import { foodPrice, GOOD, GOODS, marketOf, stallLook } from './economy';
+import { chatter, learnFact, rumorsKnownBy } from './gossip';
+import { EMOTION_WORD, emotionOf, societyOf, trait } from './society';
 
 /**
  * Conversaciones con los vecinos. Lo que cuentan depende de lo que viven,
@@ -33,6 +37,9 @@ const ROLE_GREET: Partial<Record<string, string[]>> = {
   artesano: ['El fuego no se apaga solo. Habla rápido.', 'Mis manos están ocupadas, mis oídos no.'],
   sanadora: ['Si vienes herido, siéntate. Si no, ayúdame.'],
   exploradora: ['He visto cosas por esos caminos que no creerías.'],
+  posadero: ['¿Una jarra? ¿Una cama? ¿O solo vienes a por chismes?', 'Pasa, pasa. Aquí se entera uno de todo.'],
+  minero: ['Cuidado con dónde pisas, que esto no es la plaza.', 'Ahí abajo no se oye nada. Aquí arriba, demasiado.'],
+  carpintero: ['Si buscas una mesa, ponte a la cola.', 'La madera no miente. La gente sí.'],
 };
 
 function pick<T>(ctx: Ctx, a: T[]): T {
@@ -79,6 +86,28 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
     }
   } else lines.push(pick(ctx, ROLE_GREET[f.role] ?? ['¿Sí?']));
 
+  // 1b) Su propia vida: ánimo, familia, amistades, lo que quiere, la hora, el clima, los precios.
+  if (f.p) {
+    const fest = societyOf(w).festivals.find((x) => x.regionId === r.id && x.day === w.day);
+    const lost = f.p.mourning !== undefined && f.p.mourning >= w.day ? f.p.mem.find((m) => m.kind === 'muerte') : undefined;
+    const look = stallLook(w, r.id);
+    const festLine = fest && fest.kind !== 'funeral' ? (fest.kind === 'boda' ? `¿Vendrás esta tarde a la boda de ${fest.who.map((id) => life.folk.find((x) => x.id === id)?.name).join(' y ')}? Habrá música.` : 'Esta noche es la fiesta de la cosecha. ¡Ni se te ocurra perdértela!') : undefined;
+    // Los comerciantes saben de otros mercados (por las caravanas): lo cuentan si se fían.
+    if (f.role === 'comerciante' && open > 0.35) {
+      const m = marketOf(w, r.id);
+      const news = Object.entries(m.news).filter(([id]) => Number(id) !== r.id).sort((a, b) => b[1].day - a[1].day)[0];
+      if (news) {
+        const there = Number(news[0]);
+        const g = GOODS.filter((x) => news[1].price[x] !== undefined).sort((a, b) => news[1].price[b]! / m.price[b] - news[1].price[a]! / m.price[a])[0];
+        if (g && news[1].price[g]! > m.price[g] * 1.4) {
+          lines.push(`Dicen los carreteros que en ${w.regions[there].name} pagan el ${GOOD[g].name} a precio de oro. Aquí sobra.`);
+          learned.push(`En ${w.regions[there].name}, ${GOOD[g].name} caro`);
+        }
+      }
+    }
+    lines.push(...chatter(w, f, ctx.rng, hourOf(life.clock), weatherOf(w, w.day), { price: foodPrice(w, r.id), scarce: look === 'escaso' || look === 'vacio', festival: festLine, mourningFor: lost?.text.replace(/^Murió /, '').replace(/\.$/, '') }));
+  }
+
   // 2) La vida en su región, filtrada por la confianza y la honestidad.
   if (open < 0.25) {
     lines.push(pick(ctx, ['Prefiero no hablar de eso.', 'Aquí la gente no habla con extraños.', '…', 'Mejor pregunta a otro.']));
@@ -92,7 +121,23 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
     hearsay(ctx, r, 'animo', liar ? 0.7 : 0.25);
   }
 
-  // 3) Rumores: se los cuentan a quien les inspira confianza.
+  // 3) Lo que se cuenta en el pueblo (su versión, que no tiene por qué ser la verdad).
+  if (open > 0.3 && f.p) {
+    const town = rumorsKnownBy(w, f).filter((x) => x.r.subject !== f.id && x.r.target !== f.id && x.r.subject !== 'jugador')[0];
+    if (town && ctx.rng.chance(0.75)) {
+      const said = town.r.versions[town.v];
+      lines.push(said.startsWith('Dicen') ? `${said}` : `¿Te has enterado? ${said}`);
+      town.r.heard = town.v;
+      learned.push(`Se cuenta: «${said}»`);
+      if (town.r.subject !== 'jugador') learnFact(w, town.r.subject, `${f.name} cuenta: ${said}`);
+    }
+    const me = rumorsKnownBy(w, f, true)[0];
+    if (me && ctx.rng.chance(0.6)) {
+      const said = me.r.versions[me.v].replace(/^Dicen que el forastero/, 'dicen que tú').replace(/^El forastero/, 'tú');
+      lines.push(me.r.tone >= 0 ? `Por cierto, ${said.charAt(0).toLowerCase()}${said.slice(1).replace(/\.$/, '')}. ¿Es verdad?` : `He oído que ${said.charAt(0).toLowerCase()}${said.slice(1)}`);
+    }
+  }
+  // 3b) Rumores del mundo: se los cuentan a quien les inspira confianza.
   if (open > 0.4) {
     const rumor = w.rumors.find((x) => !x.known && (x.heardIn === r.id || x.believers.includes(r.id)) && w.day <= x.expires);
     if (rumor) {
@@ -114,6 +159,7 @@ export function talkToFolk(w: WorldState, folkId: string): TalkResult {
   life.visited[r.id] = w.day;
   if (!r.isHome) r.lastAttention = Math.max(r.lastAttention, w.day - (f.role === 'lider' ? 0 : 5));
   commitCtx(ctx);
+  if (lines.length > 6) lines.splice(6);
   return { lines, learned, lied };
 }
 
@@ -161,6 +207,23 @@ export function observeFolk(w: WorldState, folkId: string): string[] {
   if (r.flags.hambre) out.push('Está más delgado de lo que debería.');
   if (r.flags.fiebre && f.age > 50) out.push('Tose con fuerza.');
   if (f.origin !== undefined) out.push(`Por su acento, no es de aquí: viene de ${w.regions[f.origin].name}.`);
+  // Lo que se ve de su carácter y de su ánimo, sin cifras.
+  if (f.p) {
+    const tr = (k: Parameters<typeof trait>[1]) => trait(f, k);
+    const looks: string[] = [];
+    if (tr('sociable') > 70) looks.push('saluda a todo el que pasa');
+    else if (tr('timido') > 70) looks.push('evita mirar a la gente a los ojos');
+    if (tr('trabajador') > 75) looks.push('no para quieto ni un momento');
+    else if (tr('perezoso') > 75) looks.push('se toma su tiempo para todo');
+    if (tr('orgulloso') > 75) looks.push('camina con la barbilla muy alta');
+    if (tr('desconfiado') > 75) looks.push('vigila a todo el mundo de reojo');
+    if (tr('amable') > 78) looks.push('tiene una palabra amable para cualquiera');
+    if (looks.length) out.push(`Parece de esas personas que ${looks.slice(0, 2).join(' y ')}.`);
+    const e = emotionOf(f);
+    if (e !== 'calma') out.push(`Se le ve ${EMOTION_WORD[e]}${e === 'tristeza' && f.p.mourning !== undefined && f.p.mourning >= w.day ? ', de luto' : ''}.`);
+    if (f.p.sick !== undefined && f.p.sick >= w.day) out.push('Tiene mala cara: no se encuentra bien.');
+    if (/discute|pelea/.test(t.activity)) out.push('Está a punto de llegar a las manos.');
+  }
   return out;
 }
 

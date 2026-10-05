@@ -10,9 +10,16 @@ import { ROLE_TITLE } from '../world/folk';
 import { hourOf } from '../world/clock';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../world/encounters';
 import { doorOf, getLayout, nearestWalkable } from '../world/layout';
-import { answerOffer, chooseFragment, hasTalent, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
+import { answerOffer, chooseFragment, gain, hasTalent, levelOf, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
 import { ensureLife, heirs, succeed } from '../world/life';
 import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
+import { arcAct, arcChoices } from '../world/arcs';
+import { convoyDialog, marketDialog } from './market';
+import { playerEco } from '../world/business';
+import { describeMarket } from '../world/marketview';
+import { opinionOf, seedRumor, type Approach } from '../world/gossip';
+import { answerApproach, noticeConversation } from '../world/social';
+import { Rng } from '../core/rng';
 import { acequiaOptions, acequiaResolve, acequiaView, noteMeeting, prologueChoose, prologueOf, prologueScene, type PScene, type PTarget } from '../world/prologue';
 import { emblem } from '../render/sprites';
 import { SYMBOLS } from '../world/identity';
@@ -184,6 +191,8 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       return [b('🧭 Viajar', () => arrive(app, t), true)];
     case 'item':
       return [b(t.id === 'mochila' ? '🎒 Mirar' : t.id === 'caja' ? '📦 Mirar' : t.id === 'cabana' ? '🚪 Entrar' : '🔎 Examinar', () => arrive(app, t), true)];
+    case 'convoy':
+      return [b(t.label.startsWith('Una carreta') ? '🔎 Examinar' : '💬 Hablar', () => arrive(app, t), true)];
   }
 }
 
@@ -214,6 +223,8 @@ export function arrive(app: App, t: Target): void {
       if (t.id === 'cabana') return hut(app);
       prologueAt(app, { kind: 'item', id: t.id });
       return;
+    case 'convoy':
+      return convoyDialog(app, t.id);
   }
 }
 
@@ -249,18 +260,82 @@ function talk(app: App, folkId: string): void {
   if (job && id.mode === 'forastero') choices.push({ label: job.label, hint: `${Math.round(job.minutes / 60)} h · ${job.pay.coins ? 'algo de dinero' : job.pay.comida ? 'algo de comida' : 'aprendes'}`, run: () => outcome(app, job.label.slice(2), work(w, folkId)), primary: !choices.length });
   if (id.mode === 'forastero') choices.push({ label: '❓ Preguntar por ti', run: () => outcome(app, f.name, askAboutMe(w, folkId)) });
   if (f.role === 'comerciante') choices.push({ label: `🍞 Comprarle comida (${priceOf(w, f.regionId, 1)} 🪙)`, run: () => outcome(app, f.name, buyFood(w, f.regionId)) });
+  if (f.role === 'comerciante' && id.mode === 'forastero') choices.push({ label: '⚖ Comerciar', hint: 'Comprar, vender, preguntar precios, encargos', run: () => marketDialog(app, f.regionId, f.id) });
+  if (f.role === 'campesino' && (playerEco(w).cargo.semillas ?? 0) >= 1) choices.push({ label: '🌱 Darle semilla para sembrar', run: () => marketDialog(app, f.regionId) });
   if (f.role === 'comerciante' && inv.reliquias > 0) choices.push({ label: '💰 Venderle algo de valor', run: () => outcome(app, f.name, sellRelic(w, f.regionId)) });
   if (f.resentment > 0.3 || f.trust < 0.35) choices.push({ label: hasTalent(id, 'lengua') ? '🗣 Convencerle (lengua de plata)' : '🗣 Intentar convencerle', run: () => outcome(app, f.name, convince(w, folkId)) });
   if (id.mode === 'forastero' && f.role !== 'nino') choices.push({ label: '🌒 Contarle una mentira para sacar algo', hint: 'Si te pillan, se sabrá.', run: () => outcome(app, f.name, deceive(w, folkId)) });
   const pet = hasAuthority(w, 'negar') ? w.petitions.find((p) => p.regionId === f.regionId && (p.characterId === f.charId || f.role === 'lider')) : undefined;
   if (pet) choices.push({ label: `📨 «${pet.title}»`, run: () => petition(app, pet.id) });
   if (inv.comida > 0) choices.push({ label: '🍞 Darle comida', run: () => (app.toast(giveTo(w, folkId, 'comida')), app.refresh()) });
-  if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
+  if (inv.hierbas > 0 && (r.flags.fiebre || f.age > 60 || (f.p?.sick ?? -1) >= w.day)) choices.push({ label: '🌿 Darle hierbas', run: () => (app.toast(giveTo(w, folkId, 'hierbas')), app.refresh()) });
+  // Su vida con los demás: pleitos en los que puedes intervenir y gente por la que preguntar.
+  for (const c of arcChoices(w, f)) choices.splice(Math.min(choices.length, 1), 0, { label: c.label, hint: c.hint, run: () => arcRun(app, folkId, c.id) });
+  if (f.age >= 10) choices.push({ label: '👥 Preguntar por alguien', run: () => askAbout(app, folkId) });
   choices.push({ label: 'Despedirse', run: () => app.refresh() });
+  // Quien te ve hablar con alguien puede venir luego a preguntarte.
+  noticeConversation(w, folkId, app.scene?.folkNear(7).filter((x) => x !== folkId) ?? []);
   const title = f.charId ? `${f.name}, ${ROLES[w.characters.find((c) => c.id === f.charId)?.role ?? '']?.title ?? ROLE_TITLE[f.role]}` : `${f.name}, ${ROLE_TITLE[f.role]}`;
   app.scene?.converse(folkId);
   dialogue(app, title, `${r.name}${f.origin !== undefined ? ` · llegado de ${w.regions[f.origin].name}` : ''}`, res.lines.map((l) => (l.startsWith('(') ? l : `«${l}»`)), choices, portraitOf(w, folkId));
   if (res.learned.length) for (const l of res.learned) app.whisper(`📝 ${l}`);
+}
+
+/** Intervenir en un pleito entre vecinos (o preguntar a un tercero por él). */
+function arcRun(app: App, folkId: string, choice: string): void {
+  const w = app.w!;
+  const f = folkOf(w, folkId)!;
+  const life = ensureLife(w);
+  const id = life.identity!;
+  const rng = new Rng((w.seed ^ Math.floor(life.clock) * 2654435761) >>> 0);
+  const res = arcAct(w, f, choice, rng, (k) => levelOf(id, k));
+  if (res.rumor) seedRumor(w, { regionId: f.regionId, kind: res.rumor.kind, subject: 'jugador', target: res.rumor.target, witnesses: [f.id, ...(app.scene?.folkNear(6) ?? [])], extra: res.rumor.extra });
+  const skill = choice === 'mediar' ? 'diplomacia' : choice.startsWith('investigar') ? 'investigacion' : choice === 'enredar' ? 'sigilo' : choice === 'escuchar' || choice.startsWith('tercero') ? 'investigacion' : choice === 'aprovechar' ? 'comercio' : 'persuasion';
+  app.notes(gain(w, skill, choice === 'mediar' ? 1.2 : 0.5));
+  if (choice === 'mediar' || choice === 'lado' || choice === 'enredar' || choice === 'ayudar' || choice === 'aprovechar') story(w, { mediar: `Intentó poner paz entre dos vecinos de ${w.regions[f.regionId].name}.`, lado: `Tomó partido por ${f.name} en un pleito.`, enredar: `Echó leña al fuego en el pleito de ${f.name}.`, ayudar: `Ayudó a ${f.name} cuando el pleito le arruinaba.`, aprovechar: `Sacó provecho del pleito de ${f.name}.` }[choice]!, 'decision');
+  app.passTime(choice.startsWith('investigar') ? 45 : 15);
+  dialogue(app, f.name, '', res.lines, [{ label: 'Seguir', run: () => app.refresh(), primary: true }], portraitOf(w, folkId));
+}
+
+/** «¿Qué opinas de…?»: así se descubre la red de relaciones del pueblo. */
+function askAbout(app: App, folkId: string): void {
+  const w = app.w!;
+  const f = folkOf(w, folkId)!;
+  const known = ensureLife(w).folk.filter((o) => o.alive && o.id !== folkId && o.lastMet >= 0 && o.regionId === f.regionId).sort((a, b) => b.lastMet - a.lastMet).slice(0, 8);
+  if (!known.length) return void dialogue(app, f.name, '', ['Aún no conoces a nadie más por aquí.'], [{ label: 'Volver', run: () => talk(app, folkId) }]);
+  dialogue(app, f.name, '¿Por quién preguntas?', [], [
+    ...known.map((o) => ({ label: `${o.name}, ${ROLE_TITLE[o.role]}`, run: () => dialogue(app, f.name, `Sobre ${o.name}`, [opinionOf(w, f, o)], [{ label: 'Preguntar por otra persona', run: () => askAbout(app, folkId) }, { label: 'Seguir', run: () => app.refresh(), primary: true }], portraitOf(w, folkId)) })),
+    { label: 'Nada', run: () => app.refresh() },
+  ], portraitOf(w, folkId));
+}
+
+/** Alguien se te ha acercado: lo que te dice y lo que respondes. */
+export function approachDialog(app: App, ap: Approach): void {
+  const w = app.w!;
+  const f = folkOf(w, ap.folk);
+  if (!f) return;
+  audio.sfx('tap');
+  noteMeeting(w, f);
+  dialogue(app, f.name, 'Se te acerca', ap.lines, ap.choices.map((c, i) => ({
+    label: c.label,
+    primary: i === 0,
+    run: () => {
+      const res = answerApproach(w, ap.id, c.id);
+      if (res.arcListen) return arcRun(app, f.id, 'escuchar');
+      if (res.work) {
+        const job = jobFor(w, f);
+        if (job) {
+          const o = work(w, f.id);
+          const id = ensureLife(w).identity;
+          if (id) id.needs.coins += 1;
+          o.lines.push('Te paga una moneda más de lo acordado. «Por la recomendación.»');
+          return outcome(app, job.label.slice(2), o);
+        }
+      }
+      if (res.lines.length) dialogue(app, f.name, '', res.lines, [{ label: 'Seguir', run: () => app.refresh(), primary: true }], portraitOf(w, f.id));
+      else app.refresh();
+    },
+  })), portraitOf(w, f.id));
 }
 
 function observe(app: App, folkId: string): void {
@@ -368,7 +443,8 @@ function building(app: App, regionId: number, kind: string): void {
           { label: `${ACTIONS.explotar.icon} Exigir parte de sus recursos`, run: () => openAction(app, 'explotar', { region: regionId, inPerson: 1 }) },
           { label: 'Salir', run: () => {} },
         ]);
-      return void dialogue(app, `Almacén de ${r.name}`, '', [home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
+      return void dialogue(app, `Almacén de ${r.name}`, '', [describeMarket(w, regionId)[0], home ? (w.player.reserves < 20 ? 'Quedan pocos sacos. El intendente los cuenta dos veces.' : 'Sacos de grano y ristras de ajos. El intendente te vigila de reojo.') : r.food < 4 ? 'Las estanterías están casi vacías.' : 'Sacos apilados y un intendente que no te quita ojo.', hasTalent(id, 'mercader') ? `(A ojo de mercader: ${home ? (w.player.reserves < 20 ? 'no aguantarán mucho' : 'tienen para una buena temporada') : r.food < 5 ? 'no aguantarán mucho' : 'tienen de sobra'}.)` : ''].filter(Boolean), [
+        { label: '🧺 Ir al mercado', run: () => marketDialog(app, regionId), primary: true },
         { label: '🙏 Pedir algo de comer', run: () => outcome(app, 'El almacén', charity(w, regionId)) },
         { label: 'Salir', run: () => {} },
       ]);

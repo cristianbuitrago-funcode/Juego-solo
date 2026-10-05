@@ -21,12 +21,18 @@ import { renderChronicle } from './screens/chronicle';
 import { renderDecisions } from './screens/decisions';
 import { showEnd } from './screens/dawn';
 import { renderHypotheses } from './screens/hypotheses';
+import { approachNear, catchUp, liveNotices } from '../world/social';
+import { convoyTick } from '../world/trade';
+import { capacityOf, cargoCount, deliverContracts, playerEco } from '../world/business';
+import { GOOD, type Good } from '../world/economy';
+import { businessDialog } from './market';
+import type { Approach } from '../world/gossip';
 import { prologueDawn, prologueOf, prologueQuiet, prologueTick, recap } from '../world/prologue';
 import { renderMenu, objectivesDialog, renderSettingsInline, savesDialog } from './screens/menu';
 import { openRegionSheet } from './screens/region';
 import { renderResearch } from './screens/research';
 import { renderFamily } from './screens/family';
-import { arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
+import { approachDialog, arrive, dialogue, focusButtons, showFragment, succession } from './world-dialogs';
 
 export type View = 'mapa' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
@@ -292,6 +298,9 @@ export class App {
     if (!inVillage) choices.push({ label: '🧺 Buscar comida por aquí', hint: '1 hora', run: () => { const o = forage(w, me.x, me.y); this.passTime(o.minutes); this.notes(o.notes); this.toast(o.lines[0]); this.refresh(); } });
     choices.push({ label: '⏳ Descansar un rato', hint: '2 horas', run: () => { this.sleeping = true; this.passTime(120); this.sleeping = false; rest(id, false); this.toast('Te sientas a recuperar el aliento.'); this.refresh(); } });
     if (hourOf(life.clock) >= 20 || hourOf(life.clock) < 5 || id.needs.fatigue > 0.7) choices.push({ label: '🌙 Dormir al raso', hint: 'Gratis, pero se descansa mal', run: () => this.sleep('raso') });
+    const pe = life.society ? playerEco(w) : null;
+    if (pe && cargoCount(pe) > 0) choices.push({ label: `📦 Tu carga: ${Object.entries(pe.cargo).filter(([, n]) => (n ?? 0) >= 0.5).map(([g, n]) => `${Math.round(n!)} ${GOOD[g as Good].name}`).join(', ')}`, run: () => this.refresh() });
+    for (const b of pe?.businesses ?? []) choices.push({ label: `📒 Tu ${b.kind === 'puesto' ? 'puesto' : b.kind === 'granja' ? 'campo' : 'transporte'} en ${w.regions[b.regionId].name}`, run: () => businessDialog(this, b.id, () => this.refresh()) });
     if (id.items.includes('colgante')) choices.push({ label: '🔱 Mirar el colgante', run: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(this, ev); } });
     choices.push({ label: 'Nada', run: () => {} });
     dialogue(this, 'Tú', `🍞 ${Math.round(id.needs.hunger * 100)}% hambre · 💤 ${Math.round(id.needs.fatigue * 100)}% cansancio · 🪙 ${id.needs.coins}`, [], choices);
@@ -347,6 +356,18 @@ export class App {
         this.scene.waypoint = null;
       } else this.scene.waypoint = { x: v.cx + 0.5, y: v.cy + 0.5, label: w.intel[this.waypoint].level ? w.regions[this.waypoint].name : '¿?' };
     } else this.scene.waypoint = null;
+    // La gente vive: lo que empieza a pasar cerca (gritos, campanas, música)…
+    const hNow = hourOf(life.clock);
+    if (region >= 0 && this.lastSocialHour !== undefined && hNow !== this.lastSocialHour) for (const m of liveNotices(w, region, hNow, this.lastSocialHour < hNow ? this.lastSocialHour : hNow - 0.01)) this.whisper(m, true);
+    this.lastSocialHour = hNow;
+    // …y quien quiere hablar contigo viene a buscarte.
+    this.approachTick();
+    // Las caravanas avanzan por los caminos (cada hora de juego): llegadas, retrasos, asaltos.
+    const hourNow = Math.floor(life.clock / 60);
+    if (hourNow !== this.lastConvoyHour) {
+      this.lastConvoyHour = hourNow;
+      for (const msg of convoyTick(w)) if (region >= 0 && msg.includes(w.regions[region].name)) this.whisper(msg);
+    }
     const pt = prologueTick(w, me.x, me.y, life.clock);
     if (pt.banner) (audio.sfx('descubrimiento'), this.banner(pt.banner[0], pt.banner[1]));
     for (const m of pt.whispers) this.whisper(m, true);
@@ -371,6 +392,39 @@ export class App {
     }
   }
 
+  private lastSocialHour?: number;
+  private lastConvoyHour = -1;
+  private approachCooldown = 0;
+  private approaching: Approach | null = null;
+
+  private approachTick(): void {
+    const w = this.w!;
+    const scene = this.scene!;
+    const busy = !!this.stage?.querySelector('.overlay') || this.sleeping;
+    if (this.approaching) {
+      const d = scene.distanceTo(this.approaching.folk);
+      if (d === Infinity || busy) {
+        if (d === Infinity) (scene.summon(null), (this.approaching = null));
+        return;
+      }
+      if (d < 1.9) {
+        const ap = this.approaching;
+        this.approaching = null;
+        scene.summon(null);
+        this.approachCooldown = 40;
+        approachDialog(this, ap);
+      }
+      return;
+    }
+    if (busy || --this.approachCooldown > 0) return;
+    const ap = approachNear(w, scene.folkNear(10));
+    if (!ap) return;
+    this.approaching = ap;
+    scene.summon(ap.folk);
+    const f = ensureLife(w).folk.find((x) => x.id === ap.folk);
+    if (f) this.whisper(`${f.name} viene hacia ti.`);
+  }
+
   private enterRegion(id: number, prev: number): void {
     const w = this.w!;
     const r = w.regions[id];
@@ -391,6 +445,9 @@ export class App {
     }
     const memory = tryFragment(w, { kind: 'region', regionId: id });
     if (memory) window.setTimeout(() => showFragment(this, memory), 1200);
+    // El pueblo no se detuvo mientras estabas fuera.
+    for (const n of catchUp(w, id)) this.whispers.unshift(n);
+    for (const n of deliverContracts(w, id)) this.whisper(n, true);
     for (const n of presenceTick(w, id, false)) this.whisper(n);
   }
 
@@ -415,6 +472,7 @@ export class App {
         auth >= 5 ? h('span', { class: 'chip', title: 'Provisiones del pueblo' }, '🌾', String(Math.round(w.player.reserves))) : null,
         needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(needs.coins)) : null,
         h('span', { class: 'chip', title: 'Tu mochila' }, '🎒', `${inv.comida}·${inv.hierbas}`),
+        life.society && cargoCount(playerEco(w)) > 0 ? h('span', { class: 'chip', title: 'Tu carga' }, playerEco(w).vehicle === 'carreta' ? '🛞' : playerEco(w).vehicle === 'mula' ? '🐴' : '📦', `${Math.round(cargoCount(playerEco(w)))}/${capacityOf(playerEco(w))}`) : null,
         needs && needs.hunger >= 0.6 ? h('span', { class: `chip ${needs.hunger >= 0.8 ? 'warn' : ''}`, title: 'Hambre' }, '🍞') : null,
         needs && needs.fatigue >= 0.65 ? h('span', { class: `chip ${needs.fatigue >= 0.85 ? 'warn' : ''}`, title: 'Cansancio' }, '💤') : null,
         auth >= 4 ? h('span', { class: 'chip', title: 'Emisarios libres' }, '🧭', `${Math.max(0, free)}`) : null,

@@ -14,7 +14,7 @@ export function tickPlayer(ctx: Ctx): void {
   if (p.laws.racionamiento) upkeep *= 0.6;
   if (p.priority === 'ecologia') income -= 0.3;
   upkeep += w.regions.filter((r) => r.favored).length * 0.6;
-  p.reserves = clamp(p.reserves + income - upkeep, 0, 100);
+  if (!w.sim?.worldEconomy) p.reserves = clamp(p.reserves + income - upkeep, 0, 100);
 
   let cohesionTarget = 0.68;
   if (p.laws.racionamiento) cohesionTarget -= 0.12;

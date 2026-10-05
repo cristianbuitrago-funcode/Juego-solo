@@ -334,6 +334,8 @@ export interface Player {
 }
 
 export interface WorldState {
+  /** Qué partes del mundo simula la capa de vida (Fase 3: comida y población salen de la economía de los pueblos). */
+  sim?: { worldEconomy?: boolean };
   version: number;
   seed: number;
   rngState: number;

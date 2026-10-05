@@ -16,27 +16,33 @@ const ROLE_OF_CHARACTER: Record<string, FolkRole> = {
 
 export const ROLE_TITLE: Record<FolkRole, string> = {
   campesino: 'campesino', pescador: 'pescador', pastor: 'pastora', comerciante: 'comerciante', guardia: 'guardia',
-  artesano: 'artesano', nino: 'niño', anciano: 'anciano', lider: 'líder', sanadora: 'sanadora', exploradora: 'exploradora',
+  artesano: 'herrero', nino: 'niño', anciano: 'anciano', lider: 'líder', sanadora: 'sanadora', exploradora: 'exploradora',
+  posadero: 'posadero', minero: 'minero', carpintero: 'carpintero', lenador: 'leñador', tejedor: 'tejedor',
 };
 
-function rolesFor(resource: string): FolkRole[] {
-  switch (resource) {
-    case 'pesca':
-      return ['pescador', 'pescador', 'campesino'];
-    case 'lana':
-      return ['pastor', 'pastor', 'campesino'];
-    case 'hierro':
-      return ['artesano', 'artesano', 'campesino'];
-    case 'sal':
-    case 'arcilla':
-      return ['artesano', 'campesino', 'pescador'];
-    default:
-      return ['campesino', 'campesino', 'pastor'];
-  }
+/**
+ * Los oficios de un pueblo, en orden de importancia: primero quien da de
+ * comer; después las cadenas (herrero, leñador, carpintero, tejedor,
+ * minero) según lo que ofrece la tierra.
+ */
+function rolesFor(resource: string, coastal: boolean): FolkRole[] {
+  const food: FolkRole = resource === 'pesca' || coastal ? 'pescador' : 'campesino';
+  const base: FolkRole[] = ['campesino', food, 'campesino', 'pastor', 'artesano', 'lenador', 'campesino', 'carpintero'];
+  const extra: Partial<Record<string, FolkRole[]>> = {
+    pesca: ['pescador', 'tejedor', 'campesino', 'pescador'],
+    lana: ['pastor', 'tejedor', 'campesino', 'tejedor'],
+    hierro: ['minero', 'minero', 'campesino', 'artesano'],
+    grano: ['campesino', 'campesino', 'tejedor', 'minero'],
+    sal: ['minero', 'campesino', 'pescador', 'tejedor'],
+    arcilla: ['minero', 'campesino', 'carpintero', 'tejedor'],
+    ambar: ['lenador', 'campesino', 'tejedor', 'minero'],
+    hierbas: ['campesino', 'pastor', 'tejedor', 'minero'],
+  };
+  return [...base, ...(extra[resource] ?? ['campesino', 'tejedor', 'minero', 'campesino']), 'campesino', 'comerciante', 'nino', 'campesino', 'pastor', 'campesino'];
 }
 
 export function folkTarget(population: number, isHome: boolean): number {
-  return isHome ? 12 : Math.max(7, Math.min(20, Math.round(population / 65)));
+  return isHome ? Math.max(12, Math.min(22, Math.round(population / 38))) : Math.max(8, Math.min(22, Math.round(population / 50)));
 }
 
 export function makeFolk(life: Life, w: WorldState, rng: Rng, regionId: number, role: FolkRole, age: number, used: Set<string>, extra: Partial<Folk> = {}): Folk {
@@ -67,18 +73,18 @@ export function makeFolk(life: Life, w: WorldState, rng: Rng, regionId: number, 
 export function populate(life: Life, w: WorldState, rng: Rng, houseCount: (regionId: number) => number): void {
   const used = new Set(w.characters.map((c) => c.name));
   for (const r of w.regions) {
-    const pool = rolesFor(r.resource);
+    const pool = rolesFor(r.resource, r.coastal);
     // Personajes del motor.
     for (const c of w.characters.filter((x) => x.regionId === r.id && x.alive)) linkCharacter(life, w, c, rng);
     const n = folkTarget(r.population, r.isHome);
-    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', ...(r.isHome ? (['anciano', 'lider', 'sanadora'] as FolkRole[]) : (['anciano', 'guardia'] as FolkRole[]))];
-    while (roles.length < n) roles.push(rng.pick(pool));
+    const roles: FolkRole[] = ['comerciante', 'guardia', 'nino', 'posadero', ...(r.isHome ? (['anciano', 'lider', 'sanadora'] as FolkRole[]) : (['anciano'] as FolkRole[])), ...pool];
+    while (roles.length < n) roles.push(rng.pick(['campesino', 'campesino', 'pastor'] as FolkRole[]));
     for (const role of roles.slice(0, n)) {
       const age = role === 'nino' ? rng.int(5, 12) : role === 'anciano' ? rng.int(62, 78) : rng.int(18, 55);
       life.folk.push(makeFolk(life, w, rng, r.id, role, age, used));
     }
   }
-  assignHouses(life, w, houseCount);
+  assignHouses(life, w, houseCount, true);
 }
 
 export function linkCharacter(life: Life, w: WorldState, c: Character, rng: Rng): Folk {
@@ -107,10 +113,13 @@ export function linkCharacter(life: Life, w: WorldState, c: Character, rng: Rng)
 }
 
 /** Cada vecino vive en una casa existente de su pueblo. */
-export function assignHouses(life: Life, w: WorldState, houseCount: (regionId: number) => number): void {
+export function assignHouses(life: Life, w: WorldState, houseCount: (regionId: number) => number, initial = false): void {
   for (const r of w.regions) {
     const n = Math.max(1, houseCount(r.id));
-    life.folk.filter((f) => f.regionId === r.id && f.alive).forEach((f, i) => (f.house = i % n));
+    // Cada uno conserva su casa (las familias viven juntas); solo se recoloca a quien se quedó sin ella.
+    life.folk.filter((f) => f.regionId === r.id && f.alive).forEach((f, i) => {
+      if (initial || f.house >= n) f.house = i % n;
+    });
   }
 }
 

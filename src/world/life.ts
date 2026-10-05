@@ -8,8 +8,11 @@ import { commitCtx, makeCtx, type Ctx } from '../core/world';
 import { PLAYER_CULTURE } from '../core/content/cultures';
 import { personName } from '../core/content/names';
 import { dayOf, yearOf } from './clock';
-import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember } from './folk';
+import { assignHouses, folkTarget, linkCharacter, makeFolk, populate, remember, ROLE_TITLE } from './folk';
 import { setupPrologue } from './prologue';
+import { chooseParent, comingOfAge, mournDeaths, planToday, societyDay, startFirstStory, welcomeBirth } from './social';
+import { ensurePeople, logEvent } from './society';
+import { marketOf } from './economy';
 import { walkable } from './terrain';
 import { findPath } from './path';
 import { createIdentity, legacyIdentity, story, syncAuthority, updateStanding, type Identity } from './identity';
@@ -122,6 +125,10 @@ export function createLife(w: WorldState): Life {
   story(w, 'Despertó junto a un camino, sin recordar quién era ni cómo había llegado allí.', 'despertar');
   syncAuthority(w);
   setupPrologue(w, life);
+  // Fase 2: cada vecino es una persona con su carácter, su familia y su red de lazos.
+  ensurePeople(w);
+  startFirstStory(w);
+  planToday(w);
   return life;
 }
 
@@ -133,6 +140,7 @@ export function ensureLife(w: WorldState): Life {
     w.life.identity = legacyIdentity(w, w.life);
     syncAuthority(w);
   }
+  if (!w.life.society) ensurePeople(w);
   return w.life;
 }
 
@@ -170,6 +178,8 @@ export function dailyLife(w: WorldState): void {
   syncCharacters(ctx, life);
   for (const r of w.regions) updateTown(ctx, life, r.id);
   folkLifecycle(ctx, life);
+  // La sociedad: economía, necesidades, emociones, lazos, acontecimientos, rumores, conflictos.
+  societyDay(w);
   ageAvatar(ctx, life);
   const news = updateStanding(w);
   const id = life.identity;
@@ -194,7 +204,8 @@ function updateTown(ctx: Ctx, life: Life, regionId: number): void {
   const t: TownState = (life.towns[regionId] ??= { houses: housesFor(w, regionId), burned: [], abandoned: 0, walls: false, tower: false, tier: tierOf(r.population) });
   const target = housesFor(w, regionId);
   // Crecimiento y decadencia: una casa nueva cada pocos días, o casas que se vacían.
-  if (target > t.houses && rng.chance(0.5)) t.houses++;
+  // Construir cuesta madera y piedra (y alguien que la venda): sin materiales, la gente se apiña.
+  if (target > t.houses && rng.chance(0.5) && buildHouse(w, regionId)) t.houses++;
   if (target < t.houses - 2) t.abandoned = Math.min(t.houses - 2, t.houses - target);
   else if (t.abandoned > 0 && target >= t.houses) t.abandoned--;
   // Guerra: arden casas. Paz: se reconstruyen.
@@ -239,6 +250,19 @@ function updateTown(ctx: Ctx, life: Life, regionId: number): void {
   }
 }
 
+/** Una casa nueva se hace con madera y piedra del mercado (si las hay). */
+function buildHouse(w: WorldState, regionId: number): boolean {
+  if (!w.life?.society) return true;
+  const m = marketOf(w, regionId);
+  if (m.stock.madera < 6 || m.stock.piedra < 4) return false;
+  m.stock.madera -= 6;
+  m.stock.piedra -= 4;
+  const pay = Math.min(m.treasury, 4);
+  m.treasury -= pay;
+  m.cash += pay;
+  return true;
+}
+
 function findWarEnd(w: WorldState, regionId: number): string | undefined {
   return [...w.entries].reverse().find((e) => e.kind === 'conflicto' && e.text.startsWith('Termina la guerra') && e.regions.includes(regionId))?.id;
 }
@@ -246,26 +270,33 @@ function findWarEnd(w: WorldState, regionId: number): string | undefined {
 function folkLifecycle(ctx: Ctx, life: Life): void {
   const { w, rng } = ctx;
   const used = new Set(life.folk.map((f) => f.name));
+  const died: Folk[] = [];
   for (const f of life.folk) {
     if (!f.alive) continue;
     const r = w.regions[f.regionId];
     if ((w.day - f.born) % DAYS_PER_YEAR === 0 && w.day !== f.born) {
       f.age++;
-      if (f.role === 'nino' && f.age >= 15) f.role = rng.pick(['campesino', 'comerciante', 'guardia', 'artesano', 'pastor'] as const);
+      if (f.role === 'nino' && f.age >= 15) {
+        f.role = comingOfAge(w, rng, f);
+        f.p?.jobs.push({ role: f.role, from: w.day });
+        if (f.p) logEvent(w, f.regionId, 'oficio', `${f.name} ya es mayor: empieza a trabajar de ${ROLE_TITLE[f.role]}.`, [f.id]);
+      }
     }
     if (f.charId) continue; // los personajes con nombre los gestiona el motor
     let p = f.age > 64 ? (f.age - 64) * 0.003 : 0;
-    if (r.flags.hambre) p += 0.004;
+    if (r.flags.hambre) p += w.sim?.worldEconomy ? 0.002 : 0.004;
     if (r.flags.guerra) p += f.role === 'guardia' ? 0.03 : 0.008;
     if (r.flags.fiebre) p += 0.004;
     if (rng.chance(p)) {
       f.alive = false;
+      died.push(f);
       const cause = r.flags.guerra?.causeId ?? r.flags.hambre?.causeId ?? r.flags.fiebre?.causeId;
       const how = f.age > 64 && !cause ? 'de vieja' : r.flags.guerra ? 'en la guerra' : r.flags.hambre ? 'durante la escasez' : r.flags.fiebre ? 'de fiebre' : '';
       if (f.lastMet >= 0) record(ctx, { kind: 'personaje', text: `Te enteras de que ${f.name}, a quien conociste en ${r.name}, murió ${how}.`.replace(' murió de vieja', ' murió de vieja edad'), regions: [f.regionId], causeId: cause, known: true });
     }
     // Emigración: los vecinos se van con las familias que huyen.
-    const mig = r.flags.emigrando;
+    // Con la economía viva, las migraciones las decide population.ts (con nombre y motivo).
+    const mig = w.sim?.worldEconomy ? undefined : r.flags.emigrando;
     if (mig && rng.chance(0.12) && f.role !== 'lider') {
       const to = Number(mig.data?.to);
       if (!Number.isNaN(to) && w.regions[to]) {
@@ -282,13 +313,16 @@ function folkLifecycle(ctx: Ctx, life: Life): void {
     const want = folkTarget(r.population, r.isHome);
     const food = r.isHome ? w.player.reserves / 5 : r.food;
     if (alive.length < want && food > 7 && rng.chance(0.15)) {
-      const parent = rng.pick(alive.filter((f) => f.age >= 18 && f.age < 50).length ? alive.filter((f) => f.age >= 18 && f.age < 50) : alive);
+      const parent = chooseParent(w, rng, alive) ?? rng.pick(alive.filter((f) => f.age >= 18 && f.age < 50).length ? alive.filter((f) => f.age >= 18 && f.age < 50) : alive);
       const baby = makeFolk(life, w, rng, r.id, 'nino', 0, used, { parentId: parent?.id });
       baby.born = w.day;
       life.folk.push(baby);
+      welcomeBirth(w, baby, parent);
       if (parent && parent.lastMet >= 0) record(ctx, { kind: 'personaje', text: `A ${parent.name}, de ${r.name}, le ha nacido un hijo: ${baby.name}.`, regions: [r.id], known: true });
     }
   }
+  // Las familias y los amigos lloran a sus muertos (y heredan).
+  mournDeaths(w, died);
   // Los muertos olvidados se archivan (se conserva a quien conociste).
   life.folk = life.folk.filter((f) => f.alive || f.lastMet >= 0 || f.charId);
   assignHouses(life, w, (id) => life.towns[id]?.houses ?? 3);

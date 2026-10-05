@@ -2,6 +2,11 @@ import { DEFAULT_PLAYER_LOOK, playerAppearance, SKINS, type PlayerLook } from '.
 import { drawPortrait } from '../../render/human';
 import { KNOWS, MAX_LEVEL, questions, SKILLS, STANDING, TALENTS, tryFragment, whoAmI, type KnowId, type SkillId } from '../../world/identity';
 import { ensureLife, heirs } from '../../world/life';
+import { ROLE_TITLE } from '../../world/folk';
+import { playerEco } from '../../world/business';
+import { GOOD } from '../../world/economy';
+import { priceBook } from '../market';
+import { emotionOf } from '../../world/society';
 import { showFragment } from '../world-dialogs';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
@@ -69,6 +74,8 @@ export function renderFamily(app: App): Node[] {
           ...id.items.map((it) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '🔱'), h('div', { class: 'txt' }, it === 'colgante' ? 'Un colgante con un símbolo' : it, h('div', null, h('button', { class: 'btn small', onclick: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(app, ev); } }, 'Mirarlo'))))),
         )
       : null,
+    metFolk.length ? section('Gente que conoces', ...people(app)) : null,
+    ...economySections(app),
     memories.length ? section('Recuerdos', ...memories.map((e) => h('p', { class: 'quote' }, e.text))) : null,
     lookEditor(app),
     section('Familia',
@@ -116,4 +123,36 @@ function lookEditor(app: App): HTMLElement {
     look.fem ? null : chips(BEARDS, look.beard, (beard) => set({ beard })),
     h('div', { class: 'swatches' }, ...SKINS.slice(0, 7).map((c, i) => h('button', { class: `swatch ${i === look.skin ? 'on' : ''}`, style: `background:${c}`, 'aria-label': `piel ${i + 1}`, onclick: () => set({ skin: i }) }))),
   );
+}
+
+/** La gente con la que te has cruzado: cómo te trata y lo que sabes de su vida (por lo que te han contado). */
+function people(app: App): Node[] {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const facts = life.society?.facts ?? {};
+  const met = life.folk.filter((f) => f.lastMet >= 0).sort((a, b) => b.lastMet - a.lastMet).slice(0, 14);
+  return met.map((f) => {
+    const how = !f.alive ? 'ya no está' : f.resentment > 0.5 ? 'no te soporta' : f.gratitude > 0.45 || f.trust > 0.66 ? 'te aprecia' : f.trust < 0.3 ? 'no se fía de ti' : 'te conoce';
+    const where = f.regionId !== w.player.home ? ` · ${w.regions[f.regionId].name}` : '';
+    const mood = f.alive && f.p ? emotionOf(f) : 'calma';
+    const known = (facts[f.id] ?? []).slice(-3);
+    return h('div', { class: 'entry' },
+      h('div', { class: 'ico' }, !f.alive ? '🕯' : mood === 'felicidad' ? '🙂' : mood === 'tristeza' ? '😔' : mood === 'enojo' ? '😠' : mood === 'miedo' || mood === 'estres' ? '😟' : '·'),
+      h('div', { class: 'txt' }, h('b', null, f.name), ` · ${ROLE_TITLE[f.role]}${where} · ${how}`, ...known.map((k) => h('div', { class: 'tiny' }, k))),
+    );
+  });
+}
+
+/** Tu cuaderno de precios y tus negocios (solo si ya has empezado a comerciar). */
+function economySections(app: App): (HTMLElement | null)[] {
+  const w = app.w!;
+  if (!ensureLife(w).society) return [];
+  const pe = playerEco(w);
+  const book = priceBook(app);
+  const out: (HTMLElement | null)[] = [];
+  if (book.length) out.push(section('Tu cuaderno de precios', ...book.map((b) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, '📓'), h('div', { class: 'txt' }, h('b', null, b.title), ...b.lines.map((l) => h('div', { class: 'tiny' }, l)))))));
+  if (pe.businesses.length) out.push(section('Tus negocios', ...pe.businesses.map((b) => h('div', { class: 'entry' }, h('div', { class: 'ico' }, b.kind === 'puesto' ? '🏪' : b.kind === 'granja' ? '🌾' : '🛞'), h('div', { class: 'txt' }, h('b', null, `${b.kind === 'puesto' ? 'Puesto' : b.kind === 'granja' ? 'Campo' : 'Transporte'} en ${w.regions[b.regionId].name}`), h('div', { class: 'tiny' }, `Caja: ${Math.floor(b.cash)} · ${b.workers.length ? `${b.workers.length} trabajando` : 'sin nadie'}`), ...b.log.slice(-2).map((l) => h('div', { class: 'tiny' }, l.text)))))));
+  const contracts = pe.contracts.filter((c) => !c.done);
+  if (contracts.length) out.push(section('Encargos', ...contracts.map((c) => h('p', null, `Llevar ${c.qty} de ${GOOD[c.good].name} a ${w.regions[c.to].name} (${c.due - w.day >= 0 ? `quedan ${c.due - w.day} días` : 'vas tarde'}) · ${c.pay} 🪙`))));
+  return out;
 }

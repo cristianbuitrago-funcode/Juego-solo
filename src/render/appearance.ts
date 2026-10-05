@@ -157,7 +157,9 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   const style = regionalStyle(w, f.regionId);
   const P = STYLES[style];
   const hue = regionHue(w, f.regionId);
-  const fem = r() < (f.role === 'sanadora' || f.role === 'exploradora' ? 0.85 : f.role === 'guardia' ? 0.25 : 0.48);
+  // El género se fija una vez (si la persona ya lo tiene) y no cambia al cambiar de oficio.
+  const roll = r();
+  const fem = f.gender ? f.gender === 'f' : roll < (f.role === 'sanadora' || f.role === 'exploradora' ? 0.85 : f.role === 'guardia' ? 0.25 : 0.48);
   const child = f.role === 'nino' || f.age < 14;
   const old = f.age >= 60;
   const skin = SKINS[r() < 0.75 ? P.skins[Math.floor(r() * P.skins.length)] : Math.floor(r() * SKINS.length)];
@@ -270,6 +272,24 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
       o.hat = 'panuelo';
       o.hatColor = '#e8e2d2';
       o.item = 'cesta';
+      break;
+    case 'posadero':
+      o.apron = '#e8dcc0';
+      o.sleeves = 'remangadas';
+      o.item = undefined;
+      break;
+    case 'minero':
+      o.hat = 'casco';
+      o.hatColor = '#6a5a48';
+      o.patches = true;
+      o.item = 'martillo';
+      o.gloves = '#4a3a2a';
+      o.shoes = 'botas';
+      break;
+    case 'carpintero':
+      o.apron = '#8a6a40';
+      o.item = 'martillo';
+      o.sleeves = 'remangadas';
       break;
     case 'exploradora':
       o.cloak = { color: pick(r, ['#3f5a36', '#5a4a30', '#4a4a3a']), fur: false, hood: true, clasp: '#c9a65a' };

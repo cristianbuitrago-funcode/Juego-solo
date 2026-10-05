@@ -7,6 +7,10 @@ import { findPath, passable } from '../world/path';
 import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { prologueBlocks, prologueItems } from '../world/prologue';
+import { overheard } from '../world/gossip';
+import { convoyPositions } from '../world/trade';
+import { GOOD_COLOR, marketLook } from '../world/marketview';
+import type { Good } from '../world/economy';
 import { idx, speedOf } from '../world/terrain';
 import { TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
@@ -25,6 +29,12 @@ import * as S from './sprites';
  * de verdad. Los lejanos "viven" en su rutina abstracta y se materializan
  * en el sitio correcto cuando el jugador se acerca.
  */
+const hashOf = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+
 export type Target =
   | { kind: 'folk'; id: string; label: string }
   | { kind: 'building'; regionId: number; building: BuildingKind; label: string }
@@ -33,7 +43,8 @@ export type Target =
   | { kind: 'encounter'; id: string; label: string }
   | { kind: 'messenger'; petitionId: string; label: string }
   | { kind: 'signpost'; regionId: number; label: string }
-  | { kind: 'item'; id: string; label: string };
+  | { kind: 'item'; id: string; label: string }
+  | { kind: 'convoy'; id: string; label: string };
 
 export interface SceneCallbacks {
   advance(minutes: number): void;
@@ -254,6 +265,26 @@ export class WorldScene {
     this.pending = target;
     const path = findPath(this.w, p.x, p.y, x, y, 9000);
     this.path = path.length ? path : [{ x, y }];
+  }
+
+  /** Vecinos visibles a menos de `radius` teselas del jugador. */
+  folkNear(radius: number): string[] {
+    const me = ensureLife(this.w).player;
+    const out: string[] = [];
+    for (const [id, e] of this.ents) if (!e.inside && Math.hypot(e.x - me.x, e.y - me.y) <= radius) out.push(id);
+    return out;
+  }
+
+  /** Alguien viene hacia ti por su cuenta (para hablarte). */
+  summonId: string | null = null;
+  summon(id: string | null): void {
+    this.summonId = id;
+  }
+
+  distanceTo(id: string): number {
+    const e = this.ents.get(id);
+    const me = ensureLife(this.w).player;
+    return e && !e.inside ? Math.hypot(e.x - me.x, e.y - me.y) : Infinity;
   }
 
   folkPosition(id: string): { x: number; y: number } | undefined {
@@ -680,6 +711,10 @@ export class WorldScene {
   }
 
   private targetOf(f: Folk, enc: Map<string, { x: number; y: number }>) {
+    if (f.id === this.summonId) {
+      const me = ensureLife(this.w).player;
+      return { x: me.x + 0.9, y: me.y + 0.2, inside: false, activity: 'se acerca a ti' };
+    }
     const spot = enc.get(f.id);
     if (spot) return { ...spot, inside: false, activity: 'discute' };
     return routineOf(this.w, f, ensureLife(this.w).clock);
@@ -823,6 +858,8 @@ export class WorldScene {
         return this.l.villages[t.regionId].sign;
       case 'item':
         return prologueItems(w).find((x) => x.id === t.id);
+      case 'convoy':
+        return convoyPositions(w).find((x) => x.c.id === t.id);
     }
   }
 
@@ -862,6 +899,7 @@ export class WorldScene {
       consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
+    for (const cv of convoyPositions(w)) consider({ kind: 'convoy', id: cv.c.id, label: cv.c.status === 'atacada' ? 'Una carreta volcada' : cv.c.kind === 'jugador' ? 'Tu carreta' : `Caravana de ${cv.c.ownerName}` }, cv.x, cv.y, radius * 1.4);
     for (const it of prologueItems(w)) if (it.label) consider({ kind: 'item', id: it.id, label: it.label }, it.x, it.y, radius * 1.1);
     for (const p of this.l.places) if (life.places[p.id]?.discovered) consider({ kind: 'place', id: p.id, label: p.name }, p.x + 0.5, p.y + 0.5, radius * 1.3);
     // Los encuentros tienen prioridad sobre las personas que participan en ellos.
@@ -1159,13 +1197,15 @@ export class WorldScene {
       this.lights.push({ x: px, y: py, r: 36, k: 0.95 });
       items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
     }
-    // Mercado: puestos llenos, vacíos o abandonados.
-    const traffic = w.routes.filter((x) => (x.a === regionId || x.b === regionId) && x.status === 'abierta').reduce((s, x) => s + x.traffic, 0);
-    const active = r.flags.sinComercio ? 2 : Math.max(2, Math.min(v.stalls.length, 6, Math.round(2 + traffic * 3 + (r.population / 400))));
-    v.stalls.slice(0, active).forEach((s, i) => {
-      const full = food > 5 && !r.flags.hambre && !(r.flags.sinComercio && i > 0);
-      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(full, `hsl(${(hue + i * 40) % 360} 50% 55%)`, i), s.x * TILE, s.y * TILE) });
+    // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
+    const look = marketLook(w, regionId);
+    v.stalls.slice(0, Math.min(v.stalls.length, 6)).forEach((s, i) => {
+      const stallGoods = look.stalls[i];
+      if (stallGoods === undefined) return; // sin comerciante: no hay puesto
+      const open = stallGoods.length > 0;
+      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
     });
+    void food;
     // Empalizada.
     if (town?.walls) {
       const R = v.wallR;
@@ -1333,23 +1373,8 @@ export class WorldScene {
     const day = h > 6.5 && h < 20;
     const clock = life.clock;
     for (const road of this.l.roads) {
-      const route = w.routes[road.routeId];
       const len = road.path.length;
       if (len < 4) continue;
-      // Caravanas comerciales: su número depende del tráfico real de la ruta.
-      if (route.status === 'abierta' && day) {
-        const n = Math.round(route.traffic * 2.2);
-        for (let i = 0; i < n; i++) {
-          const phase = ((clock * 1.2) / len + i / n + road.routeId * 0.37) % 2;
-          const fwd = phase < 1;
-          const pos = along(road.path, fwd ? phase : 2 - phase);
-          const px = pos.x * TILE;
-          const py = pos.y * TILE;
-          if (!inView(px, py)) continue;
-          const flip = (fwd ? pos.dx : -pos.dx) < 0;
-          items.push({ y: py, draw: () => S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, flip, '#d9c08a'), px, py) });
-        }
-      }
       // Soldados en marcha entre regiones en guerra.
       if (w.regions[road.a].relations[road.b]?.war) {
         for (let i = 0; i < 5; i++) {
@@ -1364,6 +1389,17 @@ export class WorldScene {
           items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
         }
       }
+    }
+    // Caravanas de verdad: cada carreta lleva una carga concreta de un pueblo a otro.
+    for (const cv of convoyPositions(w)) {
+      const px = cv.x * TILE;
+      const py = cv.y * TILE;
+      if (!inView(px, py)) continue;
+      const main = Object.keys(cv.c.cargo)[0] as Good | undefined;
+      const color = cv.c.status === 'atacada' ? '#5a4a3a' : main ? GOOD_COLOR[main] : '#d9c08a';
+      const moving = cv.c.status === 'viaje' && day;
+      items.push({ y: py, draw: () => S.drawSprite(g, S.cart(moving ? Math.floor(t / 250) % 4 : 0, cv.dx < 0, color), px, py) });
+      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => S.drawSprite(g, S.prop('cajas', 1), px + 26, py + 8) });
     }
     // Refugiados: caminan de verdad de su región a la de destino.
     for (const r of w.regions) {
@@ -1441,6 +1477,17 @@ export class WorldScene {
   /** "!" sobre los encuentros, y resaltado del objetivo enfocado. */
   private drawMarkers(g: CanvasRenderingContext2D, t: number): void {
     const life = ensureLife(this.w);
+    // La caja perdida destella de vez en cuando: miel al sol.
+    for (const it of prologueItems(this.w)) {
+      if (it.id !== 'caja' || (!this.reduceMotion && Math.floor(t / 180) % 9 > 2)) continue;
+      const X = Math.round(it.x * TILE + 5);
+      const Y = Math.round(it.y * TILE - 16);
+      g.fillStyle = '#fff6c8';
+      g.fillRect(X, Y - 2, 1, 5);
+      g.fillRect(X - 2, Y, 5, 1);
+      g.fillStyle = '#ffd36a';
+      g.fillRect(X, Y, 1, 1);
+    }
     for (const e of life.encounters) {
       if (e.resolved) continue;
       const bob = this.reduceMotion ? 0 : Math.sin(t / 250) * 2;
@@ -1487,6 +1534,29 @@ export class WorldScene {
       g.strokeText(f.name, p.x, p.y);
       g.fillStyle = '#f6ecd2';
       g.fillText(f.name, p.x, p.y);
+    }
+    // Lo que se oye al pasar: frases sueltas de quienes charlan cerca (y gritos de quienes discuten).
+    let bubbles = 0;
+    const slot = Math.floor(performance.now() / 5200);
+    for (const [id, e] of this.ents) {
+      if (bubbles >= 2 || e.inside || !e.partner || id > e.partner || Math.hypot(e.x - me.x, e.y - me.y) > 6.5) continue;
+      const a = this.folkById.get(id);
+      const b = this.folkById.get(e.partner);
+      const o = this.ents.get(e.partner);
+      if (!a || !b || !o) continue;
+      const angry = /discute|pelea/.test(e.act);
+      const text = angry ? (slot % 2 ? '«¡Eso es mentira!»' : '«¡No vuelvas a hablarme así!»') : overheard(w, slot % 2 ? a : b, slot % 2 ? b : a, slot + hashOf(id));
+      if (!text || (slot + hashOf(id)) % 3 === 2) continue;
+      bubbles++;
+      const p = this.toScreen(((e.x + o.x) / 2) * TILE, Math.min(e.y, o.y) * TILE - 46);
+      g.font = 'italic 12px Georgia, serif';
+      const wpx = Math.min(240, g.measureText(text).width + 14);
+      g.fillStyle = angry ? 'rgba(120,30,25,0.82)' : 'rgba(30,25,20,0.72)';
+      g.beginPath();
+      g.roundRect(p.x - wpx / 2, p.y - 20, wpx, 20, 8);
+      g.fill();
+      g.fillStyle = '#f6ecd2';
+      g.fillText(text.length > 38 ? `${text.slice(0, 36)}…»` : text, p.x, p.y - 4);
     }
     // Nombre del pueblo al acercarse a la plaza.
     for (const v of this.l.villages) {
