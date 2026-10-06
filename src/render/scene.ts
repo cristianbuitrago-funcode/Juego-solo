@@ -1,6 +1,6 @@
 import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
-import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
+import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf, type Season } from '../world/clock';
 import { weatherIn } from '../world/geography';
 import { clearMaterials } from '../visual/env/materials';
 import { bodyOf } from '../visual/figure/body';
@@ -151,6 +151,7 @@ export class WorldScene {
   apCache = new Map<string, { key: string; ap: Appearance }>();
   private playerLook: unknown = null;
   private wxFrame = 'despejado';
+  private seasonFrame: Season = 'primavera';
   private playerLookKey = '';
   private extras = new Map<string, Extra>();
   private birds: { x: number; y: number; vx: number; ph: number }[] = [];
@@ -1020,7 +1021,7 @@ export class WorldScene {
             a.tx = a.hx + (Math.random() - 0.5) * R;
             a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
             const tt = this.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
-            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty) && !this.furniture.solidAt(a.tx, a.ty);
+            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty) && !this.animalBlocked(a.kind, a.tx, a.ty);
             if (!ok) (a.tx = a.x), (a.ty = a.y);
           }
           continue;
@@ -1029,7 +1030,8 @@ export class WorldScene {
         const nx = a.x + ((a.tx - a.x) / d) * sp;
         const ny = a.y + ((a.ty - a.y) / d) * sp;
         // Los animales no atraviesan vallas, fuentes ni casas: si el paso está cortado, se paran.
-        if (!a.water && (!passable(this.w, this.l, nx, ny) || this.furniture.solidAt(nx, ny))) {
+        // (si ya estaba encajado, se le deja salir)
+        if (!a.water && (!passable(this.w, this.l, nx, ny) || (this.animalBlocked(a.kind, nx, ny) && !this.animalBlocked(a.kind, a.x, a.y)))) {
           a.tx = a.x;
           a.ty = a.y;
           continue;
@@ -1040,6 +1042,12 @@ export class WorldScene {
         a.anim += dt * 6;
       }
     }
+  }
+
+  /** El cuerpo de un animal es más ancho que un punto: no se planta con un farol o un poste atravesándolo. */
+  private animalBlocked(kind: Animal['kind'], x: number, y: number): boolean {
+    const half = kind === 'caballo' || kind === 'vaca' ? 0.8 : kind === 'gallina' || kind === 'pato' ? 0.25 : 0.55;
+    return this.furniture.solidAt(x, y) || this.furniture.solidAt(x - half, y) || this.furniture.solidAt(x + half, y);
   }
 
   /** Los rebaños crecen o menguan con la comida y la salud de la tierra. */
@@ -1054,7 +1062,7 @@ export class WorldScene {
       for (let i = 0; i < Math.round(n * plenty); i++) {
         const x = cx + (hash(`${regionId}${kind}`, i) - 0.5) * 6;
         const y = cy + (hash(`${regionId}${kind}`, i + 50) - 0.5) * 5;
-        if (!passable(w, this.l, x, y) || this.furniture.solidAt(x, y)) continue;
+        if (!passable(w, this.l, x, y) || this.animalBlocked(kind, x, y)) continue;
         out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: hash(`${regionId}${kind}`, i + 9) < 0.5, anim: i, v: i });
       }
     };
@@ -1071,7 +1079,7 @@ export class WorldScene {
     for (let i = 0; i < (r.population > 700 ? 2 : 1); i++) {
       const x = v.cx + 0.5 + (hash(`${regionId}perro`, i) - 0.5) * 8;
       const y = v.cy + v.plazaR + 1.5;
-      if (passable(w, this.l, x, y) && !this.furniture.solidAt(x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
+      if (passable(w, this.l, x, y) && !this.animalBlocked('perro', x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
     }
     // Patos donde hay agua cerca.
     for (let k = 0; k < 40; k++) {
@@ -1215,7 +1223,8 @@ export class WorldScene {
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
     const y1 = this.cam.y + this.vh / 2 / z;
-    const season = seasonOf(w.day);
+    // Estación y tiempo se deciden una vez por fotograma; el resto del dibujo los lee de aquí.
+    const season = (this.seasonFrame = seasonOf(w.day));
     const weather = this.weatherHere();
     this.wxFrame = weather;
     const look = (season === 'invierno' || weather === 'nieve' ? 'invierno' : season) as S.SeasonLook;
@@ -1575,7 +1584,7 @@ export class WorldScene {
     const st = this.styleOf(regionId);
     const hue = this.hueOf(regionId);
     const night = darkness(life.clock) > 0.3;
-    const snowRoofs = this.chunks.snowyRegion(regionId, seasonOf(w.day));
+    const snowRoofs = this.chunks.snowyRegion(regionId, this.seasonFrame);
     const wet = this.wxFrame === 'lluvia' || this.wxFrame === 'tormenta';
     const vsec = t / 1000;
     const built = Math.min(v.houses.length, town?.houses ?? 3);
@@ -1635,7 +1644,7 @@ export class WorldScene {
       const px = pr.x * TILE;
       const py = pr.y * TILE;
       if (!inView(px, py)) continue;
-      const frozen = pr.kind === 'fuente' && snowRoofs && (seasonOf(w.day) === 'invierno' || this.wxFrame === 'nieve');
+      const frozen = pr.kind === 'fuente' && snowRoofs && (this.seasonFrame === 'invierno' || this.wxFrame === 'nieve');
       const lampOn = night || ['lluvia', 'tormenta', 'niebla'].includes(this.wxFrame);
       const pt0 = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.kind === 'farol' ? (lampOn ? 1 : 0) : pr.v);
       // Con nieve, lo que tiene una cara de arriba (bancos, carteles, cajas, heno, carros) se cubre.
@@ -1653,7 +1662,7 @@ export class WorldScene {
     // Lo propio de esta plaza: pavimento con dibujo, árboles, jardineras, terrazas, estandartes, guirnaldas.
     {
       const pl = this.furniture.plazaOf(regionId);
-      const season = seasonOf(w.day);
+      const season = this.seasonFrame;
       const ox = (v.cx + 0.5) * TILE;
       const oy = (v.cy + 0.5) * TILE;
       if (pl.paving && inView(ox, oy, v.plazaR * TILE)) {
