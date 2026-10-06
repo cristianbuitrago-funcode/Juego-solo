@@ -75,6 +75,8 @@ Medido en Chromium sin GPU (solo vale para comparar). Tres hallazgos cambiaron e
 
 1. **Filtrado `high` al ampliar texturas** (bicúbico) era el mayor coste: con bilineal (`low`) la escena de día pasó de 29 a 46 fps y la de noche de 9 a 32. Las texturas se pintan a una resolución cercana a la de pantalla, así que el bilineal no se nota.
 2. **Mezclas avanzadas a pantalla completa** (`multiply`, `screen`, `saturation`) obligan a la GPU a copiar el fondo en cada pasada (en muchos Android también). La gradación combina todos los tintes en un velo `source-over` y otro claro; la noche es un velo frío y las luces se suman (`lighter`).
-3. **Suelo**: pintar un fragmento costaba 150–240 ms. Ahora la base se calcula a media resolución (4× menos), se evita consultar la orilla lejos del agua y los vecinos se precargan de uno en uno en los fotogramas libres.
+3. **Suelo**: pintar un fragmento costaba 150–240 ms. Ahora la base se calcula a media resolución (4× menos, con una muestra de margen para que no haya costuras), se evita consultar la orilla lejos del agua y el pintado va por pasos: la precarga de los vecinos reparte unos 4 ms por fotograma. La caché guarda los fragmentos visibles más un anillo.
+4. **Bucle**: con el diario o el mapa (opacos) el mundo no se pinta; detrás de un diálogo, uno de cada tres fotogramas. El nivel automático mide el tiempo de dibujo (no el intervalo, para no confundir un móvil a 30 Hz con uno lento) y baja o sube de nivel.
+5. **Niebla**: se compone en una capa a ¼ de resolución y se dibuja una sola vez.
 
-Sin degradados creados por fotograma en lo repetido (gotas, charcos, halos, sombras de personas y árboles, niebla, viñeta): son texturas pintadas una vez.
+Sin degradados creados por fotograma en lo repetido (gotas, charcos, halos, faroles, hogueras, humo, sombras de personas y árboles, niebla, viñeta): son texturas pintadas una vez.

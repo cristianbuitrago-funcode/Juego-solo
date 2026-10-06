@@ -2,6 +2,7 @@ import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
 import { weatherIn } from '../world/geography';
+import { clearMaterials } from '../visual/env/materials';
 import { bodyOf } from '../visual/figure/body';
 import { drawSmall, drawTree, drawTreeShadow, type SmallKind, type TreeKind } from '../visual/env/flora';
 import { playerRegion } from '../world/society';
@@ -230,7 +231,7 @@ export class WorldScene {
   setQuality(q: QualitySetting): void {
     this.qualitySetting = q;
     const changed = setTier(resolveTier(q));
-    if (changed) (clearTextures(), S.clearSprites());
+    if (changed) (clearTextures(), S.clearSprites(), clearMaterials());
     this.resize();
     if (VQ().crowd === 0) this.extras.clear();
   }
@@ -1299,7 +1300,6 @@ export class WorldScene {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawGrade(g, hourOf(life.clock), weather);
     this.drawNight(g, weather);
-    this.drawWeather(g, weather, t);
     this.drawLabels(g);
     this.drawEdgeArrows(g, t);
     const cine = this.cineAmount();
@@ -2242,12 +2242,6 @@ export class WorldScene {
     }
   }
 
-  private drawWeather(g: CanvasRenderingContext2D, weather: string, t: number): void {
-    // La lluvia, la nieve, la niebla y los relámpagos los pinta el sistema de clima; el tono del cielo va en la gradación.
-    void g;
-    void weather;
-    void t;
-  }
 
 
   // -------------------------------------------------------------------------

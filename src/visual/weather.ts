@@ -167,10 +167,26 @@ export class Weather {
     }
   }
 
+  private fogLayer: HTMLCanvasElement | null = null;
   private drawFog(g: CanvasRenderingContext2D, W: number, H: number, t: number, dt: number, camDx: number, camDy: number): void {
-    if (!this.fog.length) for (let i = 0; i < 9; i++) this.fog.push({ x: Math.random() * W, y: Math.random() * H, r: 140 + Math.random() * 180, v: 6 + Math.random() * 10 });
-    g.fillStyle = 'rgba(214,220,226,0.22)';
-    g.fillRect(0, 0, W, H);
+    const n = Math.max(3, Math.round(VQ().particles / 50));
+    if (this.fog.length !== n) {
+      this.fog.length = 0;
+      for (let i = 0; i < n; i++) this.fog.push({ x: Math.random() * W, y: Math.random() * H, r: 140 + Math.random() * 180, v: 6 + Math.random() * 10 });
+    }
+    // Toda la niebla se compone en una capa a ¼ de resolución y se dibuja una sola vez
+    // ampliada (es muy suave: no se nota), en lugar de diez pasadas a pantalla completa.
+    const q = 0.25;
+    const lw = Math.max(1, Math.ceil(W * q));
+    const lh = Math.max(1, Math.ceil(H * q));
+    if (!this.fogLayer) this.fogLayer = document.createElement('canvas');
+    const L = this.fogLayer;
+    if (L.width !== lw || L.height !== lh) (L.width = lw), (L.height = lh);
+    const fg = L.getContext('2d')!;
+    fg.setTransform(q, 0, 0, q, 0, 0);
+    fg.clearRect(0, 0, W, H);
+    fg.fillStyle = 'rgba(214,220,226,0.22)';
+    fg.fillRect(0, 0, W, H);
     const blob = this.fogTex('blob');
     for (const f of this.fog) {
       f.x += f.v * dt + camDx * 0.6;
@@ -178,10 +194,11 @@ export class Weather {
       if (f.x - f.r > W) f.x = -f.r;
       if (f.y - f.r > H) f.y = -f.r;
       if (f.y + f.r < 0) f.y = H + f.r;
-      g.drawImage(blob, f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
+      fg.drawImage(blob, f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
     }
     // La niebla se espesa en los bordes.
-    g.drawImage(this.fogTex('edge'), 0, 0, W, H);
+    fg.drawImage(this.fogTex('edge'), 0, 0, W, H);
+    g.drawImage(L, 0, 0, W, H);
     void t;
   }
 

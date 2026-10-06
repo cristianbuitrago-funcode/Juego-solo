@@ -51,21 +51,14 @@ export function drawFire(g: CanvasRenderingContext2D, x: number, y: number, t: n
   const H = big ? 17 : 11;
   const tt = still ? 0 : t / 1000;
   // Brillo en el suelo.
-  const glow = g.createRadialGradient(x, y - 2, 0, x, y - 2, H * 1.6);
-  glow.addColorStop(0, 'rgba(255,170,70,0.35)');
-  glow.addColorStop(1, 'rgba(255,120,40,0)');
-  g.fillStyle = glow;
-  g.beginPath();
-  g.ellipse(x, y - 1, H * 1.6, H * 0.7, 0, 0, Math.PI * 2);
-  g.fill();
+  g.drawImage(soft('rgba(255,170,70,0.35)', 'rgba(255,120,40,0)'), x - H * 1.6, y - 1 - H * 0.7, H * 3.2, H * 1.4);
   // Lenguas: de fuera (rojo) a dentro (casi blanco).
   const tongue = (w: number, h: number, c0: string, c1: string, ph: number) => {
     const sway = Math.sin(tt * 7 + ph) * w * 0.35;
     const hh = h * (0.85 + Math.sin(tt * 9 + ph * 2) * 0.12);
-    const gr = g.createLinearGradient(x, y - 3, x, y - 3 - hh);
-    gr.addColorStop(0, c0);
-    gr.addColorStop(1, c1);
-    g.fillStyle = gr;
+    // (color sólido: cinco degradados nuevos por hoguera y fotograma eran demasiados)
+    void c1;
+    g.fillStyle = c0;
     g.beginPath();
     g.moveTo(x - w, y - 2);
     g.bezierCurveTo(x - w * 1.1, y - 3 - hh * 0.5, x + sway - w * 0.2, y - 3 - hh * 0.75, x + sway, y - 3 - hh);
@@ -91,29 +84,34 @@ export function drawFire(g: CanvasRenderingContext2D, x: number, y: number, t: n
 /** Llama de farol o antorcha con su halo cálido. */
 export function drawFlame(g: CanvasRenderingContext2D, x: number, y: number, t: number, still = false): void {
   const fl = still ? 1 : 0.9 + Math.sin(t / 130 + x) * 0.06 + Math.sin(t / 47 + x * 3) * 0.04;
-  const halo = g.createRadialGradient(x, y, 0, x, y, 9 * fl);
-  halo.addColorStop(0, 'rgba(255,220,140,0.55)');
-  halo.addColorStop(1, 'rgba(255,170,80,0)');
-  g.fillStyle = halo;
-  g.fillRect(x - 10, y - 10, 20, 20);
-  const gr = g.createRadialGradient(x, y - 0.6, 0, x, y - 0.4, 2.6 * fl);
-  gr.addColorStop(0, '#fffbe8');
-  gr.addColorStop(0.45, '#ffd56a');
-  gr.addColorStop(1, 'rgba(240,140,50,0)');
-  g.fillStyle = gr;
-  g.beginPath();
-  g.ellipse(x, y - 0.5, 1.6 * fl, 2.6 * fl, 0, 0, Math.PI * 2);
-  g.fill();
+  const r = 9 * fl;
+  g.drawImage(soft('rgba(255,220,140,0.55)', 'rgba(255,170,80,0)'), x - r, y - r, r * 2, r * 2);
+  g.drawImage(soft('#fffbe8', 'rgba(240,140,50,0)', '#ffd56a'), x - 1.6 * fl, y - 0.5 - 2.6 * fl, 3.2 * fl, 5.2 * fl);
 }
 
 /** Bocanada de humo suave. `color` es un prefijo «rgba(r,g,b,». */
 export function drawPuff(g: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha: number): void {
-  const gr = g.createRadialGradient(x - r * 0.25, y - r * 0.3, 0, x, y, r * 1.2);
-  gr.addColorStop(0, `${color}${(alpha * 0.9).toFixed(3)})`);
-  gr.addColorStop(0.6, `${color}${(alpha * 0.5).toFixed(3)})`);
-  gr.addColorStop(1, `${color}0)`);
+  const ga = g.globalAlpha;
+  g.globalAlpha = ga * Math.min(1, alpha);
+  g.drawImage(soft(`${color}0.9)`, `${color}0)`, `${color}0.5)`), x - r * 1.2, y - r * 1.2, r * 2.4, r * 2.4);
+  g.globalAlpha = ga;
+}
+
+/** Mancha radial suave pintada una vez por combinación de colores (sin degradados por fotograma). */
+const softCache = new Map<string, HTMLCanvasElement>();
+function soft(c0: string, c1: string, mid?: string): HTMLCanvasElement {
+  const key = `${c0}|${mid ?? ''}|${c1}`;
+  let c = softCache.get(key);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = 48;
+  const g = c.getContext('2d')!;
+  const gr = g.createRadialGradient(24, 24, 0, 24, 24, 24);
+  gr.addColorStop(0, c0);
+  if (mid) gr.addColorStop(0.5, mid);
+  gr.addColorStop(1, c1);
   g.fillStyle = gr;
-  g.beginPath();
-  g.arc(x, y, r * 1.2, 0, Math.PI * 2);
-  g.fill();
+  g.fillRect(0, 0, 48, 48);
+  softCache.set(key, c);
+  return c;
 }

@@ -76,7 +76,8 @@ export class MapView {
     this.base.height = BH;
     this.baseCtx = this.base.getContext('2d')!;
     this.bindInput();
-    new ResizeObserver(() => this.resize()).observe(parent);
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(parent);
     this.resize();
     const loop = (t: number) => {
       this.frame(t);
@@ -85,8 +86,10 @@ export class MapView {
     this.raf = requestAnimationFrame(loop);
   }
 
+  private ro: ResizeObserver | null = null;
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    this.ro?.disconnect();
     this.canvas.remove();
   }
 
