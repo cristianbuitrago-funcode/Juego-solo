@@ -70,9 +70,6 @@ function hsl(h: number, s: number, l: number): [number, number, number] {
 
 export class ChunkCache {
   private chunks = new Map<string, ChunkEntry>();
-  private baseCanvas?: HTMLCanvasElement;
-  private tmpCanvas?: HTMLCanvasElement;
-  private maskCanvas?: HTMLCanvasElement;
   private objects = new Map<string, StaticObject[]>();
   private grass: [number, number, number][] = [];
   constructor(private w: WorldState, private l: Layout) {
@@ -95,7 +92,8 @@ export class ChunkCache {
 
   /** Clave común del estado visual (la estación); cada fragmento añade el de sus propias regiones. */
   stateKey(season: Season): string {
-    return season;
+    // Un invierno largo en cualquier región nieva en todas las tierras: va en la clave común.
+    return season + (season === 'invierno' && this.w.regions.some((r) => r.flags.invierno) ? '*' : '');
   }
 
   /** Fragmentos pintados desde el arranque (la escena lo usa para no pintar dos en un fotograma). */
@@ -142,10 +140,36 @@ export class ChunkCache {
         if (this.has(x, y, stateKey)) continue;
         cand.push([x, y, Math.hypot(dx, dy) - (dx * dirX + dy * dirY) * 0.8]);
       }
-    if (!cand.length) return false;
+    if (!cand.length && !this.job) return false;
     cand.sort((a, b) => a[2] - b[2]);
-    this.get(cand[0][0], cand[0][1], season, stateKey);
+    const res = VQ().terrainRes;
+    if (!this.job && cand.length) {
+      const [x, y] = cand[0];
+      const id = `${x},${y}`;
+      const canvas = document.createElement('canvas');
+      this.job = { id, key: `${stateKey}:${this.localKey(x, y)}@${res}`, canvas, steps: this.paintSteps(canvas, x, y, season, res) };
+    }
+    // Unos 4 ms de trabajo por fotograma como mucho.
+    const job = this.job!;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 4) {
+      if (job.steps.next().done) {
+        this.job = null;
+        this.paints++;
+        this.chunks.delete(job.id);
+        this.chunks.set(job.id, { key: job.key, canvas: job.canvas });
+        this.trim();
+        break;
+      }
+    }
     return true;
+  }
+
+  private job: { id: string; key: string; canvas: HTMLCanvasElement; steps: Generator<void> } | null = null;
+  /** Cuántos fragmentos caben: los que se ven más un anillo de precarga (lo fija la escena según la pantalla). */
+  capacity = 12;
+  private trim(): void {
+    while (this.chunks.size > this.capacity) this.chunks.delete(this.chunks.keys().next().value!);
   }
 
   get(cx: number, cy: number, season: Season, stateKey: string): HTMLCanvasElement {
@@ -159,14 +183,23 @@ export class ChunkCache {
       this.chunks.set(id, hit);
       return hit.canvas;
     }
+    // Si la precarga lo estaba pintando, se termina ahora.
+    if (this.job && this.job.id === id && this.job.key === key) {
+      const job = this.job;
+      this.job = null;
+      while (!job.steps.next().done);
+      this.paints++;
+      this.chunks.delete(id);
+      this.chunks.set(id, { key, canvas: job.canvas });
+      this.trim();
+      return job.canvas;
+    }
     const canvas = hit?.canvas ?? document.createElement('canvas');
     this.paints++;
     this.paint(canvas, cx, cy, season, res);
     this.chunks.delete(id);
     this.chunks.set(id, { key, canvas });
-    // Caben los visibles más un anillo de precarga (memoria: ~W² × 4 bytes cada uno).
-    const max = { low: 10, medium: 12, high: 14, ultra: 14 }[VQ().tier];
-    while (this.chunks.size > max) this.chunks.delete(this.chunks.keys().next().value!);
+    this.trim();
     return canvas;
   }
 
@@ -179,6 +212,17 @@ export class ChunkCache {
    * adoquines, grietas, surcos, tablones) solo donde ese material está.
    */
   private paint(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season, res: number): void {
+    for (const _ of this.paintSteps(canvas, cx, cy, season, res)) void _;
+  }
+
+  /**
+   * El pintado, en pasos: cede el control cada pocas filas y tras cada material.
+   * Así la precarga reparte el trabajo entre fotogramas (unos milisegundos en
+   * cada uno) en vez de congelar uno entero. Cada pintado usa sus propios
+   * lienzos de trabajo, de modo que un fragmento urgente puede pintarse de una
+   * vez aunque haya otro a medias.
+   */
+  private *paintSteps(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season, res: number): Generator<void> {
     const { tiles, elev, region } = this.l.terrain;
     // La capa base es suave (manchas, relieve, orillas): se calcula a media
     // resolución (una muestra cada 2 px de mundo) y se amplía con suavizado,
@@ -187,7 +231,7 @@ export class ChunkCache {
     // con suavizado, el borde se interpola igual a ambos lados y no hay costura.
     const BN = CPX / 2;
     const BP = BN + 2;
-    const base = (this.baseCanvas ??= Object.assign(document.createElement('canvas'), { width: BP, height: BP }));
+    const base = Object.assign(document.createElement('canvas'), { width: BP, height: BP });
     const bg = base.getContext('2d', { willReadFrequently: true })!;
     const img = bg.createImageData(BP, BP);
     const d = img.data;
@@ -235,6 +279,7 @@ export class ChunkCache {
     };
     const isWater = (t: number) => t === T.Sea || t === T.Deep || t === T.River;
     for (let py = 0; py < BP; py++) {
+      if ((py & 15) === 15) yield;
       const wy = wy0 + (py - 1) * 2 + 1;
       for (let px = 0; px < BP; px++) {
         const wx = wx0 + (px - 1) * 2 + 1;
@@ -329,15 +374,16 @@ export class ChunkCache {
     // Detalle de cada material, recortado a donde está.
     const present = new Set<number>();
     for (let i = 0; i < mats.length; i += 3) if (mats[i]) present.add(mats[i]);
-    const tmp = (this.tmpCanvas ??= document.createElement('canvas'));
+    const tmp = document.createElement('canvas');
     tmp.width = W;
     tmp.height = W;
     const tg = tmp.getContext('2d')!;
-    const mask = (this.maskCanvas ??= Object.assign(document.createElement('canvas'), { width: BP, height: BP }));
+    const mask = Object.assign(document.createElement('canvas'), { width: BP, height: BP });
     const mg = mask.getContext('2d', { willReadFrequently: true })!;
     const mimg = mg.createImageData(BP, BP);
     tg.imageSmoothingEnabled = true;
     for (const m of present) {
+      yield;
       const name = MATS[m];
       const md = mimg.data;
       for (let i = 0; i < mats.length; i++) md[i * 4 + 3] = mats[i] === m ? 255 : 0;
@@ -357,6 +403,7 @@ export class ChunkCache {
       fg.globalAlpha = 1;
     }
     if (snowA) {
+      yield;
       // Manto de nieve (una sola pasada), con su textura de ventisqueros.
       const md = mimg.data;
       for (let i = 0; i < snowA.length; i++) md[i * 4 + 3] = snowA[i];

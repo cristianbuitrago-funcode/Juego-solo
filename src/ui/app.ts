@@ -533,14 +533,18 @@ export class App {
     if (!this.diary) {
       this.diary = h('section', { class: `diary ${v === 'mapa' ? 'from-world' : ''}` });
       this.stage.append(this.diary);
-      // Transición mundo → mapa: la escena se aleja y se desenfoca mientras el mapa aparece.
+      // Transición mundo → mapa: la escena se aleja mientras el mapa aparece; después,
+      // con el diario cubriéndolo todo, el mundo deja de pintarse.
       if (v === 'mapa') this.stage.classList.add('to-map');
+      const sc = this.scene;
+      window.setTimeout(() => sc && this.diary && (sc.covered = true), 480);
     }
     this.pause(true);
     this.renderDiary();
   }
 
   closeDiary(): void {
+    if (this.scene) this.scene.covered = false;
     this.stage?.classList.remove('to-map');
     this.map?.destroy();
     this.map = null;

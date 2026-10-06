@@ -188,6 +188,8 @@ export class WorldScene {
   /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
   private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
   private playerHidden = false;
+  private snowCheck = -1e9;
+  private snowWeather = '';
   private realDt = 0;
   private joyRun = false;
   /** Anticipación de la cámara, filtrada (no da latigazos al girar). */
@@ -269,7 +271,6 @@ export class WorldScene {
     this.ro.observe(parent);
     this.resize();
     const loop = (t: number) => {
-      this.watchFrames(t - this.last);
       const dt0 = Math.min(0.05, (t - this.last) / 1000);
       const cine = this.cineAmount();
       const dt = this.cine ? dt0 * (1 - (1 - this.cine.slow) * cine) : dt0;
@@ -280,7 +281,15 @@ export class WorldScene {
         this.update(dt);
       }
       this.updateCamera(dt0);
-      this.draw(t);
+      // Tapado por el diario o el mapa (opacos), el mundo no se pinta; detrás de un
+      // diálogo, que lo deja ver en penumbra y quieto, basta un fotograma de cada tres.
+      this.frameNo++;
+      if (!this.covered && (!this.paused || this.frameNo % 3 === 0)) {
+        const w0 = performance.now();
+        this.draw(t);
+        // Se mide el trabajo de dibujo (no el intervalo entre fotogramas: un móvil a 30 Hz no es lento).
+        if (!this.paused) this.watchFrames(performance.now() - w0);
+      }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -289,6 +298,15 @@ export class WorldScene {
   /**
    * En automático, si el dispositivo no llega (el 95 % de los fotogramas de
    * los últimos segundos tarda más de 22 ms), se baja un nivel gráfico.
+   */
+  /** Tapado por una pantalla opaca (diario, mapa): no hace falta pintar el mundo. */
+  covered = false;
+  private frameNo = 0;
+  private calmWindows = 0;
+  /**
+   * En automático, el nivel se adapta al dispositivo midiendo cuánto tarda en
+   * pintarse cada fotograma: si el 95 % pasa de 16 ms, baja un nivel; si dos
+   * tandas seguidas se quedan por debajo de 7 ms, sube (sin pasar del detectado).
    */
   private watchFrames(ms: number): void {
     if (this.qualitySetting !== 'auto' || document.hidden || ms > 250 || ms <= 0) return;
@@ -300,13 +318,18 @@ export class WorldScene {
     const now = performance.now();
     const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
     const i = order.indexOf(VQ().tier);
-    if (p95 > 22 && i > 0 && now - this.lastDowngrade > 15000) {
-      this.lastDowngrade = now;
-      setTier(order[i - 1]);
-      clearTextures();
-      S.clearSprites();
-      this.resize();
-    }
+    const cap = order.indexOf(resolveTier('auto'));
+    let next = i;
+    if (p95 > 16 && i > 0 && now - this.lastDowngrade > 15000) next = i - 1;
+    this.calmWindows = p95 < 7 ? this.calmWindows + 1 : 0;
+    if (this.calmWindows >= 2 && i < cap && now - this.lastDowngrade > 30000) next = i + 1;
+    if (next === i) return;
+    this.lastDowngrade = now;
+    this.calmWindows = 0;
+    setTier(order[next]);
+    clearTextures();
+    S.clearSprites();
+    this.resize();
   }
 
   destroy(): void {
@@ -1127,18 +1150,25 @@ export class WorldScene {
     this.wxFrame = weather;
     const look = (season === 'invierno' || weather === 'nieve' ? 'invierno' : season) as S.SeasonLook;
     // Dónde nieva ahora (el suelo se cubre por regiones).
-    const snowNow = this.chunks.snowing;
-    snowNow.clear();
-    const pr = playerRegion(w);
-    w.regions.forEach((_, i) => {
-      if ((i === pr ? weather : weatherIn(w, i)) === 'nieve') snowNow.add(i);
-    });
+    // (una vez por segundo basta: el tiempo de cada región cambia por horas)
+    if (t - this.snowCheck > 1000 || this.snowWeather !== weather) {
+      this.snowCheck = t;
+      this.snowWeather = weather;
+      const snowNow = this.chunks.snowing;
+      snowNow.clear();
+      const pr = playerRegion(w);
+      w.regions.forEach((_, i) => {
+        if ((i === pr ? weather : weatherIn(w, i)) === 'nieve') snowNow.add(i);
+      });
+    }
     const stateKey = this.chunks.stateKey(season);
     const CPX = CHUNK * TILE;
     const cx0 = Math.max(0, Math.floor(x0 / CPX));
     const cy0 = Math.max(0, Math.floor(y0 / CPX));
     const cx1 = Math.floor(x1 / CPX);
     const cy1 = Math.floor(y1 / CPX);
+    // Caben los fragmentos visibles y un anillo alrededor (nunca se desaloja uno que se ve).
+    this.chunks.capacity = (cx1 - cx0 + 3) * (cy1 - cy0 + 3) + 1;
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX, cy * CPX, CPX + 0.5, CPX + 0.5);
     // Si este fotograma no ha tenido que pintar suelo, se adelanta un vecino (hacia donde se camina).
     if (this.chunks.paints === this.paintsSeen) this.chunks.prewarm(Math.floor(this.cam.x / CPX), Math.floor(this.cam.y / CPX), Math.sign(this.vel.x), Math.sign(this.vel.y), season, stateKey);

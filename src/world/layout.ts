@@ -275,7 +275,7 @@ function buildLayout(w: WorldState): Layout {
         v.props.push({ kind: 'vallaV', x: x + fw + 0.1, y: y + j + 1, v: 0 });
       }
     }
-    furnish(v, w.regions[v.regionId], tiles, blocked, rng);
+    furnish(v, w.regions[v.regionId], tiles, blocked, rng, w.seed);
   }
 
   // 5) Puestos fronterizos donde un camino cruza de una región a otra.
@@ -306,7 +306,7 @@ function buildLayout(w: WorldState): Layout {
  * la posada y el almacén, heno junto al granero, abrevadero en el establo,
  * y calles que unen cada puerta con la plaza.
  */
-function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: Uint8Array, blocked: Uint8Array, rng: Rng): void {
+function furnish(v: Village, r: { isHome: boolean }, tiles: Uint8Array, blocked: Uint8Array, rng: Rng, seed: number): void {
   const add = (kind: Prop['kind'], x: number, y: number, block = false) => {
     v.props.push({ kind, x, y, v: rng.int(0, 5) });
     if (block) blocked[idx(Math.floor(x), Math.floor(y - 0.3))] = 1;
@@ -332,19 +332,25 @@ function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: 
       const k = idx(Math.floor(b.x + b.w / 2), Math.floor(b.y + b.h + s));
       if (!blocked[k] && (tiles[k] === T.Grass || tiles[k] === T.Meadow || tiles[k] === T.Clay)) tiles[k] = T.Road;
     }
-  // Plaza: cada pueblo la suya. El centro depende de su tamaño y de su suerte
-  // (fuente, pozo o el monumento a alguien), y bancos y faroles no se repiten igual.
-  const center = r.isHome ? 'fuente' : r.population > 900 && rng.chance(0.5) ? 'estatua' : r.population > 450 ? (rng.chance(0.75) ? 'fuente' : 'estatua') : 'pozo';
+  // Plaza: cada pueblo la suya. El centro depende de su tamaño (en casas, que no
+  // cambia) y de su suerte: fuente, pozo o el monumento a alguien; bancos y faroles
+  // tampoco se repiten igual. Generador propio por pueblo: la disposición no depende
+  // del estado del mundo (al recargar una partida, el pueblo sigue igual).
+  const pr = new Rng(((seed >>> 0) * 31 + v.regionId * 7919 + 17) >>> 0);
+  const size = v.houses.length;
+  const center = r.isHome ? 'fuente' : size > 30 && pr.chance(0.5) ? 'estatua' : size > 14 ? (pr.chance(0.75) ? 'fuente' : 'estatua') : 'pozo';
   add(center, v.cx + 0.5, v.cy + 1.6, false);
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked[idx(v.cx + dx, v.cy + dy)] = 1;
-  const benches = r.isHome ? 4 : rng.int(2, 5);
-  const turn = r.isHome ? Math.PI / 4 : rng.next() * Math.PI * 2;
+  // Cuatro bancos (los ancianos van a sentarse en ellos), girados a gusto de cada pueblo.
+  const benches = 4;
+  const turn = r.isHome ? Math.PI / 4 : Math.PI / 4 + Math.round(pr.next() * 3) * (Math.PI / 8);
   for (let k = 0; k < benches; k++) {
     const a = (k / benches) * Math.PI * 2 + turn;
     add('banco', v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6), v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6));
   }
-  const lamps = r.isHome ? 6 : Math.max(3, Math.min(7, Math.round(r.population / 160)));
-  const lturn = r.isHome ? 0 : rng.next() * Math.PI;
+  // Los faroles conservan su corona de seis (bloquean el paso: moverlos cambia por dónde camina la gente).
+  const lamps = 6;
+  const lturn = 0;
   for (let k = 0; k < lamps; k++) {
     const a = (k / lamps) * Math.PI * 2 + lturn;
     const p = { x: v.cx + 0.5 + Math.cos(a) * (v.plazaR + 0.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR + 0.6) };
