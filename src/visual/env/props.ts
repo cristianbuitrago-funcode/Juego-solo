@@ -595,6 +595,7 @@ export function drawFountainWater(g: CanvasRenderingContext2D, x: number, y: num
 /** Yunque sobre su tocón: delante de quien martillea, para que el golpe caiga en algo. */
 export function anvilTex(): Tex {
   return tex('yunque', 22, 20, 11, 18, (g) => {
+    g.translate(-11, -18); // se pinta en coordenadas de esquina, como el resto del mobiliario
     // Tocón.
     g.fillStyle = vgrad(g, 8, 18, [[0, '#7a5a3a'], [1, '#4a3424']]);
     g.fillRect(6, 9, 10, 9);

@@ -182,6 +182,7 @@ export function pavingTex(kind: 'anillo' | 'rosa' | 'damero', plazaR: number, T:
 /** Alcorque de piedra con tierra (el árbol se dibuja encima). */
 export function treeBedTex(snowy: boolean): Tex {
   return tex(`alcorque:${snowy}`, 34, 16, 17, 9, (g) => {
+    g.translate(-17, -9); // tex() deja el origen en el ancla: se pinta en coordenadas de esquina
     ell(g, 17, 9, 15, 6.5, vgrad(g, 2, 16, [[0, '#b8ae9a'], [1, '#7c7466']]));
     ell(g, 17, 8.4, 12, 4.6, snowy ? '#e8eef4' : '#4a3626');
     if (!snowy) for (let i = 0; i < 6; i++) ell(g, 9 + i * 3.2, 8 + (i % 2), 1.2, 0.6, '#5d4630');
@@ -191,6 +192,7 @@ export function treeBedTex(snowy: boolean): Tex {
 /** Jardinera de piedra con flores de la estación. */
 export function planterTex(season: Season, v: number): Tex {
   return tex(`jardinera:${season}:${v % 3}`, 28, 22, 14, 20, (g) => {
+    g.translate(-14, -20); // tex() deja el origen en el ancla: se pinta en coordenadas de esquina
     const R = rng(v * 17 + 3);
     g.fillStyle = vgrad(g, 10, 20, [[0, '#c4b9a2'], [1, '#867c6a']]);
     g.fillRect(2, 10, 24, 10);
@@ -225,6 +227,7 @@ export function planterTex(season: Season, v: number): Tex {
 /** Mesa de terraza con dos taburetes y sombrilla a rayas. */
 export function tableTex(hue: number, v: number): Tex {
   return tex(`mesa:${hue}:${v % 2}`, 40, 46, 20, 42, (g) => {
+    g.translate(-20, -42); // tex() deja el origen en el ancla: se pinta en coordenadas de esquina
     const cloth = `hsl(${hue} 45% 52%)`;
     // Taburetes.
     for (const sx of [5, 35]) {
@@ -266,6 +269,7 @@ export function tableTex(hue: number, v: number): Tex {
 /** Estandarte en un mástil con el color y la marca de la tierra. */
 export function bannerTex(hue: number, v: number): Tex {
   return tex(`estandarte:${hue}:${v % 3}`, 22, 60, 4, 58, (g) => {
+    g.translate(-4, -58); // tex() deja el origen en el ancla: se pinta en coordenadas de esquina
     const cloth = `hsl(${hue} 55% 42%)`;
     g.fillStyle = vgrad(g, 0, 58, [[0, '#6a5a48'], [1, '#3e3226']]);
     g.fillRect(3, 2, 2, 56);
