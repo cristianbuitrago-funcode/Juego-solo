@@ -71,9 +71,9 @@ export function contactShadow(g: CanvasRenderingContext2D, x: number, y: number,
     blobTex.width = blobTex.height = 64;
     const bg = blobTex.getContext('2d')!;
     const gr = bg.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gr.addColorStop(0, 'rgba(22,18,28,1)');
-    gr.addColorStop(0.5, 'rgba(22,18,28,0.6)');
-    gr.addColorStop(1, 'rgba(22,18,28,0)');
+    gr.addColorStop(0, 'rgba(30,24,52,1)');
+    gr.addColorStop(0.5, 'rgba(30,24,52,0.6)');
+    gr.addColorStop(1, 'rgba(30,24,52,0)');
     bg.fillStyle = gr;
     bg.fillRect(0, 0, 64, 64);
   }

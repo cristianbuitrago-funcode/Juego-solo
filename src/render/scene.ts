@@ -132,6 +132,8 @@ interface Particle {
 interface Drawable {
   y: number;
   draw: () => void;
+  /** Rectángulo que tapa (casas, edificios, puestos): si cubre al jugador, se le dibuja en transparencia. */
+  box?: { x0: number; y0: number; x1: number; y1: number };
 }
 
 const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
@@ -720,6 +722,11 @@ export class WorldScene {
     // El paso sigue al avance real (contra una pared no se camina en el sitio) y a la
     // zancada de este cuerpo: los pies no patinan.
     const moved = Math.hypot(me.x - ox, me.y - oy);
+    // Al correr por tierra o camino se levanta un poco de polvo.
+    if (this.playerRun && moved > 0 && !this.reduceMotion && Math.random() < dt * 6) {
+      const tt = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
+      if (tt === T.Road || tt === T.Clay || tt === T.Sand || tt === T.Field) this.puff(me.x * TILE - this.vel.x * 2, me.y * TILE, 'rgba(176,150,112,', 0.55);
+    }
     const pap = this.apCache.get('@player')?.ap;
     this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
     if (moved < 0.002 && !want) this.playerMoving = false;
@@ -1137,7 +1144,11 @@ export class WorldScene {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#2f5468';
     g.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    g.setTransform(dz, 0, 0, dz, this.dpr * (this.vw / 2 - this.cam.x * z), this.dpr * (this.vh / 2 - this.cam.y * z));
+    // El trueno sacude un instante la cámara (2–3 px), salvo con movimiento reducido.
+    const shake = !this.reduceMotion && this.wfx.flash > 0.55 ? (this.wfx.flash - 0.55) * 6 : 0;
+    const sx = shake ? (Math.random() - 0.5) * shake : 0;
+    const sy = shake ? (Math.random() - 0.5) * shake : 0;
+    g.setTransform(dz, 0, 0, dz, this.dpr * (this.vw / 2 - this.cam.x * z + sx), this.dpr * (this.vh / 2 - this.cam.y * z + sy));
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'low';
     this.sun = sunAt(hourOf(life.clock), this.weatherHere());
@@ -1269,6 +1280,16 @@ export class WorldScene {
     items.sort((a, b) => a.y - b.y);
     this.playerHidden = false;
     for (const it of items) it.draw();
+    // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)?
+    {
+      const px = me.x * TILE;
+      const py = me.y * TILE;
+      for (const it of items)
+        if (it.box && it.y > py && it.box.x0 < px + 6 && it.box.x1 > px - 6 && it.box.y0 < py - 8 && it.box.y1 > py - 28) {
+          this.playerHidden = true;
+          break;
+        }
+    }
     // Si el follaje tapa al protagonista, se le sigue viendo en transparencia (no se pierde nunca).
     if (this.playerHidden) {
       g.save();
@@ -1499,6 +1520,7 @@ export class WorldScene {
       this.shadowQ.push(() => castShadow(g, silhouette(ht), ht.w, ht.h, ht.ax, ht.ay, bx, by, sun, 0.62));
       items.push({
         y: by,
+        box: { x0: bx - ht.ax, y0: by - ht.ay, x1: bx - ht.ax + ht.w, y1: by - 4 },
         draw: () => {
           put(g, ht, bx, by);
           if (lit) for (const wn of wins) this.litWindow(bx + wn.x, by + wn.y, wn.w, wn.h, t + i * 300);
@@ -1518,7 +1540,7 @@ export class WorldScene {
       const kt = snowRoofs ? snowCapped(kt0, -kt0.h * 0.42) : kt0;
       const sun = this.sun;
       this.shadowQ.push(() => castShadow(g, silhouette(kt), kt.w, kt.h, kt.ax, kt.ay, bx, by, sun, 0.62));
-      items.push({ y: by, draw: () => put(g, kt, bx, by) });
+      items.push({ y: by, draw: () => put(g, kt, bx, by), box: { x0: bx - kt.ax, y0: by - kt.ay, x1: bx - kt.ax + kt.w, y1: by - 4 } });
       if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) {
         // La puerta abierta deja salir la luz de dentro: brilla y dibuja un charco cálido delante.
         this.lights.push({ x: bx, y: by - 16, r: 24, k: 1 });
@@ -1877,7 +1899,7 @@ export class WorldScene {
       g.fill();
       g.stroke();
       g.fillStyle = '#b5562d';
-      g.font = 'bold 8px monospace';
+      g.font = '700 8px Alegreya, Georgia, serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText('!', e.x * TILE, Math.round(e.y * TILE - 43.5 + bob));
@@ -1940,6 +1962,8 @@ export class WorldScene {
       if (!f || f.lastMet < 0 || id === this.converseId) continue;
       const ap0 = this.apCache.get(id)?.ap;
       const p = this.toScreen(e.x * TILE, e.y * TILE - (ap0 ? figureTop(ap0) + 4 : 35));
+      // Bajo la franja del HUD no se lee: el nombre se queda justo debajo de ella.
+      p.y = Math.max(p.y, 78);
       g.font = '600 12px Alegreya, Georgia, serif';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(30,25,20,0.7)';
@@ -2012,7 +2036,7 @@ export class WorldScene {
       g.stroke();
       g.restore();
       const dist = Math.hypot(wp.x - life.player.x, wp.y - life.player.y);
-      g.font = '600 12px system-ui';
+      g.font = '600 12px "Alegreya Sans", system-ui, sans-serif';
       g.textAlign = 'center';
       g.fillStyle = '#f6ecd2';
       g.strokeStyle = 'rgba(30,25,20,0.7)';
@@ -2149,7 +2173,7 @@ export class WorldScene {
     const dawn = bump(6.2, 1.6);
     const morning = bump(9, 2);
     const noon = bump(12.8, 1.8);
-    const afternoon = bump(16.2, 2);
+    const afternoon = bump(16.4, 2.4); // desde las 14:00 y plena a las 16:30
     const dusk = bump(18.9, 1.9);
     const mul = [1, 1, 1];
     const scr = [0, 0, 0];
@@ -2170,7 +2194,7 @@ export class WorldScene {
     Sc(255, 244, 226, morning * 0.06 * clear);
     M(236, 242, 255, morning * 0.12 * clear); // sombras de la mañana algo frías
     Sc(255, 252, 240, noon * 0.06 * clear);
-    M(255, 214, 160, afternoon * 0.26 * clear); // tarde dorada
+    M(255, 208, 150, afternoon * 0.34 * clear); // tarde dorada
     Sc(255, 196, 120, afternoon * 0.07 * clear);
     M(255, 140, 80, dusk * 0.5 * clear);
     M(170, 110, 160, dusk * 0.12);

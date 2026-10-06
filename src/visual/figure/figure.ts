@@ -526,8 +526,8 @@ function longShadow(): HTMLCanvasElement {
   c.height = 32;
   const g = c.getContext('2d')!;
   const sg = g.createLinearGradient(0, 0, 96, 0);
-  sg.addColorStop(0, 'rgba(28,22,38,1)');
-  sg.addColorStop(1, 'rgba(28,22,38,0)');
+  sg.addColorStop(0, 'rgba(34,28,62,1)');
+  sg.addColorStop(1, 'rgba(34,28,62,0)');
   g.fillStyle = sg;
   // Hombros anchos cerca de los pies, cabeza estrecha al final.
   g.beginPath();

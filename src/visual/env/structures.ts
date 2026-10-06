@@ -134,6 +134,31 @@ export function postTex(color: string, closed: boolean): Tex {
     g.lineTo(gx + 32, -44);
     g.closePath();
     g.fill();
+    // Tablas del tejado, solapadas, con la luz en el canto.
+    g.save();
+    g.beginPath();
+    g.moveTo(gx - 4, -44);
+    g.lineTo(gx + 14, -58);
+    g.lineTo(gx + 38, -50);
+    g.lineTo(gx + 32, -44);
+    g.closePath();
+    g.clip();
+    for (let i = 0; i < 9; i++) {
+      const x = gx - 4 + i * 5;
+      g.strokeStyle = 'rgba(30,18,10,0.5)';
+      g.lineWidth = 0.7;
+      g.beginPath();
+      g.moveTo(x, -43);
+      g.lineTo(x + 15, -60);
+      g.stroke();
+      g.strokeStyle = 'rgba(220,180,130,0.25)';
+      g.lineWidth = 0.5;
+      g.beginPath();
+      g.moveTo(x + 1, -43);
+      g.lineTo(x + 16, -60);
+      g.stroke();
+    }
+    g.restore();
     // Ventanuco: luz cálida dentro, contraventana abierta.
     g.fillStyle = '#e8b866';
     g.fillRect(gx + 9, -36, 10, 8);

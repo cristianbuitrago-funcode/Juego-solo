@@ -207,7 +207,8 @@ export function silhouette(t: Tex): HTMLCanvasElement {
   const g = c.getContext('2d')!;
   g.drawImage(t.canvas, 0, 0, c.width, c.height);
   g.globalCompositeOperation = 'source-in';
-  g.fillStyle = 'rgb(28,22,40)';
+  // Violeta frío: con el sol cálido, las sombras son azuladas (y se leen sobre la nieve).
+  g.fillStyle = 'rgb(34,28,62)';
   g.fillRect(0, 0, c.width, c.height);
   silCache.set(t.canvas, c);
   return c;

@@ -795,13 +795,9 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
           ell(g, sx + 10, base - 22, 4, 6, ['#6b4a30', '#3a2a20', '#c9b08a'][i]);
           ell(g, sx + 11.5, base - 24, 0.8, 0.8, '#111');
         }
-        g.fillStyle = vgrad(g, top - 24, top + 3, [[0, lit(st.roof, 0.1)], [1, shd(st.roof, 0.3)]]);
-        g.beginPath();
-        g.moveTo(x0 - 6, top + 3);
-        g.lineTo(x0 + W + 6, top + 3);
-        g.lineTo(x0 + W - 6, top - 24);
-        g.lineTo(x0 + 6, top - 24);
-        g.fill();
+        // Tejado de tejas como el de las casas (con su faldón lateral), no un trapecio liso.
+        eave(top);
+        roof(g, R, x0, top, W, st.roof, 'dos-aguas', 'normal');
         break;
       }
       case 'granero': {
@@ -821,12 +817,9 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         g.fillStyle = '#2a1410';
         g.fillRect(-8, top + 8, 16, 12);
         ell(g, 0, top + 16, 6, 3, '#e3c56a');
-        g.fillStyle = vgrad(g, top - 34, top + 3, [[0, '#6a5a50'], [1, '#3a3028']]);
-        g.beginPath();
-        g.moveTo(x0 - 6, top + 3);
-        g.lineTo(x0 + W + 6, top + 3);
-        g.lineTo(0, top - 34);
-        g.fill();
+        // Tejado alto de pizarra, con hileras y cumbrera.
+        eave(top);
+        roof(g, R, x0, top, W, '#5e5650', 'alto', 'normal');
         for (const hx of [x0 - 6, x0 + W + 4]) ell(g, hx, base - 8, 9, 8, vgrad(g, base - 16, base, [[0, '#f0d880'], [1, '#b8963a']]));
         break;
       }
