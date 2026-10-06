@@ -25,6 +25,7 @@ import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure
 import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
 import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
 import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
+import { bannerTex, drawGarland, pavingTex, planterTex, plazaLook, tableTex, treeBedTex, type PlazaLook } from '../visual/env/plaza';
 import { marketOf } from '../world/economy';
 import { VQ, resolveTier, setTier, type QualitySetting, type Tier } from '../visual/quality';
 import { clearTextures, nextFrame, put, silhouette } from '../visual/paint';
@@ -244,6 +245,9 @@ export class WorldScene {
   }
   private sun: SunState = sunAt(12, 'despejado');
   private shadowQ: (() => void)[] = [];
+  /** Lo que se pinta sobre el suelo, antes incluso que las sombras (pavimentos con dibujo). */
+  private groundQ: (() => void)[] = [];
+  private plazas = new Map<number, PlazaLook>();
 
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
   private pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
@@ -738,6 +742,20 @@ export class WorldScene {
     if (moved < 0.002 && !want) this.playerMoving = false;
   }
 
+  /** El carácter de cada plaza (pavimento y adornos), elegido una vez por pueblo. */
+  private plazaOf(regionId: number): PlazaLook {
+    const hit = this.plazas.get(regionId);
+    if (hit) return hit;
+    const v = this.l.villages[regionId];
+    const r = this.w.regions[regionId];
+    const taken: { x: number; y: number; r: number }[] = [{ x: v.cx + 0.5, y: v.cy + 1.3, r: 2.8 }, { x: v.sign.x + 1.2, y: v.sign.y + 0.4, r: 1.4 }];
+    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.5 });
+    for (const p of v.props) if (Math.hypot(p.x - v.cx, p.y - v.cy) < v.plazaR + 2) taken.push({ x: p.x, y: p.y, r: p.kind === 'banco' ? 1.3 : 0.8 });
+    const look = plazaLook(this.w.seed, regionId, v.cx, v.cy, v.plazaR, !r.isHome && v.plazaR >= 6, taken);
+    this.plazas.set(regionId, look);
+    return look;
+  }
+
   /** Si aparece dentro de un mueble, se le aparta hacia abajo (hacia la cámara). */
   private unstick(me: { x: number; y: number }): void {
     for (let i = 0; i < 16 && this.solidAt(me.x, me.y) && passable(this.w, this.l, me.x, me.y + 0.15); i++) me.y += 0.15;
@@ -765,6 +783,8 @@ export class WorldScene {
           if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
         }
         for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.3, rx: 1.15, ry: 0.4 });
+        const D = { arbol: [0.75, 0.4], jardinera: [0.85, 0.3], mesa: [1.15, 0.4], estandarte: [0.25, 0.15] } as const;
+        for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1] });
         this.solids.set(v, list);
       }
       for (const c of list) {
@@ -1197,6 +1217,7 @@ export class WorldScene {
     g.imageSmoothingQuality = 'low';
     this.sun = sunAt(hourOf(life.clock), this.weatherHere());
     this.shadowQ = [];
+    this.groundQ = [];
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
@@ -1317,9 +1338,10 @@ export class WorldScene {
     const pap = this.dress(this.playerAp(darkness(life.clock) > 0.3), wet, cold);
     const ppose = this.playerPose(sec, wet, cold);
     this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
-    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 72, k: 1 });
+    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 54, k: 0.8 });
 
     // Las sombras van antes que todo lo que se alza sobre el suelo.
+    for (const gq of this.groundQ) gq();
     for (const sh of this.shadowQ) sh();
     items.sort((a, b) => a.y - b.y);
     this.playerHidden = false;
@@ -1544,6 +1566,8 @@ export class WorldScene {
     const hue = this.hueOf(regionId);
     const night = darkness(life.clock) > 0.3;
     const snowRoofs = this.chunks.snowyRegion(regionId, seasonOf(w.day));
+    const wet = this.wxFrame === 'lluvia' || this.wxFrame === 'tormenta';
+    const vsec = t / 1000;
     const built = Math.min(v.houses.length, town?.houses ?? 3);
     const wealth = Math.max(0, Math.min(1, marketOf(w, regionId).prosperity));
     const target = housesFor(w, regionId);
@@ -1613,6 +1637,51 @@ export class WorldScene {
       if (pr.kind === 'fuente' && !frozen) items.push({ y: py, draw: () => (put(g, pt, px, py), drawFountainWater(g, px, py, this.reduceMotion ? 0 : t)) });
       else items.push({ y: py, draw: () => put(g, pt, px, py, false, ps) });
     }
+    // Lo propio de esta plaza: pavimento con dibujo, árboles, jardineras, terrazas, estandartes, guirnaldas.
+    {
+      const pl = this.plazaOf(regionId);
+      const season = seasonOf(w.day);
+      const ox = (v.cx + 0.5) * TILE;
+      const oy = (v.cy + 0.5) * TILE;
+      if (pl.paving && inView(ox, oy, v.plazaR * TILE)) {
+        const tiles = this.l.terrain.tiles;
+        const pt = pavingTex(pl.paving, v.plazaR, TILE, String(regionId), (dx, dy) => tiles[idx(Math.floor(v.cx + 0.5 + dx), Math.floor(v.cy + 0.5 + dy))] === T.Plaza);
+        this.groundQ.push(() => put(g, pt, ox, oy));
+      }
+      const sec = t / 1000;
+      const windK = this.wxFrame === 'viento' || this.wxFrame === 'tormenta' ? 1 : 0.25;
+      const me = life.player;
+      const focus = { x: me.x * TILE, y: me.y * TILE };
+      for (const d of pl.decor) {
+        const dx = d.x * TILE;
+        const dy = d.y * TILE;
+        if (!inView(dx, dy, 60)) continue;
+        if (d.kind === 'arbol') {
+          const kind: TreeKind = d.v % 3 === 0 ? 'abedul' : 'frutal';
+          const bed = treeBedTex(snowRoofs);
+          const sun = this.sun;
+          this.groundQ.push(() => put(g, bed, dx, dy));
+          this.shadowQ.push(() => drawTreeShadow(g, kind, season, d.v, dx, dy, sun, snowRoofs));
+          items.push({ y: dy, draw: () => void (drawTree(g, kind, season, d.v, dx, dy, sec, windK, snowRoofs, focus) && (this.playerHidden = true)) });
+        } else {
+          const tx = d.kind === 'jardinera' ? planterTex(season, d.v) : d.kind === 'mesa' ? tableTex((hue + 20) % 360, d.v) : bannerTex(hue, regionId);
+          if (d.kind === 'estandarte' || d.kind === 'mesa') this.shadowQ.push(() => castShadow(g, silhouette(tx), tx.w, tx.h, tx.ax, tx.ay, dx, dy, this.sun, 0.45));
+          else this.shadowQ.push(() => contactShadow(g, dx, dy, tx.w * 0.5, 3, 0.35));
+          items.push({ y: dy, draw: () => put(g, tx, dx, dy) });
+        }
+      }
+      for (const [a, b] of pl.garlands) {
+        const la = v.lamps[a];
+        const lb = v.lamps[b];
+        if (!la || !lb) continue;
+        const x0 = la.x * TILE;
+        const y0 = la.y * TILE + 4;
+        const x1 = lb.x * TILE;
+        const y1 = lb.y * TILE + 4;
+        if (!inView((x0 + x1) / 2, (y0 + y1) / 2, 80)) continue;
+        items.push({ y: Math.max(y0, y1) + 3 * TILE + 1, draw: () => drawGarland(g, x0, y0, x1, y1, hue, this.reduceMotion ? 0 : t, windK) });
+      }
+    }
     const gloomy = ['lluvia', 'tormenta', 'niebla'].includes(this.weatherHere());
     if (night || gloomy) for (const lp of v.lamps) {
       const px = lp.x * TILE;
@@ -1620,7 +1689,7 @@ export class WorldScene {
       if (!inView(px, py)) continue;
       // La lámpara y, sobre todo, el charco de luz que deja en el suelo.
       this.lights.push({ x: px, y: py, r: 20, k: 0.9 });
-      this.lights.push({ x: px, y: py + 38, r: 100, k: 1, flat: 0.55 });
+      this.lights.push({ x: px, y: py + 38, r: 72, k: 1, flat: 0.55 });
       items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
     }
     // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
@@ -1630,6 +1699,18 @@ export class WorldScene {
       if (stallGoods === undefined) return; // sin comerciante: no hay puesto
       const open = stallGoods.length > 0;
       items.push({ y: s.y * TILE, draw: () => put(g, stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
+      // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
+      const hh = hourOf(life.clock);
+      if (open && hh >= 7 && hh < 19.5 && inView(s.x * TILE, s.y * TILE)) {
+        const id = `v:${regionId}:${i}`;
+        const ap = this.dress(this.extraAp(id, regionId, 'comerciante', 24 + Math.floor(hash(id, 3) * 40)), wet, cold);
+        const me = life.player;
+        const near = Math.hypot(me.x - s.x, me.y - s.y) < 4;
+        const beat = Math.floor(vsec + hash(id) * 7);
+        const action: Action = near ? (beat % 3 === 0 ? 'point' : 'talk') : beat % 7 === 0 ? 'point' : beat % 5 === 0 ? 'talk' : 'idle';
+        const pose: Pose = { facing: 'front', flip: me.x < s.x, phase: 0, action, t: vsec + i * 3.1, expr: near ? 'feliz' : 'neutral', lod: this.lodAt(s.x, s.y), hood: cold && hash(id, 9) < 0.5, heavy: cold, wet };
+        this.pushPerson(items, ap, pose, s.x * TILE + 3, (s.y - 0.55) * TILE);
+      }
     });
     void food;
     // Empalizada.
@@ -1776,21 +1857,33 @@ export class WorldScene {
     // Guardias según la tensión; campamentos si hay guerra.
     const war = a.relations[b.id]?.war;
     const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
-    const guards = war ? 6 : mil > 0.55 ? 4 : mil > 0.35 ? 2 : route.status === 'cerrada' ? 2 : 1;
+    const guards = war ? 8 : mil > 0.55 ? 4 : mil > 0.35 ? 2 : route.status === 'cerrada' ? 2 : 1;
+    if (war) {
+      // Dos bandos frente a frente a cada lado de la barrera, con sus estandartes.
+      for (const [k, side] of [[-1, a], [1, b]] as const) {
+        const bt = bannerTex(this.hueOf(side.id), side.id);
+        const bx = px + k * 92;
+        const by = py + 4;
+        this.shadowQ.push(() => castShadow(g, silhouette(bt), bt.w, bt.h, bt.ax, bt.ay, bx, by, this.sun, 0.45));
+        items.push({ y: by, draw: () => put(g, bt, bx, by, k > 0) });
+      }
+    }
     for (let i = 0; i < guards; i++) {
       const side = i % 2 ? a : b;
-      const sx = px + (i % 2 ? -1 : 1) * (26 + (i >> 1) * 20);
-      const sy = py + 18 + (i >> 1) * 10;
+      const row = i >> 1;
+      const sx = war ? px + (i % 2 ? -1 : 1) * (34 + (row % 2) * 22) : px + (i % 2 ? -1 : 1) * (26 + row * 20);
+      const sy = war ? py + 6 + row * 14 : py + 18 + row * 10;
       const ap = this.extraAp(`g:${p.routeId}:${side.id}:${i}`, side.id, 'guardia', 24 + i * 5);
       const me = lifeW.player;
       const close = Math.hypot(me.x * TILE - sx, me.y * TILE - sy) < 70;
       const pose: Pose = {
-        facing: close ? 'front' : 'side',
-        flip: i % 2 === 0,
+        facing: close && !war ? 'front' : 'side',
+        // En guerra se miran unos a otros: cada bando hacia la barrera.
+        flip: war ? i % 2 === 0 : i % 2 === 0,
         phase: 0,
-        action: war ? (Math.floor(sec / 2 + i) % 3 ? 'look' : 'point') : close ? 'idle' : 'look',
+        action: war ? (row % 2 === 0 ? 'fight' : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : 'point') : close ? 'idle' : 'look',
         t: sec + i,
-        expr: war ? 'enfadado' : mil > 0.55 ? 'desconfianza' : 'neutral',
+        expr: war ? (row % 2 === 0 ? 'hostil' : 'enfadado') : mil > 0.55 ? 'desconfianza' : 'neutral',
         lod: this.lodAt(sx / TILE, sy / TILE),
         hood: weather === 'lluvia' || weather === 'tormenta',
         heavy: weather === 'nieve',
@@ -2123,7 +2216,8 @@ export class WorldScene {
    */
   private drawNight(g: CanvasRenderingContext2D, weather: string): void {
     const life = ensureLife(this.w);
-    const d = darkness(life.clock);
+    // darkness() llega a 0,62 en plena noche (lo usa también la simulación): aquí, de 0 a 1.
+    const d = Math.min(1, darkness(life.clock) / 0.62);
     const gloom = weather === 'tormenta' ? 0.45 : weather === 'lluvia' || weather === 'niebla' ? 0.3 : 0;
     // Cuánto se notan las luces: de noche del todo; con lluvia o niebla, algo.
     const glow = Math.max(d, gloom * 0.6);
@@ -2147,7 +2241,7 @@ export class WorldScene {
       const sx = W / this.vw;
       dc.globalCompositeOperation = 'source-over';
       dc.clearRect(0, 0, W, H);
-      const a = Math.min(0.8, d * 1.05);
+      const a = 0.84 * d;
       const sky = dc.createLinearGradient(0, 0, 0, H);
       sky.addColorStop(0, `rgba(18,28,64,${(a * 0.9).toFixed(3)})`);
       sky.addColorStop(1, `rgba(8,12,34,${a.toFixed(3)})`);
@@ -2157,7 +2251,8 @@ export class WorldScene {
       dc.imageSmoothingQuality = 'low';
       const hole = lightSprite('hole');
       for (const l of vis) {
-        dc.globalAlpha = Math.min(1, l.k);
+        // Ni la luz más fuerte borra del todo la noche: el charco se lee como charco.
+        dc.globalAlpha = Math.min(0.88, l.k * 0.85);
         dc.drawImage(hole, (l.x - l.r) * sx, (l.y - l.r * l.flat) * sx, l.r * 2 * sx, l.r * 2 * l.flat * sx);
       }
       dc.globalAlpha = 1;
@@ -2174,7 +2269,7 @@ export class WorldScene {
     // las ventanas ya brillan por sí mismas. Cada halo es mucha superficie que pintar.
     for (const l of vis) {
       if (l.r < 26 * this.cam.z) continue;
-      g.globalAlpha = Math.min(1, 0.3 * glow * l.k);
+      g.globalAlpha = Math.min(1, (l.flat < 1 ? 0.5 : 0.3) * glow * l.k);
       g.drawImage(warm, l.x - l.r * 0.8, l.y - l.r * 0.8 * l.flat, l.r * 1.6, l.r * 1.6 * l.flat);
     }
     // Suelo mojado: cada charco de luz se refleja alargado hacia abajo, como en el adoquín empapado.
@@ -2218,7 +2313,7 @@ export class WorldScene {
     const dawn = bump(6.2, 1.6);
     const morning = bump(9, 2);
     const noon = bump(12.8, 1.8);
-    const afternoon = bump(16.4, 2.4); // desde las 14:00 y plena a las 16:30
+    const afternoon = bump(16.7, 3); // desde las 13:45 y plena a las 16:45
     const dusk = bump(18.9, 1.9);
     const mul = [1, 1, 1];
     const scr = [0, 0, 0];
@@ -2239,8 +2334,8 @@ export class WorldScene {
     Sc(255, 244, 226, morning * 0.06 * clear);
     M(236, 242, 255, morning * 0.12 * clear); // sombras de la mañana algo frías
     Sc(255, 252, 240, noon * 0.06 * clear);
-    M(255, 208, 150, afternoon * 0.34 * clear); // tarde dorada
-    Sc(255, 196, 120, afternoon * 0.07 * clear);
+    M(255, 206, 142, afternoon * 0.46 * clear); // tarde dorada
+    Sc(255, 190, 110, afternoon * 0.1 * clear);
     M(255, 140, 80, dusk * 0.5 * clear);
     M(170, 110, 160, dusk * 0.12);
     // Lluvia y tormenta: menos luz y más fría.
@@ -2404,12 +2499,28 @@ export class WorldScene {
       } else if (action === 'talk') action = 'idle';
       else if (action === 'idle' && Math.floor(sec / 4 + hash(id) * 9) % 6 === 0) action = 'look';
     }
+    // Quien está quieto se fija en el jugador cuando pasa cerca: se gira hacia él,
+    // saluda con la cabeza de vez en cuando y le mira según lo que piensa de él.
+    let noticed: Expr | undefined;
+    let flip = e.flip;
+    if (!e.moving && !e.partner && id !== this.converseId && !react && (action === 'idle' || action === 'look' || action === 'sit')) {
+      const me = ensureLife(this.w).player;
+      const dx = me.x - e.x;
+      const dy = me.y - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 3.2) {
+        if (action !== 'sit') facing = Math.abs(dx) > Math.abs(dy) * 0.8 ? 'side' : dy > 0 ? 'front' : 'back';
+        flip = dx < 0;
+        if (action !== 'sit' && Math.floor(sec / 2.6 + hash(id) * 5) % 4 === 0) action = 'nod';
+        noticed = !f ? 'neutral' : f.resentment > 0.4 ? 'desconfianza' : f.fear > 0.5 ? 'miedo' : f.trust > 0.62 || f.gratitude > 0.4 ? 'feliz' : f.trust < 0.35 ? 'desconfianza' : 'confiado';
+      }
+    }
     // Con lluvia, los que no pueden refugiarse se cubren con los brazos.
     if (wet && !e.moving && (action === 'idle' || action === 'look')) action = 'cross';
-    const expr: Expr = react?.expr ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
+    const expr: Expr = react?.expr ?? noticed ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
     // Con lluvia: quien puede, saca un paraguas encerado; los demás, la capucha.
     const umbrella = wet && (action === 'walk' || action === 'idle' || action === 'look' || action === 'talk' || action === 'listen') && (f?.role === 'comerciante' || f?.role === 'lider' || hash(id, 11) < 0.22);
-    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: (wet && !umbrella) || (cold && hash(id, 31) < 0.6), heavy: cold, umbrella, wet };
+    return { facing, flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: (wet && !umbrella) || (cold && hash(id, 31) < 0.6), heavy: cold, umbrella, wet };
   }
 
   private playerPose(sec: number, wet: boolean, cold: boolean): Pose {
