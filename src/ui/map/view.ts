@@ -240,7 +240,8 @@ export class MapView {
   // -------------------------------------------------------------------------
   private resize(): void {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
-    const r = this.parent.getBoundingClientRect();
+    // Tamaño de maquetación (clientWidth/Height): no le afectan las transformaciones de la animación de entrada.
+    const r = { width: this.parent.clientWidth, height: this.parent.clientHeight };
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
     this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
     this.canvas.style.width = `${r.width}px`;
@@ -255,7 +256,7 @@ export class MapView {
 
   /** Encuadra la isla completa (no todo el océano). */
   fit(): void {
-    const r = this.parent.getBoundingClientRect();
+    const r = { width: this.parent.clientWidth, height: this.parent.clientHeight };
     const { x0, y0, x1, y1 } = this.land;
     const pad = 40;
     const z = Math.min(r.width / (x1 - x0 + pad * 2), (r.height - 90) / (y1 - y0 + pad * 2));
@@ -279,7 +280,7 @@ export class MapView {
   focus(regionId: number): void {
     const c = this.w?.regions[regionId]?.center;
     if (!c) return;
-    const r = this.parent.getBoundingClientRect();
+    const r = { height: this.parent.clientHeight };
     // Deja sitio para el panel inferior.
     this.cam.x = c.x;
     this.cam.y = c.y + (r.height * 0.3) / this.cam.z;

@@ -2,6 +2,7 @@ import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
 import { weatherIn } from '../world/geography';
+import { bodyOf } from '../visual/figure/body';
 import { drawSmall, drawTree, drawTreeShadow, type SmallKind, type TreeKind } from '../visual/env/flora';
 import { playerRegion } from '../world/society';
 import { getLayout, doorOf, type BuildingKind, type Layout } from '../world/layout';
@@ -20,7 +21,7 @@ import { appearanceOf, playerAppearance, type Appearance } from './appearance';
 import { CHUNK, ChunkCache, type StaticObject } from './chunks';
 import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
 import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure';
-import { castShadow, sunAt, type SunState } from '../visual/light';
+import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
 import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
 import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
 import { marketOf } from '../world/economy';
@@ -85,6 +86,7 @@ interface Ent {
   partner?: string; // con quién conversa
   greeted?: boolean;
   react?: { expr?: Expr; action?: Action; until: number };
+  stride?: number; // zancada de su cuerpo (teselas por paso)
 }
 
 /** Figurante de las ciudades grandes: da vida a la plaza, no tiene memoria. */
@@ -186,9 +188,15 @@ export class WorldScene {
   /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
   private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
   private playerHidden = false;
+  private realDt = 0;
+  private joyRun = false;
+  /** Anticipación de la cámara, filtrada (no da latigazos al girar). */
+  private lookAhead = { x: 0, y: 0 };
   /** Destino tocado: un anillo que se desvanece en el suelo. */
   private tapMark: { x: number; y: number; t: number } | null = null;
   private ro: ResizeObserver | null = null;
+  /** Capa de oscuridad nocturna (a media resolución). */
+  private dark = document.createElement('canvas');
   private onKeyDown = (e: KeyboardEvent) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
     this.keys.add(e.key.toLowerCase());
@@ -268,6 +276,7 @@ export class WorldScene {
       this.last = t;
       if (!this.paused) {
         this.converseId = null; // sin diálogo abierto no hay conversación
+        this.realDt = dt0; // el jugador se mueve a tiempo real aunque el mundo vaya a cámara lenta
         this.update(dt);
       }
       this.updateCamera(dt0);
@@ -410,6 +419,8 @@ export class WorldScene {
     this.canvas.height = Math.round(r.height * this.dpr);
     this.canvas.style.width = `${r.width}px`;
     this.canvas.style.height = `${r.height}px`;
+    this.dark.width = Math.max(1, Math.ceil(r.width / 2));
+    this.dark.height = Math.max(1, Math.ceil(r.height / 2));
   }
 
   private toWorld(sx: number, sy: number): { x: number; y: number } {
@@ -464,12 +475,12 @@ export class WorldScene {
       if (this.joy && this.joy.id === e.pointerId) {
         this.joy = null;
         // Un toque corto en la zona del joystick sigue siendo un toque.
-        if (p && Math.hypot(p.x - p.sx, p.y - p.sy) < 12 && performance.now() - p.t < 250 && !this.pointers.size) this.tap(e.clientX, e.clientY);
+        if (p && Math.hypot(p.x - p.sx, p.y - p.sy) < 12 && performance.now() - p.t < 350 && !this.pointers.size) this.tap(e.clientX, e.clientY);
         return;
       }
       if (!p || this.pointers.size) return;
       const moved = Math.hypot(p.x - p.sx, p.y - p.sy);
-      if (moved < 12 && performance.now() - p.t < 450) this.tap(e.clientX, e.clientY);
+      if (moved < 12 && performance.now() - p.t < 350) this.tap(e.clientX, e.clientY);
     };
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
@@ -508,7 +519,7 @@ export class WorldScene {
     const w = this.w;
     const life = ensureLife(w);
     this.cb.advance((dt / SECONDS_PER_MINUTE) * this.timeScale);
-    this.movePlayer(dt);
+    this.movePlayer(this.realDt || dt);
     const me = life.player;
 
     this.tickAcc += dt;
@@ -560,7 +571,7 @@ export class WorldScene {
     }
     const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
     // La cámara mira un poco hacia donde se camina (más al correr) y solo se acerca a quien está al lado tras un rato quieto.
-    const look = this.reduceMotion ? 0 : 0.38;
+    const look = this.reduceMotion ? 0 : 1;
     const cine = this.cineAmount();
     if (cine > 0 && this.cine) {
       const cx = (this.cine.x ?? me.x) * TILE;
@@ -568,13 +579,17 @@ export class WorldScene {
       return { x: cx, y: cy, z: Math.min(4.6, ZOOM.explore * this.userZ * (1 + (this.cine.z - 1) * cine)) };
     }
     return {
-      x: (me.x + this.vel.x * look) * TILE,
-      y: (me.y + this.vel.y * look * 0.8) * TILE - 10,
+      x: (me.x + this.lookAhead.x * look) * TILE,
+      y: (me.y + this.lookAhead.y * look * 0.8) * TILE - 10,
       z: Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ)),
     };
   }
 
   private updateCamera(dt: number): void {
+    // La anticipación sigue a la velocidad con retraso (≈0,5 s): al dar media vuelta no salta.
+    const kl = 1 - Math.exp(-dt * 2);
+    this.lookAhead.x += (this.vel.x * 0.38 - this.lookAhead.x) * kl;
+    this.lookAhead.y += (this.vel.y * 0.38 - this.lookAhead.y) * kl;
     const tg = this.zoomTarget();
     // Suavizado exponencial (igual a 30 que a 120 fps) con una zona muerta pequeña.
     const k = 1 - Math.exp(-dt * 5.5);
@@ -605,10 +620,12 @@ export class WorldScene {
       const len = Math.hypot(jx, jy);
       if (len > 8) {
         // Analógico: cuanto más se aleja el dedo, más rápido; muy lejos, se corre.
-        const amt = Math.min(1, 0.35 + (len - 8) / 44);
+        const amt = Math.min(1, 0.35 + (len - 8) / 40);
         dx = (jx / len) * amt;
         dy = (jy / len) * amt;
-        if (len > 58) run = true;
+        // Se corre al llevar el dedo al anillo exterior (con histéresis: no parpadea en el borde).
+        this.joyRun = this.joyRun ? len > 42 : len > 50;
+        if (this.joyRun) run = true;
       }
     } else {
       if (this.keys.has('arrowleft') || this.keys.has('a')) dx -= 1;
@@ -647,7 +664,8 @@ export class WorldScene {
     }
     const want = !!(dx || dy);
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
-    const top = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed();
+    // Escala humana: una persona mide ~1,9 teselas; andar ≈ 1,6 pasos dobles por segundo.
+    const top = (run ? 6.4 : 3.2) * speedOf(tile) * this.speed();
     // Inercia: arranca en ~0,12 s y frena en ~0,08 s.
     const kv = 1 - Math.exp(-dt * (want ? 20 : 34));
     this.vel.x += (dx * top - this.vel.x) * kv;
@@ -661,6 +679,8 @@ export class WorldScene {
     if (want) this.facing = { x: dx, y: dy };
     const nx = me.x + this.vel.x * dt;
     const ny = me.y + this.vel.y * dt;
+    const ox = me.x;
+    const oy = me.y;
     const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
@@ -673,9 +693,12 @@ export class WorldScene {
       this.pending = this.path.length ? this.pending : null;
       if (t && at && Math.hypot(at.x - me.x, at.y - me.y) < 2.5) this.cb.onArrive(t);
     }
-    // El paso sigue al avance real: los pies no patinan.
-    const stride = this.playerRun ? 1.25 : 0.74; // teselas por medio ciclo
-    this.playerAnim += ((v * dt) / stride) * Math.PI;
+    // El paso sigue al avance real (contra una pared no se camina en el sitio) y a la
+    // zancada de este cuerpo: los pies no patinan.
+    const moved = Math.hypot(me.x - ox, me.y - oy);
+    const pap = this.apCache.get('@player')?.ap;
+    this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
+    if (moved < 0.002 && !want) this.playerMoving = false;
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -779,7 +802,7 @@ export class WorldScene {
     e.flip = e.dx < 0;
     e.moving = true;
     e.inside = false;
-    e.anim += (sp / 0.74) * Math.PI;
+    e.anim += (sp / (e.stride ?? 0.9)) * Math.PI;
   }
 
   /**
@@ -1177,6 +1200,7 @@ export class WorldScene {
       const f = this.folkById.get(id);
       if (!f) continue;
       const ap = this.dress(this.apOf(f), wet, cold);
+      e.stride = strideOf(ap, false);
       const pose = this.entPose(id, e, f, sec, wet, cold);
       this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
     }
@@ -1185,13 +1209,14 @@ export class WorldScene {
       if (!inView(e.x * TILE, e.y * TILE)) continue;
       const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'pastor', 'comerciante'];
       const ap = this.dress(this.extraAp(id, e.regionId, roles[Math.floor(hash(id, 4) * roles.length)], 14 + Math.floor(hash(id, 5) * 50)), wet, cold);
+      e.stride = strideOf(ap, false);
       const pose = this.entPose(id, e, undefined, sec, wet, cold);
       this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
     }
     // Mensajeros esperando ante tu salón.
     for (const m of this.messengers()) {
       const ap = this.extraAp(`m:${m.id}`, m.regionId, 'exploradora', 30, (a) => (a.outfit.item = 'saco'));
-      const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet, heavy: cold };
+      const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet || cold, heavy: cold };
       this.pushPerson(items, ap, pose, m.x * TILE, m.y * TILE);
     }
     // Animales.
@@ -1263,6 +1288,14 @@ export class WorldScene {
       g.arc(this.joy.bx, this.joy.by, 56, 0, Math.PI * 2);
       g.fill();
       g.stroke();
+      // Anillo interior: dentro se camina; al cruzarlo, se corre (se ilumina).
+      g.strokeStyle = this.joyRun ? 'rgba(231,199,126,0.95)' : 'rgba(243,232,207,0.28)';
+      g.lineWidth = this.joyRun ? 3 : 1.5;
+      g.setLineDash([4, 5]);
+      g.beginPath();
+      g.arc(this.joy.bx, this.joy.by, 46, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
       const dx = this.joy.x - this.joy.bx;
       const dy = this.joy.y - this.joy.by;
       const len = Math.min(56, Math.hypot(dx, dy));
@@ -1456,7 +1489,11 @@ export class WorldScene {
       const sun = this.sun;
       this.shadowQ.push(() => castShadow(g, silhouette(kt), kt.w, kt.h, kt.ax, kt.ay, bx, by, sun, 0.62));
       items.push({ y: by, draw: () => put(g, kt, bx, by) });
-      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 42 : 30, k: 0.85 });
+      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) {
+        // La puerta abierta deja salir la luz de dentro: brilla y dibuja un charco cálido delante.
+        this.lights.push({ x: bx, y: by - 16, r: 24, k: 1 });
+        this.lights.push({ x: bx, y: by + 6, r: b.kind === 'posada' ? 80 : 60, k: 0.9, flat: 0.5 });
+      }
       if (b.kind === 'forja') {
         const working = hourOf(life.clock) > 8 && hourOf(life.clock) < (r.militancy > 0.55 ? 23 : 18);
         if (working) this.lights.push({ x: bx - 14, y: by - 14, r: 34, k: 0.9 });
@@ -1469,10 +1506,14 @@ export class WorldScene {
       const py = pr.y * TILE;
       if (!inView(px, py)) continue;
       const frozen = pr.kind === 'fuente' && snowRoofs && seasonOf(w.day) === 'invierno';
-      const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.v);
+      const lampOn = night || ['lluvia', 'tormenta', 'niebla'].includes(this.wxFrame);
+      const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.kind === 'farol' ? (lampOn ? 1 : 0) : pr.v);
       // El poste del cruce, a escala humana (algo más alto que una persona, no el doble).
       const ps = pr.kind === 'cartel' ? 0.72 : 1;
-      if (pr.kind !== 'valla' && pr.kind !== 'vallaV') this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5, ps));
+      // Lo alto proyecta sombra; lo bajo (bancos, vallas, barriles, heno…) solo se asienta con una sombra de contacto.
+      const tall = pr.kind === 'farol' || pr.kind === 'cartel' || pr.kind === 'fuente' || pr.kind === 'pozo' || pr.kind === 'carro' || pr.kind === 'estatua';
+      if (tall) this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5, ps));
+      else this.shadowQ.push(() => contactShadow(g, px + (pr.kind === 'vallaV' ? 0 : pt.w / 2 - pt.ax), py, pr.kind === 'vallaV' ? 4 : pt.w * 0.5, pr.kind === 'vallaV' ? pt.h * 0.35 : 3, 0.35));
       if (pr.kind === 'fuente' && !frozen) items.push({ y: py, draw: () => (put(g, pt, px, py), drawFountainWater(g, px, py, this.reduceMotion ? 0 : t)) });
       else items.push({ y: py, draw: () => put(g, pt, px, py, false, ps) });
     }
@@ -1692,7 +1733,7 @@ export class WorldScene {
           if (!inView(px, py)) continue;
           const side = i % 2 ? road.a : road.b;
           const ap = this.extraAp(`s:${road.routeId}:${i}`, side, 'guardia', 22 + i * 3);
-          const pose = this.marchPose(pos.dx, 0, t / 1000 * 9 + i * 1.3, 'enfadado', px, py, false);
+          const pose = this.marchPose(pos.dx, pos.dy, t / 1000 + i * 1.3, 'enfadado', px, py, ap);
           this.pushPerson(items, ap, pose, px, py);
         }
       }
@@ -1726,7 +1767,7 @@ export class WorldScene {
           a.outfit.item = role === 'anciano' ? 'baston' : 'saco';
           a.outfit.patches = true;
         });
-        const pose = this.marchPose(pos.dx, 0, t / 1000 * 6 + i, i % 2 ? 'triste' : 'miedo', px, py, true);
+        const pose = this.marchPose(pos.dx, pos.dy, t / 1000 + i, i % 2 ? 'triste' : 'miedo', px, py, ap);
         this.pushPerson(items, ap, pose, px, py);
       }
     }
@@ -1741,7 +1782,7 @@ export class WorldScene {
       const py = pos.y * TILE;
       if (!inView(px, py)) continue;
       const driver = this.extraAp(`c:${c.id}`, w.player.home, 'comerciante', 34);
-      const dpose = this.marchPose(pos.dx, 0, t / 1000 * 7, 'neutral', px, py, false);
+      const dpose = this.marchPose(pos.dx, pos.dy, t / 1000, 'neutral', px, py, driver);
       items.push({
         y: py + 12,
         draw: () => {
@@ -1833,14 +1874,25 @@ export class WorldScene {
     }
     // Destino tocado: un anillo que se abre y se apaga.
     if (this.tapMark) {
-      const age = (performance.now() - this.tapMark.t) / 650;
-      if (age >= 1 || !this.path.length) this.tapMark = age >= 1 ? null : this.tapMark;
-      if (this.tapMark) {
-        g.strokeStyle = `rgba(255,236,190,${(0.8 * (1 - age)).toFixed(3)})`;
-        g.lineWidth = 1.1;
+      // Se queda hasta llegar: un aro dorado que late, con contorno oscuro para verse sobre cualquier suelo.
+      if (!this.path.length && !this.pending) this.tapMark = null;
+      else {
+        const age = ((performance.now() - this.tapMark.t) / 900) % 1;
+        const r = 6 + age * 9;
+        const x = this.tapMark.x * TILE;
+        const y = this.tapMark.y * TILE;
+        g.lineWidth = 2.2;
+        g.strokeStyle = `rgba(30,20,10,${(0.45 * (1 - age)).toFixed(3)})`;
         g.beginPath();
-        g.ellipse(this.tapMark.x * TILE, this.tapMark.y * TILE, 3 + age * 7, (3 + age * 7) * 0.4, 0, 0, Math.PI * 2);
+        g.ellipse(x, y, r, r * 0.42, 0, 0, Math.PI * 2);
         g.stroke();
+        g.lineWidth = 1.2;
+        g.strokeStyle = `rgba(240,205,130,${(0.95 * (1 - age)).toFixed(3)})`;
+        g.stroke();
+        g.fillStyle = 'rgba(240,205,130,0.85)';
+        g.beginPath();
+        g.ellipse(x, y, 2, 0.9, 0, 0, Math.PI * 2);
+        g.fill();
       }
     }
   }
@@ -1988,11 +2040,32 @@ export class WorldScene {
       if (vis.length >= cap) break;
     }
     if (d > 0.01) {
-      // La luna enfría y oscurece sin borrar las formas: un relleno que
-      // multiplica (algo más claro arriba, donde «está» el cielo). Las luces
-      // se suman después: el fuego devuelve el color a lo que toca.
-      const m = Math.min(1, d * 1.2);
-      overMultiply(g, 1 - m * 0.83, 1 - m * 0.76, 1 - m * 0.53, this.vw, this.vh);
+      // Oscuridad de luna (azul frío, a media resolución) con huecos de caída
+      // suave donde hay luz: lo iluminado conserva sus colores de verdad y lo
+      // demás queda en penumbra azulada. Una sola pasada de pantalla.
+      const dc = this.dark.getContext('2d')!;
+      const W = this.dark.width;
+      const H = this.dark.height;
+      const sx = W / this.vw;
+      dc.globalCompositeOperation = 'source-over';
+      dc.clearRect(0, 0, W, H);
+      const a = Math.min(0.8, d * 1.05);
+      const sky = dc.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, `rgba(18,28,64,${(a * 0.9).toFixed(3)})`);
+      sky.addColorStop(1, `rgba(8,12,34,${a.toFixed(3)})`);
+      dc.fillStyle = sky;
+      dc.fillRect(0, 0, W, H);
+      dc.globalCompositeOperation = 'destination-out';
+      dc.imageSmoothingQuality = 'low';
+      const hole = lightSprite('hole');
+      for (const l of vis) {
+        dc.globalAlpha = Math.min(1, l.k);
+        dc.drawImage(hole, (l.x - l.r) * sx, (l.y - l.r * l.flat) * sx, l.r * 2 * sx, l.r * 2 * l.flat * sx);
+      }
+      dc.globalAlpha = 1;
+      dc.globalCompositeOperation = 'source-over';
+      g.imageSmoothingQuality = 'low';
+      g.drawImage(this.dark, 0, 0, this.vw, this.vh);
     }
     // 4) El fuego tiñe de ámbar lo que toca (aditivo).
     g.globalCompositeOperation = 'lighter';
@@ -2003,8 +2076,27 @@ export class WorldScene {
     // las ventanas ya brillan por sí mismas. Cada halo es mucha superficie que pintar.
     for (const l of vis) {
       if (l.r < 26 * this.cam.z) continue;
-      g.globalAlpha = Math.min(1, (d > 0.01 ? 0.75 : 0.4) * glow * l.k);
-      g.drawImage(warm, l.x - l.r, l.y - l.r * l.flat, l.r * 2, l.r * 2 * l.flat);
+      g.globalAlpha = Math.min(1, 0.3 * glow * l.k);
+      g.drawImage(warm, l.x - l.r * 0.8, l.y - l.r * 0.8 * l.flat, l.r * 1.6, l.r * 1.6 * l.flat);
+    }
+    // Suelo mojado: cada charco de luz se refleja alargado hacia abajo, como en el adoquín empapado.
+    if (weather === 'lluvia' || weather === 'tormenta') {
+      const refl = lightSprite('reflect');
+      for (const l of vis) {
+        if (l.flat === 1) continue;
+        const ww = l.r * 0.22;
+        g.globalAlpha = Math.min(1, 0.55 * l.k);
+        g.drawImage(refl, l.x - ww, l.y - l.r * 0.1, ww * 2, l.r * 0.9);
+      }
+      g.globalAlpha = 1;
+    }
+    // Lo que emite luz (cristal de las farolas, ventanas, llamas) brilla por encima de la oscuridad.
+    const core = lightSprite('core');
+    for (const l of vis) {
+      if (l.flat !== 1 || l.r > 60 * this.cam.z) continue;
+      const rr = Math.min(l.r * 0.42, 16 * this.cam.z);
+      g.globalAlpha = Math.min(1, 0.9 * glow * l.k);
+      g.drawImage(core, l.x - rr, l.y - rr, rr * 2, rr * 2);
     }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
@@ -2054,8 +2146,7 @@ export class WorldScene {
     M(170, 110, 160, dusk * 0.12);
     // Lluvia y tormenta: menos luz y más fría.
     // (gris azulado: apaga a la vez la luz y el color, sin una pasada aparte de saturación)
-    M(126, 138, 158, rain ? (weather === 'tormenta' ? 0.62 : 0.48) : grey * 0.28);
-    if (rain) Sc(70, 74, 80, 0.16); // y levanta los negros: aire húmedo
+    M(118, 130, 150, rain ? (weather === 'tormenta' ? 0.66 : 0.55) : grey * 0.28);
     if (weather === 'nieve') Sc(200, 215, 235, 0.1);
     // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
     // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
@@ -2225,7 +2316,7 @@ export class WorldScene {
     const expr: Expr = react?.expr ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
     // Con lluvia: quien puede, saca un paraguas encerado; los demás, la capucha.
     const umbrella = wet && (action === 'walk' || action === 'idle' || action === 'look' || action === 'talk' || action === 'listen') && (f?.role === 'comerciante' || f?.role === 'lider' || hash(id, 11) < 0.22);
-    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: wet && !umbrella, heavy: cold, umbrella, wet };
+    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: (wet && !umbrella) || (cold && hash(id, 31) < 0.6), heavy: cold, umbrella, wet };
   }
 
   private playerPose(sec: number, wet: boolean, cold: boolean): Pose {
@@ -2237,14 +2328,17 @@ export class WorldScene {
     const side = Math.abs(fx) > 0.45 || Math.abs(fx) > Math.abs(fy) * 0.8;
     const facing: Facing = side ? 'side' : fy < 0 ? 'back' : 'front';
     const action: Action = this.playerMoving ? (this.playerRun ? 'run' : 'walk') : conv ? 'listen' : 'idle';
-    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet, heavy: cold, wet };
+    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet || cold, heavy: cold, wet };
   }
 
   /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
-  private marchPose(dx: number, dy: number, phase: number, expr: Expr, px: number, py: number, slow: boolean): Pose {
+  private marchPose(dx: number, dy: number, t: number, expr: Expr, px: number, py: number, ap: Appearance): Pose {
     const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
     const weather = this.weatherHere();
-    return { facing, flip: dx < 0, phase: slow ? phase * 0.8 : phase, action: 'walk', t: phase, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
+    // La fase sale de la posición en el camino: el paso va al ritmo del avance.
+    const along = Math.abs(dx) >= Math.abs(dy) ? px : py;
+    const phase = (along / (strideOf(ap, false) * TILE)) * Math.PI;
+    return { facing, flip: dx < 0, phase, action: 'walk', t, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
   }
 }
 
@@ -2252,7 +2346,7 @@ export { TW };
 
 /** Texturas de luz pintadas una vez (sin crear degradados en cada fotograma). */
 const lightCache = new Map<string, HTMLCanvasElement>();
-function lightSprite(kind: 'hole' | 'warm' | 'moon' | 'sunW' | 'sunE' | 'vignette'): HTMLCanvasElement {
+function lightSprite(kind: 'hole' | 'warm' | 'core' | 'reflect' | 'moon' | 'sunW' | 'sunE' | 'vignette'): HTMLCanvasElement {
   const hit = lightCache.get(kind);
   if (hit) return hit;
   const c = document.createElement('canvas');
@@ -2269,6 +2363,21 @@ function lightSprite(kind: 'hole' | 'warm' | 'moon' | 'sunW' | 'sunE' | 'vignett
   switch (kind) {
     case 'hole': // caída suave tipo 1/(1+d²)
       radial([[0, 'rgba(0,0,0,1)'], [0.2, 'rgba(0,0,0,0.92)'], [0.42, 'rgba(0,0,0,0.62)'], [0.65, 'rgba(0,0,0,0.3)'], [0.85, 'rgba(0,0,0,0.1)'], [1, 'rgba(0,0,0,0)']]);
+      break;
+    case 'reflect': {
+      // Reflejo vertical en el suelo mojado: estrecho, más fuerte arriba, con rizos horizontales.
+      const gr = g.createLinearGradient(0, 0, 0, S);
+      gr.addColorStop(0, 'rgba(255,200,120,0.75)');
+      gr.addColorStop(1, 'rgba(255,170,90,0)');
+      g.fillStyle = gr;
+      for (let y = 0; y < S; y += 3) {
+        const w = h * (0.35 + Math.sin(y * 0.9) * 0.25 + (1 - y / S) * 0.3);
+        g.fillRect(h - w, y, w * 2, 2);
+      }
+      break;
+    }
+    case 'core': // núcleo de una luz: casi blanco cálido en el centro
+      radial([[0, 'rgba(255,240,200,0.95)'], [0.25, 'rgba(255,200,120,0.6)'], [0.6, 'rgba(255,150,60,0.18)'], [1, 'rgba(255,120,40,0)']]);
       break;
     case 'warm':
       radial([[0, 'rgba(255,190,110,0.9)'], [0.3, 'rgba(255,150,70,0.5)'], [0.7, 'rgba(220,100,40,0.14)'], [1, 'rgba(200,80,30,0)']]);
@@ -2318,4 +2427,10 @@ function overScreen(g: CanvasRenderingContext2D, r: number, gg: number, b: numbe
   g.globalCompositeOperation = 'source-over';
   g.fillStyle = `rgba(${Math.round((r / a) * 255)},${Math.round((gg / a) * 255)},${Math.round((b / a) * 255)},${a.toFixed(3)})`;
   g.fillRect(0, 0, W, H);
+}
+
+/** Zancada (teselas por paso) de un cuerpo andando o corriendo: así el ciclo de piernas sigue al avance. */
+function strideOf(ap: Appearance | undefined, run: boolean): number {
+  const leg = ap ? bodyOf(ap).leg : 14.4;
+  return (2 * leg * Math.sin(run ? 0.78 : 0.52)) / TILE;
 }

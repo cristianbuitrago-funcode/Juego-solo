@@ -20,7 +20,8 @@ export interface Style {
 
 const DEPTH = 13; // fondo lateral (oblicuo, hacia arriba a la derecha)
 const DY = 7;
-export const WALL_H = 48;
+/** Muro de una planta: la puerta (36) mide ~1,2 veces una persona (31), como en la realidad. */
+export const WALL_H = 56;
 
 interface Win {
   x: number; // relativo al centro de la fachada
@@ -33,8 +34,8 @@ interface Win {
 export function houseWindows(wTiles: number): Win[] {
   const W = wTiles * 16;
   return [
-    { x: -W / 2 + 10, y: -36, w: 12, h: 13 },
-    { x: W / 2 - 22, y: -36, w: 12, h: 13 },
+    { x: -W / 2 + 10, y: -42, w: 12, h: 14 },
+    { x: W / 2 - 22, y: -42, w: 12, h: 14 },
   ];
 }
 
@@ -398,7 +399,7 @@ function scaffold(g: CanvasRenderingContext2D, x0: number, top: number, base: nu
 // ---------------------------------------------------------------------------
 export function houseTex(st: Style, state: BuildState, v: number, wTiles: number, wealth: number): Tex {
   const W = wTiles * 16;
-  const H = 110;
+  const H = 118;
   const wb = Math.round(wealth * 3);
   return tex(`house:${st.wall}:${st.roof}:${st.shape}:${state}:${v % 3}:${wTiles}:${wb}`, W + 16 + DEPTH, H, W / 2 + 8, H - 4, (g) => {
     const R = rng(v * 131 + wTiles);
@@ -446,7 +447,7 @@ export function houseTex(st: Style, state: BuildState, v: number, wTiles: number
       g.lineCap = 'round';
     }
     for (const wr of houseWindows(wTiles)) window_(g, wr.x, base + wr.y, wr.w, wr.h, st.trim, state, wealth, wealth > 0.45 && v % 2 === 0);
-    door(g, -8, base - 38, 16, 30, st.trim, state);
+    door(g, -9, base - 44, 18, 36, st.trim, state);
     // Sombra del alero sobre el muro.
     g.fillStyle = vgrad(g, top, top + 7, [[0, 'rgba(20,12,10,0.4)'], [1, 'rgba(20,12,10,0)']]);
     g.fillRect(x0, top, W, 7);
@@ -515,7 +516,7 @@ function roundHut(g: CanvasRenderingContext2D, R: () => number, W: number, st: S
   g.fillStyle = 'rgba(30,20,30,0.18)';
   g.fillRect(W * 0.2, top, W * 0.3 - 2, 40);
   window_(g, x0 + 12, -32, 11, 11, st.trim, state, wealth, false);
-  door(g, -8, -34, 16, 30, st.trim, state);
+  door(g, -9, -38, 18, 34, st.trim, state);
   if (state === 'obra') return scaffold(g, x0, top, 0, W);
   thatch(g, R, 0, top, W, st.roof, state);
   void v;
@@ -665,7 +666,7 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
           window_(g, wx, top + 12, 13, 14, st.trim, 'normal', wealth, true);
           window_(g, wx, top + 46, 13, 14, st.trim, 'normal', wealth, false);
         }
-        door(g, -9, base - 38, 18, 30, st.trim, 'normal');
+        door(g, -10, base - 44, 20, 36, st.trim, 'normal');
         eave(top);
         roof(g, R, x0, top, W, st.roof, st.shape === 'redondo' ? 'dos-aguas' : st.shape, 'normal');
         // Cartel con una jarra.
@@ -769,7 +770,7 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         g.fillStyle = '#7a4a28';
         g.fillRect(x0, top, W, 2.6);
         for (const wr of houseWindows(5)) window_(g, wr.x, base + wr.y, wr.w, wr.h, '#2f5f63', 'normal', wealth, true);
-        door(g, -8, base - 38, 16, 30, '#2f5f63', 'normal');
+        door(g, -9, base - 44, 18, 36, '#2f5f63', 'normal');
         eave(top);
         roof(g, R, x0, top, W, '#9c5b34', 'dos-aguas', 'normal');
         ell(g, 0, top - 10, 5, 5, '#e9b44c');
@@ -861,6 +862,14 @@ export function snowCapped(t: Tex, cutY: number): Tex {
     g.fill();
     // Ventisqueros y sombras azuladas.
     for (let i = 0; i < 18; i++) ell(g, -t.ax + R() * t.w, -t.ay + R() * (cutY + t.ay), 3 + R() * 6, 0.8 + R(), 'rgba(150,170,205,0.28)');
+    g.restore();
+    // Bajo la nieve se adivinan las tejas, la cumbrera y la chimenea.
+    g.save();
+    g.beginPath();
+    g.rect(-t.ax, -t.ay, t.w, cutY + t.ay);
+    g.clip();
+    g.globalAlpha = 0.24;
+    g.drawImage(t.canvas, -t.ax, -t.ay, t.w, t.h);
     g.restore();
     // Carámbanos bajo el alero.
     g.fillStyle = 'rgba(220,235,250,0.85)';

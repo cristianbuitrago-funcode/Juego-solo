@@ -214,18 +214,23 @@ function paintTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Season, 
         g.fill();
         // Sombra que deja el piso de encima.
         if (i > 0) ell(g, half * 0.1, top + hgt * 0.12, half * 0.45, hgt * 0.1, alpha(shd(p[0], 0.4), 0.28));
-        // Agujas: trazos cortos que siguen la caída de las ramas.
+        // Agujas: trazos cortos que caen con la rama, solo dentro de la silueta del piso.
+        g.save();
+        g.beginPath();
+        smoothPath(g, pts, true, 0.15);
+        g.clip();
         for (let j = 0; j < 10 + k * 14; j++) {
-          const sx = (R() * 2 - 1) * half * 0.95;
+          const sx = (R() * 2 - 1) * half * 0.9;
           const sy = top + hgt * (0.25 + R() * 0.7) * (0.6 + Math.abs(sx / half) * 0.4);
           const lightSide = sx < 0 && R() < 0.7;
-          g.strokeStyle = alpha(lightSide ? lit(p[2], 0.1) : shd(p[0], 0.25), 0.7);
-          g.lineWidth = 0.45;
+          g.strokeStyle = alpha(lightSide ? lit(p[2], 0.1) : shd(p[0], 0.25), 0.3);
+          g.lineWidth = 0.5;
           g.beginPath();
           g.moveTo(sx, sy);
-          g.lineTo(sx + Math.sign(sx) * 1.6, sy + 1.4);
+          g.lineTo(sx + Math.sign(sx) * 1.2, sy + 1.8);
           g.stroke();
         }
+        g.restore();
         if (snowy) blob(g, [0, top, half * 0.6, top + hgt * 0.45, 0, top + hgt * 0.3, -half * 0.6, top + hgt * 0.45], 'rgba(240,246,252,0.92)', 0.4);
       }
       break;

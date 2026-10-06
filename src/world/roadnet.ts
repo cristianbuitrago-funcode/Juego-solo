@@ -42,12 +42,12 @@ export function roadPath(w: WorldState, from: number, to: number, openOnly = fal
 }
 
 /** Punto a una fracción t (0..1) del recorrido, y dirección del movimiento. */
-export function along(path: { x: number; y: number }[], t: number): { x: number; y: number; dx: number } {
-  if (!path.length) return { x: 0, y: 0, dx: 1 };
+export function along(path: { x: number; y: number }[], t: number): { x: number; y: number; dx: number; dy: number } {
+  if (!path.length) return { x: 0, y: 0, dx: 1, dy: 0 };
   const f = Math.max(0, Math.min(0.9999, t)) * (path.length - 1);
   const i = Math.floor(f);
   const a = path[i];
   const b = path[Math.min(path.length - 1, i + 1)];
   const k = f - i;
-  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, dx: b.x - a.x };
+  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, dx: b.x - a.x, dy: b.y - a.y };
 }

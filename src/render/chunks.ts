@@ -183,7 +183,10 @@ export class ChunkCache {
     // La capa base es suave (manchas, relieve, orillas): se calcula a media
     // resolución (una muestra cada 2 px de mundo) y se amplía con suavizado,
     // que además funde los bordes entre materiales. Cuatro veces menos trabajo.
-    const BP = CPX / 2;
+    // Una muestra de margen por cada lado (tomada del fragmento vecino): al ampliar
+    // con suavizado, el borde se interpola igual a ambos lados y no hay costura.
+    const BN = CPX / 2;
+    const BP = BN + 2;
     const base = (this.baseCanvas ??= Object.assign(document.createElement('canvas'), { width: BP, height: BP }));
     const bg = base.getContext('2d', { willReadFrequently: true })!;
     const img = bg.createImageData(BP, BP);
@@ -232,9 +235,9 @@ export class ChunkCache {
     };
     const isWater = (t: number) => t === T.Sea || t === T.Deep || t === T.River;
     for (let py = 0; py < BP; py++) {
-      const wy = wy0 + py * 2 + 1;
+      const wy = wy0 + (py - 1) * 2 + 1;
       for (let px = 0; px < BP; px++) {
-        const wx = wx0 + px * 2 + 1;
+        const wx = wx0 + (px - 1) * 2 + 1;
         ownerTile(wx, wy);
         const k = idx(otx, oty);
         const t = tiles[k];
@@ -289,10 +292,10 @@ export class ChunkCache {
           const rg = region[k];
           if (snowA && rg >= 0 && snowReg[rg]) {
             // Más fina en caminos y plazas (pisada), con claros donde el viento la barre.
-            const trod = t === T.Road || t === T.Plaza || t === T.Bridge ? 0.78 : 1;
+            const trod = t === T.Road || t === T.Plaza || t === T.Bridge ? 0.92 : 1;
             const patch = vnoise(wx / 21 + 13, wy / 21 + 7);
             const fine = vnoise(wx / 5 + 3, wy / 5 + 9);
-            snowA[py * BP + px] = Math.round(255 * Math.max(0, Math.min(1, (0.7 + patch * 0.5 - (trod < 1 ? fine * 0.25 : 0)) * trod)));
+            snowA[py * BP + px] = Math.round(255 * Math.max(0, Math.min(1, (0.8 + patch * 0.4 - (trod < 1 ? fine * 0.3 : 0)) * trod)));
           }
         }
         d[q] = r;
@@ -322,7 +325,7 @@ export class ChunkCache {
     const fg = canvas.getContext('2d')!;
     fg.imageSmoothingEnabled = true;
     fg.imageSmoothingQuality = 'high';
-    fg.drawImage(base, 0, 0, W, W);
+    fg.drawImage(base, 1, 1, BN, BN, 0, 0, W, W);
     // Detalle de cada material, recortado a donde está.
     const present = new Set<number>();
     for (let i = 0; i < mats.length; i += 3) if (mats[i]) present.add(mats[i]);
@@ -348,8 +351,8 @@ export class ChunkCache {
       tg.fillStyle = pat;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
-      tg.drawImage(mask, 0, 0, W, W);
-      fg.globalAlpha = name === 'adoquin' || name === 'tablas' ? 0.92 : 1;
+      tg.drawImage(mask, 1, 1, BN, BN, 0, 0, W, W);
+      fg.globalAlpha = 1;
       fg.drawImage(tmp, 0, 0);
       fg.globalAlpha = 1;
     }
@@ -368,7 +371,7 @@ export class ChunkCache {
       tg.fillStyle = sp;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
-      tg.drawImage(mask, 0, 0, W, W);
+      tg.drawImage(mask, 1, 1, BN, BN, 0, 0, W, W);
       fg.drawImage(tmp, 0, 0);
     }
   }

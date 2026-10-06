@@ -1,3 +1,4 @@
+import { weatherIn } from '../world/geography';
 import { poiDialog, settlementDialog, worldChoices } from './world6';
 import { ACTIONS, answerPetition, freeAgents, hasAuthority } from '../core/api';
 import { ROLES } from '../core/content/roles';
@@ -48,6 +49,8 @@ interface Choice {
   run: () => void;
   hint?: string;
   primary?: boolean;
+  /** Opción de salida (se pinta discreta y sustituye a la ✕). */
+  exit?: boolean;
 }
 
 /** Caja de diálogo al estilo de los juegos de rol. */
@@ -55,7 +58,7 @@ export function dialogue(app: App, title: string, subtitle: string, lines: strin
   let close = () => {};
   // Dentro de un edificio, la cabecera es una viñeta pintada del interior.
   const room = !portrait && interiorCtx ? interiorCanvas(app, interiorCtx.kind, interiorCtx.regionId) : null;
-  const isExit = (c: Choice) => /^(Salir|Pensarlo|Seguir sin|Marcharse|Irte)/.test(c.label);
+  const isExit = (c: Choice) => c.exit ?? /^(Salir|Pensarlo|Seguir sin|Marcharse|Irte|Despedirte|Despedirse|Nada|Dejarlo|Volver|Cerrar|Ahora no|No,? gracias|Otro día|Mejor no)/.test(c.label);
   const hasExit = choices.some(isExit);
   close = app.modal(() => [
     room,
@@ -90,15 +93,22 @@ function interiorCanvas(app: App, kind: InteriorKind, regionId: number): HTMLCan
   const people: InteriorPerson[] = [];
   for (const [roles, n, action, expr] of cast) for (const f of pick(roles, n)) people.push({ ap: appearanceOf(w, f), action, expr: expr === 'neutral' ? moodOf(w, f) : expr, x: 0, flip: people.length % 2 === 1 });
   people.forEach((p, i) => (p.x = people.length === 1 ? 0.62 : 0.3 + (i / Math.max(1, people.length - 1)) * 0.6));
-  const opts = { night: darkness(life.clock) > 0.3, wealth: Math.max(0, Math.min(1, marketOf(w, regionId).prosperity)), people, t: 0 };
+  const weather = app.scene?.debugWeather ?? weatherIn(w, regionId);
+  const opts = { night: darkness(life.clock) > 0.3, weather, wealth: Math.max(0, Math.min(1, marketOf(w, regionId).prosperity)), people, t: 0 };
   const t0 = performance.now();
   const paint = () => {
     opts.t = (performance.now() - t0) / 1000;
     paintInterior(c, kind, opts);
   };
   paint();
-  // Unos pocos fotogramas por segundo: el fuego crepita y la gente respira.
-  const timer = window.setInterval(() => (c.isConnected ? paint() : window.clearInterval(timer)), 110);
+  // ~24 fotogramas por segundo mientras el diálogo está abierto: el fuego crepita y la gente respira.
+  let last = 0;
+  const loop = (now: number) => {
+    if (!c.isConnected && now - t0 > 500) return;
+    if (now - last > 40) (last = now), paint();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
   return c;
 }
 

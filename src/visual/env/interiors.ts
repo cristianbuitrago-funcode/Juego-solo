@@ -23,6 +23,7 @@ export interface InteriorPerson {
 
 export interface InteriorOpts {
   night: boolean;
+  weather?: string; // el tiempo de fuera se ve por la ventana
   wealth: number; // 0..1
   people: InteriorPerson[];
   t: number; // segundos
@@ -76,7 +77,7 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
   g.fillRect(0, floorY, IW, 3);
   // Ventana con la luz de fuera.
   const wx = kind === 'templo' ? IW / 2 - 16 : IW * 0.68;
-  windowPane(g, wx, 22, kind === 'templo' ? 32 : 40, kind === 'templo' ? 52 : 34, o.night, P.wood, kind === 'templo');
+  windowPane(g, wx, 22, kind === 'templo' ? 32 : 40, kind === 'templo' ? 52 : 34, o.night, P.wood, kind === 'templo', o.weather ?? 'despejado', o.t);
   // Mobiliario.
   const fire = o.t * 1000;
   switch (kind) {
@@ -129,7 +130,7 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
     g.beginPath();
     g.ellipse(0, 0, 8, 2.2, 0, 0, Math.PI * 2);
     g.fill();
-    drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: o.t + p.x * 7, expr: p.expr, lod: 0 }, 0, 0);
+    drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: o.t + p.x * 7, expr: p.expr, lod: 0 }, 0, 0, { res: k * scale });
     g.restore();
   }
   // Luz: el fuego o las velas calientan; la sala se oscurece en los bordes.
@@ -186,7 +187,9 @@ function stoneWall(g: CanvasRenderingContext2D, R: () => number, floorY: number,
   }
 }
 
-function windowPane(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, night: boolean, wood: string, arch: boolean): void {
+function windowPane(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, night: boolean, wood: string, arch: boolean, weather: string, t: number): void {
+  const wet = weather === 'lluvia' || weather === 'tormenta';
+  const grey = wet || weather === 'nublado' || weather === 'niebla' || weather === 'nieve';
   g.save();
   g.beginPath();
   if (arch) {
@@ -197,11 +200,29 @@ function windowPane(g: CanvasRenderingContext2D, x: number, y: number, w: number
   } else g.rect(x, y, w, h);
   g.closePath();
   const sky = g.createLinearGradient(0, y, 0, y + h);
-  sky.addColorStop(0, night ? '#1a2440' : '#b8d4e8');
-  sky.addColorStop(1, night ? '#2a3456' : '#f0e2c0');
+  sky.addColorStop(0, night ? (grey ? '#141a26' : '#1a2440') : grey ? '#8a96a4' : '#b8d4e8');
+  sky.addColorStop(1, night ? (grey ? '#202838' : '#2a3456') : grey ? '#b4b8bc' : '#f0e2c0');
   g.fillStyle = sky;
   g.fill();
-  if (night) for (let i = 0; i < 4; i++) ell(g, x + 6 + i * 9, y + 6 + (i % 2) * 7, 0.6, 0.6, '#f0f0d0');
+  g.save();
+  g.clip();
+  if (night && !grey) for (let i = 0; i < 4; i++) ell(g, x + 6 + i * 9, y + 6 + (i % 2) * 7, 0.6, 0.6, '#f0f0d0');
+  if (wet) {
+    // Lluvia que cae tras el cristal y gotas que resbalan.
+    g.strokeStyle = 'rgba(220,232,245,0.55)';
+    g.lineWidth = 0.6;
+    for (let i = 0; i < 14; i++) {
+      const sx = x + ((i * 7.3 + t * 40) % w);
+      const sy = y + ((i * 13.1 + t * 160) % h);
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(sx - 1.5, sy + 5);
+      g.stroke();
+    }
+  } else if (weather === 'nieve') {
+    for (let i = 0; i < 12; i++) ell(g, x + ((i * 7.7 + Math.sin(t + i) * 3) % w), y + ((i * 11.3 + t * 12) % h), 0.9, 0.9, 'rgba(250,252,255,0.9)');
+  }
+  g.restore();
   g.restore();
   g.strokeStyle = wood;
   g.lineWidth = 3;

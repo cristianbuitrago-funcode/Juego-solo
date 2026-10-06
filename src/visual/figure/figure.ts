@@ -26,9 +26,11 @@ const idOf = (ap: Appearance) => {
 
 type Part = 'head' | 'hairB' | 'torso' | 'skirt' | 'ua' | 'fa' | 'faF' | 'th' | 'sh' | 'cape' | 'capeF' | 'item';
 
+/** Resolución forzada (retratos e interiores, que muestran a la persona mucho más grande). */
+let resOverride = 0;
 function part(ap: Appearance, B: Body, p: Part, facing: Facing, extra: string, draw: (g: CanvasRenderingContext2D) => void, far = false): Tex {
   const id = idOf(ap);
-  const res = VQ().figureRes * (p === 'head' ? 1.5 : 1) * (far ? 0.6 : 1);
+  const res = resOverride ? resOverride * (far ? 0.6 : 1) : VQ().figureRes * (p === 'head' ? 1.5 : 1) * (far ? 0.6 : 1);
   const box = boxOf(B, p);
   return tex(`fig:${id}:${p}:${facing}:${extra}`, box.w, box.h, box.ax, box.ay, (g) => {
     if (far) g.filter = 'brightness(0.82) saturate(0.9)';
@@ -73,6 +75,7 @@ function frontArm(l: Limb, sign: number): { out: number; fs: number; bend: numbe
 
 interface Opts {
   far?: boolean; // LOD 2: figura en una sola imagen
+  res?: number; // píxeles de textura por píxel de mundo (retratos: nítidos al tamaño en que se ven)
 }
 
 /** Dibuja a una persona con los pies en (x, y) de mundo. */
@@ -81,12 +84,14 @@ export function drawFigure(g: CanvasRenderingContext2D, ap: Appearance, pose: Po
   if (pose.lod === 2 || o.far) return drawStatue(g, ap, B, pose, x, y);
   if (pose.action === 'sleep') return drawLying(g, ap, B, pose, x, y);
   const { R, squash } = blended(g, ap, pose, B);
+  resOverride = o.res ? Math.min(24, Math.round(o.res * 2) / 2) : 0;
   g.save();
   g.translate(x + R.x, y);
   if (pose.facing === 'side' && pose.flip) g.scale(-1, 1);
   if (squash !== 1) g.scale(squash, 1);
   compose(g, ap, B, pose, R);
   g.restore();
+  resOverride = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +186,14 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
     case 'fish':
       return 'cana';
     case 'work':
-      return own === 'azada' || own === 'cesta' || own === 'saco' ? own : 'azada';
+      return 'azada';
+    case 'point':
+    case 'talk':
+    case 'listen':
+    case 'nod':
+    case 'shake':
+      // Se habla y se señala con la mano libre: solo un bastón o una lanza se quedan.
+      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
     case 'fight':
       return own && WEAPONS.has(own) && own !== 'arco' ? own : undefined;
     case 'carry':
@@ -370,10 +382,15 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
     if (!tCape) return;
     g.save();
     torsoT();
-    g.translate(0, 0);
-    // La capa cuelga por su peso: no sigue la inclinación del torso.
-    if (side) g.rotate(-R.lean * 0.85 + R.cape * 0.25 + R.skirt * 0.15);
-    else g.transform(1, 0, R.skirt * 0.15, 1, 0, 0);
+    // Cuelga de los hombros por su peso (no sigue la inclinación del torso) y el
+    // bajo ondea más que el cuello: cizalla desde el hombro hacia abajo.
+    const sy = -B.torso + B.armW * 0.5;
+    g.translate(0, sy);
+    if (side) {
+      g.rotate(-R.lean * 0.85);
+      g.transform(1, 0, R.cape * 0.35 + R.skirt * 0.3, 1, 0, 0);
+    } else g.transform(1 + R.cape * 0.04, 0, R.skirt * 0.22, 1, 0, 0);
+    g.translate(0, -sy);
     put(g, tCape, 0, 0);
     g.restore();
   };
@@ -403,9 +420,11 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
   const [L0, L1] = R.legs;
   const [A0, A1] = R.arms;
   // Sentado: siempre sobre algo (un taburete de tres patas), nunca en el aire.
-  if (R.sitting > 0.5) stool(g, B, hipY, side);
+  const seated = R.sitting > 0.5;
+  if (seated && f !== 'front') stool(g, B, hipY, side);
   if (f === 'front') {
     cape();
+    if (seated) stool(g, B, hipY, false);
     hairBack();
     leg(L0, -B.hipJoint, false);
     leg(L1, B.hipJoint, false);

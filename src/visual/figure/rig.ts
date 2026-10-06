@@ -76,8 +76,9 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       r.x = 0;
       r.y = (1 - Math.abs(C(p))) * 0.55 - 0.15;
       if (side) {
-        r.legs[0] = { a: 0.42 * k * S(p), b: -(0.15 + 0.85 * pos(C(p))) * k, lift: 0 };
-        r.legs[1] = { a: -0.42 * k * S(p), b: -(0.15 + 0.85 * pos(-C(p))) * k, lift: 0 };
+        // Zancada fija (0,52 rad): la escena avanza la fase según la distancia recorrida.
+        r.legs[0] = { a: 0.52 * S(p), b: -(0.15 + 0.9 * pos(C(p))), lift: 0 };
+        r.legs[1] = { a: -0.52 * S(p), b: -(0.15 + 0.9 * pos(-C(p))), lift: 0 };
         r.arms[0] = { a: -0.38 * k * S(p), b: 0.25 + 0.2 * pos(-S(p)), lift: 0 };
         r.arms[1] = { a: 0.38 * k * S(p), b: 0.25 + 0.2 * pos(S(p)), lift: 0 };
         r.lean = 0.04;
@@ -179,8 +180,9 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       const angry = pose.action === 'argue';
       const g1 = S(t * (angry ? 3.6 : 2.3) + seed);
       const g2 = S(t * (angry ? 2.9 : 1.7) + seed * 2);
-      r.arms[1] = { a: 0.55 + g1 * (angry ? 0.45 : 0.3), b: 0.9 + g2 * 0.3, lift: 0.4, fist: angry && g1 > 0.3 };
-      r.arms[0] = { a: angry ? 0.5 + g2 * 0.3 : 0.12 + pos(g2) * 0.3, b: angry ? 0.8 : 0.3 + pos(g2) * 0.5, lift: 0.2 };
+      // Discutiendo, los brazos se abren y se separan del cuerpo (se leen también de frente).
+      r.arms[1] = { a: (angry ? 0.95 : 0.55) + g1 * (angry ? 0.4 : 0.3), b: 0.9 + g2 * 0.3, lift: angry ? 0.15 : 0.4, fist: angry && g1 > 0.3 };
+      r.arms[0] = { a: angry ? 0.9 + g2 * 0.3 : 0.12 + pos(g2) * 0.3, b: angry ? 0.8 : 0.3 + pos(g2) * 0.5, lift: angry ? 0.15 : 0.2 };
       r.mouthOpen = S(t * 9 + seed) > -0.1;
       r.head.nod = S(t * 2.1) * 0.05;
       r.head.tilt = S(t * 0.8 + seed) * 0.05;
@@ -223,13 +225,17 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       r.mouthOpen = S(t * 7) > 0.2;
       break;
     case 'carry':
-      r.arms[0] = { a: 0.55, b: 1.4, lift: 0.5 };
-      r.arms[1] = { a: 0.55, b: 1.4, lift: 0.5 };
-      r.lean = -0.06;
+      // La carga, pegada al cuerpo; el peso echa el torso atrás.
+      r.arms[0] = { a: 0.2, b: 1.7, lift: 0.5 };
+      r.arms[1] = { a: 0.2, b: 1.7, lift: 0.5 };
+      r.lean = -0.1;
       r.y = (1 - Math.abs(C(p))) * 0.4;
       if (side) {
-        r.legs[0] = { a: 0.3 * S(p), b: -(0.12 + 0.6 * pos(C(p))), lift: 0 };
-        r.legs[1] = { a: -0.3 * S(p), b: -(0.12 + 0.6 * pos(-C(p))), lift: 0 };
+        r.legs[0] = { a: 0.52 * S(p), b: -(0.12 + 0.8 * pos(C(p))), lift: 0 };
+        r.legs[1] = { a: -0.52 * S(p), b: -(0.12 + 0.8 * pos(-C(p))), lift: 0 };
+      } else {
+        r.legs[0] = { a: 0, b: 0, lift: pos(S(p)) * 0.8 };
+        r.legs[1] = { a: 0, b: 0, lift: pos(-S(p)) * 0.8 };
       }
       break;
     case 'eat': {
@@ -244,9 +250,10 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
     case 'cry': {
       // Las manos a la cara, la cabeza hundida y los hombros que tiemblan con el sollozo.
       const sob = pos(S(t * 5)) * 0.4;
-      r.arms[0] = { a: 1.0, b: 2.95, lift: 0.55 };
-      r.arms[1] = { a: 1.05, b: 2.9, lift: 0.55 };
+      r.arms[0] = { a: 1.3, b: 2.45, lift: 0.55 };
+      r.arms[1] = { a: 1.32, b: 2.4, lift: 0.55 };
       r.head.nod = 0.3;
+      r.head.dy = 0.6;
       r.shrug = sob + 0.2;
       r.lean = 0.16;
       r.y = sob * 0.4;

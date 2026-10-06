@@ -509,12 +509,14 @@ export class App {
     window.setTimeout(() => el.remove(), 7000);
   }
 
-  banner(top: string, main: string): void {
+  banner(top: string, main: string, cine = !/^Día \d/.test(top) && top !== 'Has entrado en'): void {
     if (!this.stage) return;
     this.stage.querySelector('.banner')?.remove();
     const b = h('div', { class: 'banner' }, h('small', null, top), h('div', null, main));
     this.stage.append(b);
-    // Los momentos que merecen cartel también merecen plano de cine.
+    // Los momentos que merecen cartel (llegar a un sitio nuevo, descubrirse, una nueva
+    // generación) merecen plano de cine; el amanecer de cada día, no.
+    if (!cine) return;
     this.scene?.cinematic({ seconds: 3.4 });
     this.stage.classList.add('cine');
     window.setTimeout(() => this.stage?.classList.remove('cine'), 3200);
@@ -580,6 +582,8 @@ export class App {
       ),
       body,
     );
+    // La pestaña activa siempre a la vista (las demás se deslizan).
+    requestAnimationFrame(() => this.diary?.querySelector('.diary-head .tabs button.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }));
     if (this.diaryView === 'mapa') {
       body.classList.add('map-body');
       this.map = new MapView(body, { onTap: (id) => (id === null ? this.closeRegion() : this.openRegion(id)), onLongPress: (id) => this.openRegion(id) });

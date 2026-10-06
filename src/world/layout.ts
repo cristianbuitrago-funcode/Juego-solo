@@ -13,7 +13,7 @@ import { T, TH, TW, WORLD_SCALE } from './types';
  */
 export type BuildingKind = 'casa' | 'salon' | 'almacen' | 'posada' | 'templo' | 'forja' | 'hogar' | 'establo' | 'granero';
 
-export type PropKindL = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
+export type PropKindL = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'estatua' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
 
 export interface Prop {
   kind: PropKindL;
@@ -332,15 +332,21 @@ function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: 
       const k = idx(Math.floor(b.x + b.w / 2), Math.floor(b.y + b.h + s));
       if (!blocked[k] && (tiles[k] === T.Grass || tiles[k] === T.Meadow || tiles[k] === T.Clay)) tiles[k] = T.Road;
     }
-  // Plaza: fuente (o pozo), bancos y faroles.
-  add(r.population > 450 || r.isHome ? 'fuente' : 'pozo', v.cx + 0.5, v.cy + 1.6, false);
+  // Plaza: cada pueblo la suya. El centro depende de su tamaño y de su suerte
+  // (fuente, pozo o el monumento a alguien), y bancos y faroles no se repiten igual.
+  const center = r.isHome ? 'fuente' : r.population > 900 && rng.chance(0.5) ? 'estatua' : r.population > 450 ? (rng.chance(0.75) ? 'fuente' : 'estatua') : 'pozo';
+  add(center, v.cx + 0.5, v.cy + 1.6, false);
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked[idx(v.cx + dx, v.cy + dy)] = 1;
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+  const benches = r.isHome ? 4 : rng.int(2, 5);
+  const turn = r.isHome ? Math.PI / 4 : rng.next() * Math.PI * 2;
+  for (let k = 0; k < benches; k++) {
+    const a = (k / benches) * Math.PI * 2 + turn;
     add('banco', v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6), v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6));
   }
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
+  const lamps = r.isHome ? 6 : Math.max(3, Math.min(7, Math.round(r.population / 160)));
+  const lturn = r.isHome ? 0 : rng.next() * Math.PI;
+  for (let k = 0; k < lamps; k++) {
+    const a = (k / lamps) * Math.PI * 2 + lturn;
     const p = { x: v.cx + 0.5 + Math.cos(a) * (v.plazaR + 0.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR + 0.6) };
     add('farol', p.x, p.y, true);
     v.lamps.push({ x: p.x, y: p.y - 3 });

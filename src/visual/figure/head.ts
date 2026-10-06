@@ -706,7 +706,7 @@ function beard(g: CanvasRenderingContext2D, ap: Appearance, B: Body, facing: Fac
   switch (ap.beard) {
     case 'sombra':
       g.save();
-      g.globalAlpha = 0.28;
+      g.globalAlpha = 0.16;
       fill([sx(-W * 0.85), H * 0.15, sx(-W * 0.5), H * 0.4, sx(0), chin + H * 0.02, sx(W * 0.5), H * 0.4, sx(W * 0.85), H * 0.15, sx(W * 0.55), H * 0.3, sx(0), H * 0.38, sx(-W * 0.55), H * 0.3]);
       g.restore();
       break;
@@ -997,10 +997,10 @@ function hat(g: CanvasRenderingContext2D, ap: Appearance, B: Body, facing: Facin
       break;
     case 'boina':
       // Envuelve el cráneo: cúpula ladeada que cae sobre una sien.
-      blob(g, [-W * 1.04, top + H * 0.3, -W * 0.95, top - H * 0.02, -W * 0.2, top - H * 0.16, W * 0.85, top - H * 0.08, W * 1.25, top + H * 0.16, W * 1.02, top + H * 0.3], vg(top - H * 0.15, top + H * 0.3, c), 0.6);
-      g.fillStyle = shd(c, 0.3);
-      blob(g, [-W * 1.02, top + H * 0.26, W * 1.02, top + H * 0.26, W * 1.0, top + H * 0.33, -W * 1.0, top + H * 0.33], shd(c, 0.3), 0.3);
-      ell(g, W * 0.05, top - H * 0.14, W * 0.09, H * 0.05, shd(c, 0.2));
+      // Cúpula ladeada sobre la coronilla: deja a la vista buena parte de la frente.
+      blob(g, [-W * 1.02, top + H * 0.16, -W * 0.92, top - H * 0.08, -W * 0.2, top - H * 0.2, W * 0.85, top - H * 0.12, W * 1.22, top + H * 0.06, W * 1.0, top + H * 0.17], vg(top - H * 0.2, top + H * 0.17, c), 0.6);
+      blob(g, [-W * 1.0, top + H * 0.13, W * 1.0, top + H * 0.13, W * 0.98, top + H * 0.19, -W * 0.98, top + H * 0.19], shd(c, 0.3), 0.3);
+      ell(g, W * 0.05, top - H * 0.18, W * 0.09, H * 0.05, shd(c, 0.2));
       break;
     case 'capucha':
       hood(g, ap, B, facing);

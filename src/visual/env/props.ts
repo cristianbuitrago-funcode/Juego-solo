@@ -32,7 +32,7 @@ function post(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   g.fillRect(x, y, w, h);
 }
 
-export type PropKind = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
+export type PropKind = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'estatua' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
 
 const DIMS: Record<PropKind, [number, number, number, number]> = {
   banco: [34, 20, 17, 18],
@@ -40,6 +40,7 @@ const DIMS: Record<PropKind, [number, number, number, number]> = {
   barril: [18, 22, 9, 20],
   cajas: [30, 28, 15, 26],
   fuente: [60, 56, 30, 48],
+  estatua: [40, 70, 20, 64],
   pozo: [44, 56, 22, 50],
   valla: [18, 16, 9, 15],
   vallaV: [6, 20, 3, 19],
@@ -52,7 +53,7 @@ const DIMS: Record<PropKind, [number, number, number, number]> = {
 
 export function propTex(kind: PropKind, v = 0): Tex {
   const [w, h, ax, ay] = DIMS[kind];
-  const vv = kind === 'cajas' || kind === 'heno' || kind === 'carro' || kind === 'fuente' ? v % 2 : 0;
+  const vv = kind === 'cajas' || kind === 'heno' || kind === 'carro' || kind === 'fuente' || kind === 'farol' ? v % 2 : 0;
   return tex(`prop2:${kind}:${vv}`, w, h, ax, ay, (g) => {
     g.translate(-ax, -ay);
     const R = rng(kind.length * 31 + vv);
@@ -70,8 +71,8 @@ export function propTex(kind: PropKind, v = 0): Tex {
         g.fillStyle = IRON;
         g.fillRect(4.5, 42, 7, 2.4);
         g.fillRect(3.6, 10, 8.8, 2);
-        // Farolillo con cristal.
-        g.fillStyle = vgrad(g, 2, 10, [[0, '#fff2c0'], [1, '#e0a048']]);
+        // Farolillo con cristal: v = 1 encendido (ámbar); de día, cristal apagado que refleja el cielo.
+        g.fillStyle = vv === 1 ? vgrad(g, 2, 10, [[0, '#fff2c0'], [1, '#e0a048']]) : vgrad(g, 2, 10, [[0, '#c8d4dc'], [0.5, '#7a8890'], [1, '#4a545a']]);
         g.fillRect(4.3, 2.5, 7.4, 7.5);
         g.strokeStyle = IRON;
         g.lineWidth = 0.7;
@@ -151,6 +152,39 @@ export function propTex(kind: PropKind, v = 0): Tex {
         ell(g, 30, 13, 9, 3.4, vgrad(g, 10, 16, [[0, '#d4ccbc'], [1, '#9a9284']]));
         ell(g, 30, 11.5, 5, 1.8, frozen ? '#c8d8e8' : '#5f9ab4');
         // Los surtidores y las ondas se animan en la escena (drawFountainWater).
+        break;
+      }
+      case 'estatua': {
+        // Monumento: pedestal de piedra escalonado y una figura de bronce con verdín.
+        const cx = 20;
+        g.fillStyle = vgrad(g, 52, 64, [[0, '#b4ac9c'], [1, '#7a7466']]);
+        g.fillRect(cx - 17, 56, 34, 8);
+        g.fillStyle = vgrad(g, 34, 56, [[0, '#cfc7b6'], [1, '#948c7c']]);
+        g.fillRect(cx - 11, 34, 22, 22);
+        g.fillStyle = 'rgba(40,30,20,0.35)';
+        g.fillRect(cx - 7, 42, 14, 2);
+        g.fillRect(cx - 5, 46, 10, 1.5);
+        g.fillStyle = '#a8a090';
+        g.fillRect(cx - 13, 32, 26, 3);
+        const bronze = vgrad(g, 4, 32, [[0, '#7aa08a'], [0.5, '#4f6e5e'], [1, '#3a5246']]);
+        g.fillStyle = bronze;
+        g.beginPath();
+        // Figura de pie, con capa y el brazo alzado.
+        g.moveTo(cx - 6, 32);
+        g.quadraticCurveTo(cx - 7, 20, cx - 4, 14);
+        g.lineTo(cx + 4, 14);
+        g.quadraticCurveTo(cx + 7, 20, cx + 6, 32);
+        g.closePath();
+        g.fill();
+        ell(g, cx, 10.5, 3, 3.4, bronze);
+        g.strokeStyle = '#4f6e5e';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(cx + 3.5, 16);
+        g.lineTo(cx + 9, 6);
+        g.stroke();
+        g.fillStyle = 'rgba(200,230,210,0.35)';
+        g.fillRect(cx - 4, 15, 1.4, 15);
         break;
       }
       case 'pozo': {

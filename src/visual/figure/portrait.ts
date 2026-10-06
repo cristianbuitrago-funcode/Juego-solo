@@ -27,7 +27,7 @@ export function drawPortrait(canvas: HTMLCanvasElement, ap: Appearance, expr: Ex
   const k = (H * 0.4) / B.head;
   const headCenter = B.H - B.head * 0.5;
   g.setTransform(k, 0, 0, k, W / 2, H * 0.4 + headCenter * k);
-  drawFigure(g, ap, { facing: 'front', flip: false, phase: 0, action: talking ? 'talk' : 'idle', t, expr, lod: 0 }, 0, 0);
+  drawFigure(g, ap, { facing: 'front', flip: false, phase: 0, action: talking ? 'talk' : 'idle', t, expr, lod: 0 }, 0, 0, { res: k });
   g.setTransform(1, 0, 0, 1, 0, 0);
   // Luz de borde y viñeta.
   const v = g.createRadialGradient(W / 2, H * 0.45, W * 0.3, W / 2, H * 0.5, W * 0.75);

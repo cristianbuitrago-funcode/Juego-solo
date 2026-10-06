@@ -318,9 +318,10 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
     lips: shade(skin, 0.78),
     hair: { style: child && fem ? pick(r, ['coleta', 'trenza', 'largo'] as const) : old && !fem && r() < 0.4 ? 'calvo' : pick(r, hairStyles), color: hairColor },
     beard,
-    jaw: fem ? 0.86 + r() * 0.12 : 0.95 + r() * 0.2,
-    faceLen: 0.94 + r() * 0.12,
-    eye: { size: 0.9 + r() * 0.25 + (child ? 0.2 : 0), color: pick(r, EYES), spacing: 0.92 + r() * 0.16 },
+    // Caras distintas de verdad: mandíbulas finas y anchas, rostros cortos y largos.
+    jaw: fem ? 0.8 + r() * 0.22 : 0.88 + r() * 0.37,
+    faceLen: 0.86 + r() * 0.28,
+    eye: { size: 0.86 + r() * 0.3 + (child ? 0.2 : 0), color: pick(r, EYES), spacing: 0.86 + r() * 0.26 },
     brow: { thick: (fem ? 0.7 : 1) * (0.8 + r() * 0.5), color: old ? '#cfcac0' : shade(hairColor, 0.85), tilt: (r() - 0.5) * 0.3 },
     nose: r() * 2,
     mouthW: 0.85 + r() * 0.3,
