@@ -30,9 +30,9 @@ export class Furniture {
     const v = this.l().villages[regionId];
     const r = this.w().regions[regionId];
     const taken: { x: number; y: number; r: number }[] = [{ x: v.cx + 0.5, y: v.cy + 1.3, r: 2.8 }, { x: v.sign.x + 1.2, y: v.sign.y + 0.4, r: 1.4 }];
-    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.5 });
+    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.2 });
     for (const p of v.props) if (Math.hypot(p.x - v.cx, p.y - v.cy) < v.plazaR + 2) taken.push({ x: p.x, y: p.y, r: p.kind === 'banco' ? 1.3 : 0.8 });
-    const look = plazaLook(this.w().seed, regionId, v.cx, v.cy, v.plazaR, !r.isHome && v.plazaR >= 6, taken);
+    const look = plazaLook(this.w().seed, regionId, v.cx, v.cy, v.plazaR, !r.isHome && v.plazaR >= 6, taken, (x, y) => passable(this.w(), this.l(), x, y));
     this.plazas.set(regionId, look);
     return look;
   }
@@ -54,7 +54,7 @@ export class Furniture {
       let list = this.solids.get(v);
       if (!list) {
         const F: Partial<Record<string, [number, number, number]>> = {
-          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [0.95, 0.32, 0.3],
+          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [1.25, 0.66, 0.4],
           cartel: [0.3, 0.2, 0.05], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
           carro: [1.7, 0.5, 0.3], abrevadero: [1.15, 0.32, 0.2], heno: [0.95, 0.42, 0.25], lenya: [0.9, 0.3, 0.15],
         };
@@ -63,7 +63,7 @@ export class Furniture {
           const f = F[p.kind];
           if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
         }
-        for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.3, rx: 1.15, ry: 0.4 });
+        for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.45, rx: 1.25, ry: 0.55 });
         const D = { arbol: [0.75, 0.4], jardinera: [0.85, 0.3], mesa: [1.15, 0.4], estandarte: [0.25, 0.15] } as const;
         for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1] });
         this.solids.set(v, list);

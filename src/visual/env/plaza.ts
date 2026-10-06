@@ -26,11 +26,15 @@ interface Spot {
 }
 
 /** Elige y coloca la decoración de una plaza. Determinista: misma semilla, misma plaza. */
-export function plazaLook(seed: number, regionId: number, cx: number, cy: number, plazaR: number, big: boolean, taken: Spot[]): PlazaLook {
+export function plazaLook(seed: number, regionId: number, cx: number, cy: number, plazaR: number, big: boolean, taken: Spot[], ground: (x: number, y: number) => boolean = () => true): PlazaLook {
   const R = rng(((seed >>> 0) * 977 + regionId * 131 + 5) >>> 0);
   // (El damero se probó y se leía como la rejilla de «transparente» de un editor: fuera.)
-  const pavings: PlazaLook['paving'][] = ['anillo', 'rosa', null];
-  const paving = big ? pavings[Math.floor(R() * 2)] : pavings[Math.floor(R() * 3)];
+  // (La rosa de ocho puntas también se quitó: sus puntas asomaban cortadas junto a las farolas
+  // y se leían como un destello o un fallo.)
+  // Tampoco los aros: a la altura de la cámara solo asomaba un arco pálido junto a las farolas.
+  // Se conserva la tirada para que la colocación de los adornos no cambie.
+  void R();
+  const paving: PlazaLook['paving'] = null;
   const pool: (DecorKind | 'guirnalda')[] = ['arbol', 'jardinera', 'mesa', 'estandarte', 'guirnalda'];
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(R() * (i + 1));
@@ -49,17 +53,19 @@ export function plazaLook(seed: number, regionId: number, cx: number, cy: number
       const d = plazaR * (rad0 + (rad1 - rad0) * ((k * 0.37) % 1));
       const x = ox + Math.cos(a) * d;
       const y = oy + Math.sin(a) * d;
-      if (!free(x, y, r) || (back && y > oy - 1)) continue;
+      if (!free(x, y, r) || (back && y > oy - 1) || !ground(x, y) || !ground(x, y - 0.6)) continue;
       decor.push({ kind, x, y, v: Math.floor(R() * 1000) });
       taken.push({ x, y, r });
       got++;
     }
   };
   for (const p of pick) {
-    if (p === 'arbol') place('arbol', 1, 1.6, 0.55, 0.8, true); // al fondo: que no tape la plaza
-    else if (p === 'jardinera') place('jardinera', big ? 4 : 3, 0.9, 0.55, 0.85);
-    else if (p === 'mesa') place('mesa', 2, 1.1, 0.45, 0.7);
-    else if (p === 'estandarte') place('estandarte', big ? 3 : 2, 0.6, 0.7, 0.9);
+    // Radios en plazas: el anillo de puestos y bancos ocupa casi todo el interior, así que
+    // jardineras y estandartes rematan el borde (entre farolas) y el árbol queda fuera, al fondo.
+    if (p === 'arbol') place('arbol', big ? 2 : 1, 1.2, 1.2, 1.45, true);
+    else if (p === 'jardinera') place('jardinera', big ? 5 : 4, 0.6, 1.08, 1.22);
+    else if (p === 'mesa') place('mesa', 2, 0.8, 0.42, 0.62);
+    else if (p === 'estandarte') place('estandarte', big ? 4 : 3, 0.4, 1.02, 1.15);
     else {
       const s = Math.floor(R() * 6);
       garlands.push([s, (s + 1) % 6], [(s + 3) % 6, (s + 4) % 6]);
@@ -70,13 +76,16 @@ export function plazaLook(seed: number, regionId: number, cx: number, cy: number
 
 /** Dibujo del pavimento, en el suelo y bajo todo lo demás. Radio en teselas. */
 export function pavingTex(kind: 'anillo' | 'rosa' | 'damero', plazaR: number, T: number, key: string, isPlaza: (tx: number, ty: number) => boolean): Tex {
-  const Rp = Math.round(plazaR * T * 0.82);
+  const Rp = Math.round(plazaR * T * 0.78);
   const S = Rp * 2 + 4;
+  // Achatado como la base de la fuente y los demás círculos del suelo (vista oblicua).
+  const SQ = 0.74;
   return tex(`pav:${kind}:${Rp}:${key}`, S, S, S / 2, S / 2, (g) => {
     g.save();
     g.translate(S / 2, S / 2);
-    const light = 'rgba(232,222,198,0.30)';
-    const dark = 'rgba(70,60,52,0.22)';
+    g.scale(1, SQ);
+    const light = 'rgba(226,214,188,0.5)';
+    const dark = 'rgba(64,52,44,0.38)';
     if (kind === 'anillo') {
       // Dos aros de losas claras, con juntas radiales.
       for (const [r0, r1] of [[Rp * 0.94, Rp * 0.82], [Rp * 0.5, Rp * 0.42]]) {

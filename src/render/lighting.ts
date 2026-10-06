@@ -88,7 +88,7 @@ export class Lighting {
       const hole = lightSprite('hole');
       for (const l of vis) {
         // Ni la luz más fuerte borra del todo la noche: el charco se lee como charco.
-        dc.globalAlpha = Math.min(0.88, l.k * 0.85);
+        dc.globalAlpha = l.flat < 1 ? Math.min(0.62, l.k * 0.65) : Math.min(0.88, l.k * 0.85); // los charcos del suelo dejan algo de noche: así la hierba no se ve de día (verde neón)
         dc.drawImage(hole, (l.x - l.r) * sx, (l.y - l.r * l.flat) * sx, l.r * 2 * sx, l.r * 2 * l.flat * sx);
       }
       dc.globalAlpha = 1;
@@ -113,7 +113,7 @@ export class Lighting {
       let any = false;
       for (const l of vis) {
         if (l.r < 26 * cam.z) continue;
-        gc.globalAlpha = Math.min(1, (l.flat < 1 ? 0.5 : 0.3) * glow * l.k);
+        gc.globalAlpha = Math.min(1, (l.flat < 1 ? 0.42 : 0.3) * glow * l.k);
         gc.drawImage(warm, (l.x - l.r * 0.8) * sx, (l.y - l.r * 0.8 * l.flat) * sx, l.r * 1.6 * sx, l.r * 1.6 * l.flat * sx);
         any = true;
       }

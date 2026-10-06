@@ -509,6 +509,7 @@ export class App {
     window.setTimeout(() => el.remove(), 7000);
   }
 
+  private cineTimer = 0;
   banner(top: string, main: string, cine = !/^Día \d/.test(top) && top !== 'Has entrado en'): void {
     if (!this.stage) return;
     this.stage.querySelector('.banner')?.remove();
@@ -519,7 +520,9 @@ export class App {
     if (!cine) return;
     this.scene?.cinematic({ seconds: 3.4 });
     this.stage.classList.add('cine');
-    window.setTimeout(() => this.stage?.classList.remove('cine'), 3200);
+    // Un solo temporizador: si llega otro cartel, el HUD no reaparece a mitad del plano.
+    window.clearTimeout(this.cineTimer);
+    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3450);
     window.setTimeout(() => b.remove(), 3600);
   }
 

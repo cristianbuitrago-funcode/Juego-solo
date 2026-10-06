@@ -85,6 +85,10 @@ export class ChunkCache {
     });
   }
 
+  private nearPost(tx: number, ty: number): boolean {
+    return this.l.posts.some((p) => Math.abs(p.x - tx) < 7 && Math.abs(p.y - ty) < 7);
+  }
+
   private nearVillage(tx: number, ty: number): boolean {
     return this.l.villages.some((v) => Math.hypot(v.cx - tx, v.cy - ty) < v.plazaR + 30);
   }
@@ -527,9 +531,12 @@ export class ChunkCache {
         // Bosque con claros: la densidad sigue un ruido amplio (bosquetes espesos y calveros con luz).
         const grove = vnoise(tx / 7 + 31, ty / 7 + 17);
         const dens = grove < 0.33 ? 0.02 : grove < 0.5 ? 0.08 : 0.15;
+        // Junto a los puestos fronterizos el monte está talado: se ve quién guarda el paso.
+        const cleared = this.nearPost(tx, ty);
+        if (cleared && p < 0.2) continue;
         if (t === T.Forest && p < dens) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
         else if (t === T.Forest && grove < 0.33 && p > 0.82) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
-        else if ((t === T.Grass || t === T.Meadow) && p < 0.018) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
+        else if ((t === T.Grass || t === T.Meadow) && p < 0.018 && !cleared) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.965) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.9) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
         else if (t === T.Forest && p > 0.9) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });

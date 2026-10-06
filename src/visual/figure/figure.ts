@@ -196,6 +196,9 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
       return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
     case 'fight':
       return own && WEAPONS.has(own) && own !== 'arco' ? own : undefined;
+    case 'run':
+      // Corriendo no se lleva una cesta delante del pecho: solo armas o un bastón.
+      return own && (WEAPONS.has(own) || own === 'lanza' || own === 'cayado' || own === 'baston') ? own : undefined;
     case 'carry':
       return own === 'cesta' || own === 'saco' ? own : 'saco';
     case 'wave':
@@ -465,7 +468,7 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
 
 function stool(g: CanvasRenderingContext2D, B: Body, hipY: number, side: boolean): void {
   const top = hipY + 0.6;
-  const w = B.hip * (side ? 1.6 : 2.1);
+  const w = B.hip * (side ? 1.6 : 2.5);
   g.strokeStyle = '#5a3e26';
   g.lineWidth = 0.9;
   g.beginPath();
@@ -473,8 +476,11 @@ function stool(g: CanvasRenderingContext2D, B: Body, hipY: number, side: boolean
   g.lineTo(-w * 0.45, top + 1);
   g.moveTo(w * 0.7, 0);
   g.lineTo(w * 0.45, top + 1);
-  g.moveTo(0, 0.4);
-  g.lineTo(0, top + 1);
+  // De frente, la pata del centro quedaría entre las espinillas y parecería delante de ellas.
+  if (side) {
+    g.moveTo(0, 0.4);
+    g.lineTo(0, top + 1);
+  }
   g.stroke();
   g.fillStyle = '#8a6440';
   g.beginPath();

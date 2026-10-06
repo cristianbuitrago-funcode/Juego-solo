@@ -28,7 +28,7 @@ import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../vis
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { marketOf } from '../world/economy';
 import { VQ, resolveTier, setTier, type QualitySetting, type Tier } from '../visual/quality';
-import { clearTextures, nextFrame, put, silhouette } from '../visual/paint';
+import { nextFrame, put, silhouette } from '../visual/paint';
 import { drawFire, drawFlame, drawPuff } from './fx';
 import { Weather } from '../visual/weather';
 import { drawGrade, Lighting } from './lighting';
@@ -194,6 +194,8 @@ export class WorldScene {
   /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
   private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
   private playerHidden = false;
+  /** Qué tapó al jugador en el último fotograma (para revisar escenas). */
+  hiddenBy = '';
   /** Huellas sólidas del mobiliario (elipses en teselas): solo frenan al jugador. */
   private snowCheck = -1e9;
   private snowWeather = '';
@@ -240,7 +242,8 @@ export class WorldScene {
   setQuality(q: QualitySetting): void {
     this.qualitySetting = q;
     const changed = setTier(resolveTier(q));
-    if (changed) (clearTextures(), S.clearSprites(), clearMaterials());
+    // Las texturas llevan la resolución en su clave: no se vacía el caché de golpe (daba un tirón).
+    if (changed) (S.clearSprites(), clearMaterials());
     this.resize();
     if (VQ().crowd === 0) this.extras.clear();
   }
@@ -250,6 +253,7 @@ export class WorldScene {
   private sun: SunState = sunAt(12, 'despejado');
   private shadowQ: (() => void)[] = [];
   private lighting = new Lighting();
+  private focusGrad: CanvasGradient | null = null;
   /** Lo que se pinta sobre el suelo, antes incluso que las sombras (pavimentos con dibujo). */
   private groundQ: (() => void)[] = [];
   private furniture = new Furniture(() => this.w, () => this.l);
@@ -340,7 +344,10 @@ export class WorldScene {
       this.bestGap = Math.min(this.bestGap, gapMed);
     }
     this.gapMs.length = 0;
-    const gpuBound = gapMed > 22 && gapMed > this.bestGap * 1.4;
+    // Limitado por la GPU: el ritmo empeoró mucho respecto al mejor visto, o el móvil no pasa
+    // de ~40 fps desde el arranque (comparado con el refresco habitual de 60 Hz). Esto último solo
+    // baja hasta MEDIA: una pantalla fija a 30 Hz no debe acabar en BAJA.
+    const gpuBound = (gapMed > 22 && gapMed > this.bestGap * 1.4) || (gapMed > 24 && VQ().tier !== 'low' && VQ().tier !== 'medium');
     const now = performance.now();
     const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
     const i = order.indexOf(VQ().tier);
@@ -814,7 +821,7 @@ export class WorldScene {
         const id = `x:${v.regionId}:${i}`;
         keep.add(id);
         if (this.extras.has(id)) continue;
-        const p = this.plazaPoint(v.regionId, hash(id), hash(id, 1));
+        const p = this.freePlazaPoint(v.regionId, (k) => hash(id, 40 + k));
         this.extras.set(id, { ...p, path: [], tx: p.x, ty: p.y, inside: false, frame: 0, flip: false, moving: false, anim: i, dx: 0, dy: 1, act: 'pasea', facing: 'front', regionId: v.regionId, wait: hash(id, 3) * 6 });
       }
     }
@@ -828,13 +835,24 @@ export class WorldScene {
     return { x: v.cx + 0.5 + Math.cos(ang) * d, y: v.cy + 0.5 + Math.sin(ang) * d };
   }
 
+  /** Un sitio de la plaza libre de mobiliario y sin otro figurante encima (si se puede). */
+  private freePlazaPoint(regionId: number, rnd: (k: number) => number): { x: number; y: number } {
+    let p = this.plazaPoint(regionId, rnd(0), rnd(1));
+    for (let k = 1; k < 8; k++) {
+      const crowded = [...this.extras.values()].some((o) => { const q = o.path[0] ?? o; return Math.hypot(q.x - p.x, q.y - p.y) < 1.4; });
+      if (!this.furniture.solidAt(p.x, p.y) && !crowded) break;
+      p = this.plazaPoint(regionId, rnd(k * 2), rnd(k * 2 + 1));
+    }
+    return p;
+  }
+
   private moveExtras(dt: number): void {
     for (const [id, e] of this.extras) {
       if (!e.path.length) {
         e.moving = false;
         e.wait -= dt;
         if (e.wait <= 0) {
-          const p = this.plazaPoint(e.regionId, Math.random(), Math.random());
+          const p = this.freePlazaPoint(e.regionId, () => Math.random());
           e.path = [p];
           e.wait = 3 + Math.random() * 9;
           e.act = Math.random() < 0.4 ? 'charla' : 'pasea';
@@ -936,7 +954,11 @@ export class WorldScene {
     }
     const spot = enc.get(f.id);
     if (spot) return { ...spot, inside: false, activity: 'discute' };
-    return routineOf(this.w, f, ensureLife(this.w).clock);
+    const r = routineOf(this.w, f, ensureLife(this.w).clock);
+    // Varios oficios esperan en el mismo punto (la puerta de la forja, del salón…): cada
+    // uno se coloca un poco a su aire para no fundirse en una sola figura con tres martillos.
+    if (r.inside || f.role === 'anciano' || f.role === 'comerciante') return r;
+    return { ...r, x: r.x + (hash(f.id, 21) - 0.5) * 1.6, y: r.y + (hash(f.id, 22) - 0.5) * 0.7 };
   }
 
   private moveFolk(dt: number): void {
@@ -1131,7 +1153,7 @@ export class WorldScene {
         const label = b.kind === 'hogar' && id?.mode === 'forastero' && !id.housed ? 'Casa vacía' : BUILDING_LABEL[b.kind];
         consider({ kind: 'building', regionId: v.regionId, building: b.kind, label }, d.x, d.y, radius * 0.9);
       }
-      consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
+      consider({ kind: 'signpost', regionId: v.regionId, label: 'Poste de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
     for (const cv of convoyPositions(w)) consider({ kind: 'convoy', id: cv.c.id, label: cv.c.status === 'atacada' ? 'Una carreta volcada' : cv.c.kind === 'jugador' ? 'Tu carreta' : `Caravana de ${cv.c.ownerName}` }, cv.x, cv.y, radius * 1.4);
@@ -1309,7 +1331,9 @@ export class WorldScene {
     for (const sh of this.shadowQ) sh();
     items.sort((a, b) => a.y - b.y);
     this.playerHidden = false;
+    this.hiddenBy = '';
     for (const it of items) it.draw();
+    if (this.playerHidden) this.hiddenBy = 'árbol';
     // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)?
     {
       const px = me.x * TILE;
@@ -1317,6 +1341,7 @@ export class WorldScene {
       for (const it of items)
         if (it.box && it.y > py && it.box.x0 < px + 6 && it.box.x1 > px - 6 && it.box.y0 < py - 8 && it.box.y1 > py - 28) {
           this.playerHidden = true;
+          this.hiddenBy = `box ${Math.round(it.box.x0)},${Math.round(it.box.y0)}-${Math.round(it.box.x1)},${Math.round(it.box.y1)} y=${Math.round(it.y)}`;
           break;
         }
     }
@@ -1601,7 +1626,7 @@ export class WorldScene {
       if (tall) this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5, ps));
       else this.shadowQ.push(() => contactShadow(g, px + (pr.kind === 'vallaV' ? 0 : pt.w / 2 - pt.ax), py, pr.kind === 'vallaV' ? 4 : pt.w * 0.5, pr.kind === 'vallaV' ? pt.h * 0.35 : 3, 0.35));
       if (pr.kind === 'fuente' && !frozen) items.push({ y: py, draw: () => (put(g, pt, px, py), drawFountainWater(g, px, py, this.reduceMotion ? 0 : t)) });
-      else items.push({ y: py, draw: () => put(g, pt, px, py, false, ps) });
+      else items.push({ y: py, draw: () => put(g, pt, px, py, false, ps), box: pr.kind === 'farol' || pr.kind === 'cartel' || pr.kind === 'valla' || pr.kind === 'vallaV' ? undefined : { x0: px - pt.ax, y0: py - pt.ay, x1: px - pt.ax + pt.w, y1: py - 2 } });
     }
     // Lo propio de esta plaza: pavimento con dibujo, árboles, jardineras, terrazas, estandartes, guirnaldas.
     {
@@ -1664,7 +1689,8 @@ export class WorldScene {
       const stallGoods = look.stalls[i];
       if (stallGoods === undefined) return; // sin comerciante: no hay puesto
       const open = stallGoods.length > 0;
-      items.push({ y: s.y * TILE, draw: () => put(g, stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
+      const stx = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
+      items.push({ y: s.y * TILE, draw: () => put(g, stx, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
       // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
       const hh = hourOf(life.clock);
       if (open && hh >= 7 && hh < 19.5 && inView(s.x * TILE, s.y * TILE)) {
@@ -2017,11 +2043,15 @@ export class WorldScene {
       g.save();
       g.translate(fx, fy);
       g.scale(1, 0.38);
-      const gr = g.createRadialGradient(0, 0, 2, 0, 0, 12);
-      gr.addColorStop(0, `rgba(255,226,150,${(0.42 * pulse).toFixed(3)})`);
-      gr.addColorStop(0.65, `rgba(255,210,120,${(0.18 * pulse).toFixed(3)})`);
-      gr.addColorStop(1, 'rgba(255,210,120,0)');
-      g.fillStyle = gr;
+      // Gradiente fijo (creado una vez); el pulso va en la opacidad.
+      if (!this.focusGrad) {
+        this.focusGrad = g.createRadialGradient(0, 0, 2, 0, 0, 12);
+        this.focusGrad.addColorStop(0, 'rgba(255,226,150,0.42)');
+        this.focusGrad.addColorStop(0.65, 'rgba(255,210,120,0.18)');
+        this.focusGrad.addColorStop(1, 'rgba(255,210,120,0)');
+      }
+      g.globalAlpha = pulse;
+      g.fillStyle = this.focusGrad;
       g.beginPath();
       g.arc(0, 0, 12, 0, Math.PI * 2);
       g.fill();

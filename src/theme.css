@@ -154,3 +154,5 @@ body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .diar
 /* Pestañas del diario: se desvanecen en el borde (se lee «hay más, desliza»), no se cortan en seco. */
 .diary-head .tabs { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); padding-right: 30px; }
 .diary-head .tabs button { padding: 0 13px; }
+/* El rótulo de llegada, alto: no tapa el hito de la plaza ni las caras. */
+.banner { top: 12%; }

@@ -86,7 +86,7 @@ export function showGallery(root: HTMLElement): void {
   acts.forEach((a, i) => {
     const x = 70 + (i % 8) * 190;
     const y = 1500 + Math.floor(i / 8) * 330;
-    fig(worker, pose({ action: a, facing: i % 3 === 0 ? 'front' : 'side', t: 0.35 + i * 0.4, phase: 1.2 }), x, y, 6);
+    fig(worker, pose({ action: a, facing: a === 'run' || a === 'work' || a === 'hammer' ? 'side' : i % 3 === 0 ? 'front' : 'side', t: 0.35 + i * 0.4, phase: 1.2 }), x, y, 6);
     label(a, x - 40, y + 40);
   });
   // Fila 6: multitud (identidad: nadie es un clon).

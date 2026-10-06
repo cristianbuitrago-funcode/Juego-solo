@@ -747,6 +747,22 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         g.lineTo(x0 + W - 4, top - 26);
         g.lineTo(x0 + 4, top - 26);
         g.fill();
+        // Hiladas de teja (antes era un trapecio liso que se leía como chapa).
+        g.save();
+        g.clip();
+        for (let y = top - 24, row = 0; y < top + 4; y += 5, row++) {
+          g.fillStyle = alpha(shd(st.roof, 0.45), 0.55);
+          g.fillRect(x0 - 6, y + 3.4, W + 12, 1.1);
+          for (let x = x0 - 6 + (row % 2) * 3.5; x < x0 + W + 6; x += 7) {
+            g.fillStyle = alpha(lit(st.roof, 0.18), 0.5);
+            g.beginPath();
+            g.ellipse(x + 3.5, y + 3.2, 3.1, 1.6, 0, Math.PI, 0);
+            g.fill();
+          }
+        }
+        g.fillStyle = alpha(shd(st.roof, 0.5), 0.8);
+        g.fillRect(x0 + 2, top - 27, W - 4, 2);
+        g.restore();
         g.fillStyle = vgrad(g, top - 50, top, [[0, '#7a7268'], [1, '#5a544c']]);
         g.fillRect(x0 + W - 22, top - 48, 14, 44);
         g.fillStyle = '#4a443e';

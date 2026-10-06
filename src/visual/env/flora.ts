@@ -190,28 +190,40 @@ function paintTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Season, 
       for (let i = 0; i < tiers; i++) {
         const k = i / (tiers - 1);
         const y = -H + 4 + k * (H - 22);
-        const half = 4 + k * 15 + (R() - 0.5) * 2;
-        const hgt = 12 + k * 4;
-        // Cada piso: ramas que caen en abanico (borde inferior curvo y en punta).
-        const top = y - hgt * 0.6;
+        const half = 5 + k * 15 + (R() - 0.5) * 2;
+        // Pisos altos que se solapan: la copa se lee como una masa, no como un peine.
+        const hgt = 16 + k * 6;
+        // Cada piso: un faldón que cae desde el eje, con el borde inferior en ondas
+        // suaves (las puntas de las ramas) y muescas pequeñas, no dientes.
+        const top = y - hgt * 0.62;
         const pts: number[] = [0, top];
-        const fronds = 4 + Math.round(k * 3);
-        for (let j = 1; j <= fronds; j++) {
+        const fronds = 3 + Math.round(k * 3);
+        // Costado: de la punta del piso al extremo, casi recto.
+        pts.push(half * 0.55, top + hgt * 0.5, half * 1.02, top + hgt * 0.93);
+        for (let j = fronds; j >= -fronds; j--) {
+          if (j === 0) continue;
           const t = j / fronds;
-          pts.push(half * t * 0.92, top + hgt * t * 0.75, half * t * 1.04, top + hgt * (0.82 + t * 0.2) + 1.6);
+          // Borde inferior: ondas que cuelgan un poco más en los extremos.
+          const bx = half * t * 0.98;
+          const by = top + hgt * (0.86 + Math.abs(t) * 0.1) + (j % 2 ? 1.4 : -0.4);
+          pts.push(bx, by);
         }
-        for (let j = fronds; j >= 1; j--) {
-          const t = j / fronds;
-          pts.push(-half * t * 1.04, top + hgt * (0.82 + t * 0.2) + 1.6, -half * t * 0.92, top + hgt * t * 0.75);
-        }
-        const gr = g.createLinearGradient(-half, top, half, y + hgt * 0.4);
-        gr.addColorStop(0, p[2]);
-        gr.addColorStop(0.4, p[1]);
-        gr.addColorStop(1, p[0]);
+        pts.push(-half * 1.02, top + hgt * 0.93, -half * 0.55, top + hgt * 0.5);
+        const gr = g.createLinearGradient(-half, top, half * 0.6, y + hgt * 0.3);
+        gr.addColorStop(0, p[1]);
+        gr.addColorStop(0.45, shd(p[1], 0.08));
+        gr.addColorStop(1, shd(p[0], 0.1));
         g.fillStyle = gr;
         g.beginPath();
         smoothPath(g, pts, true, 0.15);
         g.fill();
+        // Canto iluminado del lado del sol.
+        g.strokeStyle = alpha(lit(p[2], 0.12), 0.55);
+        g.lineWidth = 1.1;
+        g.beginPath();
+        g.moveTo(0, top + 0.5);
+        g.quadraticCurveTo(-half * 0.5, top + hgt * 0.45, -half * 0.98, top + hgt * 0.9);
+        g.stroke();
         // Sombra que deja el piso de encima.
         if (i > 0) ell(g, half * 0.1, top + hgt * 0.12, half * 0.45, hgt * 0.1, alpha(shd(p[0], 0.4), 0.28));
         // Agujas: trazos cortos que caen con la rama, solo dentro de la silueta del piso.
@@ -403,8 +415,11 @@ function paintSmall(g: CanvasRenderingContext2D, kind: SmallKind, season: Season
       break;
     }
     case 'flores': {
-      const cs = ['#f6e27a', '#f2b8cf', '#fbf6ee', '#c86ad0', '#f08a4a', '#8ab8f0'];
-      for (let i = 0; i < 11; i++) {
+      // Cada mata tiene su especie (uno o dos colores) y su tamaño: no son sellos iguales.
+      const all = ['#f6e27a', '#f2b8cf', '#fbf6ee', '#c86ad0', '#f08a4a', '#8ab8f0'];
+      const cs = [all[v % 6], all[(v * 7 + 2) % 6]];
+      const count = 6 + (v % 3) * 3;
+      for (let i = 0; i < count; i++) {
         const x = (R() - 0.5) * 18;
         const h = 3 + R() * 4;
         g.strokeStyle = pal[0];
@@ -414,7 +429,7 @@ function paintSmall(g: CanvasRenderingContext2D, kind: SmallKind, season: Season
         g.lineTo(x + (R() - 0.5), -h);
         g.stroke();
         if (season !== 'invierno') {
-          const c = cs[(i + v) % cs.length];
+          const c = cs[i % 3 === 0 ? 1 : 0];
           for (let k = 0; k < 5; k++) ell(g, x + Math.cos((k / 5) * 6.28) * 0.8, -h + Math.sin((k / 5) * 6.28) * 0.8, 0.7, 0.5, c, (k / 5) * 6.28);
           ell(g, x, -h, 0.45, 0.45, '#e8b030');
         }
@@ -454,7 +469,8 @@ function paintSmall(g: CanvasRenderingContext2D, kind: SmallKind, season: Season
 }
 
 export function drawSmall(g: CanvasRenderingContext2D, kind: SmallKind, season: Season, v: number, x: number, y: number, t: number, snowy: boolean): void {
-  const t0 = tex(`small:${kind}:${season}:${v % 5}:${snowy ? 1 : 0}`, 30, 26, 15, 22, (gg) => paintSmall(gg, kind, season, v % 5, snowy));
+  const nv = kind === 'flores' ? 9 : 5;
+  const t0 = tex(`small:${kind}:${season}:${v % nv}:${snowy ? 1 : 0}`, 30, 26, 15, 22, (gg) => paintSmall(gg, kind, season, v % nv, snowy));
   const sway = VQ().sway && kind !== 'roca' ? Math.sin(t * 1.7 + v) * 0.05 : 0;
   g.save();
   g.translate(x, y);
