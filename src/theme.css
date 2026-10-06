@@ -132,8 +132,11 @@ body { font-size: calc(var(--fs) * 1.04); letter-spacing: 0.005em; }
 .world-canvas { transition: transform 0.45s ease; transform-origin: 50% 55%; }
 .stage.to-map .world-canvas { transform: scale(0.82); }
 .diary.from-world { animation: map-in 0.45s ease-out; }
+/* Vuelta al mundo: el diario se disuelve hacia el jugador. */
+.diary.to-world { animation: map-out 0.32s ease-in forwards; }
+@keyframes map-out { to { opacity: 0; transform: scale(1.1); filter: blur(4px); } }
 @keyframes map-in { from { opacity: 0; transform: scale(1.14); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
-body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .world-canvas { animation: none; transition: none; }
+body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .diary.to-world, body[data-motion='reduced'] .world-canvas { animation: none; transition: none; }
 
 /* El lema del menú no es un «chip»: texto sobre el fondo oscuro. */
 .menu .tag { background: none; padding: 0; border: none; color: #ecd9ab; font-size: 1.15em; letter-spacing: 0.06em; }
@@ -142,3 +145,6 @@ body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .worl
 .diary .tabs button.on, .diary .seg button.on, .diary .chips button.on, .map-tabs button.on { background: linear-gradient(#3a2a1c, #241910) !important; color: #f3e3bd !important; border: 1px solid var(--gold) !important; }
 .map-layers .opt-chip.on { background: linear-gradient(#3a2a1c, #241910) !important; color: #f3e3bd !important; border-color: var(--gold) !important; }
 .map-layers .opt-chip { font-family: var(--serif); }
+
+/* Separador del chip de recursos: una fina barra, no un punto que se lea «0·0». */
+.hud .chip .sep { display: inline-block; width: 1px; height: 1em; margin: 0 0.45em; background: rgba(233, 214, 168, 0.35); vertical-align: middle; }

@@ -460,12 +460,13 @@ export class MapView {
       g.stroke();
       g.font = '700 13px Alegreya, Georgia, serif';
       g.textAlign = 'center';
+      // Encima del marcador: debajo va el nombre del pueblo.
       g.textBaseline = 'bottom';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(244,233,206,0.9)';
-      g.strokeText('Estás aquí', p.x, p.y - 12);
+      g.strokeText('Estás aquí', p.x, p.y - 18);
       g.fillStyle = '#2b1e15';
-      g.fillText('Estás aquí', p.x, p.y - 12);
+      g.fillText('Estás aquí', p.x, p.y - 18);
     }
     // Marco de pergamino: los bordes del mapa se oscurecen y amarillean.
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);

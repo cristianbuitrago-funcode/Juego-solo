@@ -2201,7 +2201,7 @@ export class WorldScene {
     // Lluvia y tormenta: menos luz y más fría.
     // (gris azulado: apaga a la vez la luz y el color, sin una pasada aparte de saturación)
     M(118, 130, 150, rain ? (weather === 'tormenta' ? 0.66 : 0.55) : grey * 0.28);
-    if (weather === 'nieve') Sc(200, 215, 235, 0.1);
+    if (weather === 'nieve') Sc(200, 215, 235, 0.04);
     // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
     // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
     overMultiply(g, mul[0], mul[1], mul[2], W, H);

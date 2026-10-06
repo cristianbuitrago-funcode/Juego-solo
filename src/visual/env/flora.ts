@@ -380,16 +380,25 @@ function paintSmall(g: CanvasRenderingContext2D, kind: SmallKind, season: Season
       break;
     }
     case 'hierba': {
-      const col = season === 'invierno' ? ['#9a9a80', '#c8c8b0'] : season === 'otoño' ? ['#8a7a3a', '#c8a850'] : [pal[0], pal[2]];
-      for (let i = 0; i < 22; i++) {
-        const x = (R() - 0.5) * 14;
-        const h = 4 + R() * 7;
-        g.strokeStyle = i % 2 ? col[0] : col[1];
-        g.lineWidth = 0.7;
+      // Mata en abanico de hojas rellenas y afiladas que nacen de una base común:
+      // los trazos finos sueltos se leían como letras.
+      const col = season === 'invierno' ? ['#8a8a70', '#b8b8a0'] : season === 'otoño' ? ['#7a6a32', '#b89848'] : [pal[0], pal[2]];
+      ell(g, 0, 0, 6, 1.8, 'rgba(30,40,20,0.28)');
+      const n = 9;
+      for (let i = 0; i < n; i++) {
+        const a = ((i + 0.5) / n - 0.5) * 1.9 + (R() - 0.5) * 0.25;
+        const h = 6 + R() * 6 * (1 - Math.abs(a) * 0.35);
+        const bx = (R() - 0.5) * 4;
+        const tx = bx + Math.sin(a) * h;
+        const ty = -Math.cos(a) * h;
+        const w = 1.1 + R() * 0.5;
+        g.fillStyle = i % 3 === 0 ? col[1] : col[0];
         g.beginPath();
-        g.moveTo(x, 0);
-        g.quadraticCurveTo(x + (R() - 0.5) * 3, -h * 0.6, x + (R() - 0.5) * 5, -h);
-        g.stroke();
+        g.moveTo(bx - w, 0);
+        g.quadraticCurveTo(bx + Math.sin(a) * h * 0.4 - w * 0.6, -Math.cos(a) * h * 0.5, tx, ty);
+        g.quadraticCurveTo(bx + Math.sin(a) * h * 0.4 + w * 0.6, -Math.cos(a) * h * 0.5, bx + w, 0);
+        g.closePath();
+        g.fill();
       }
       break;
     }
