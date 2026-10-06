@@ -9,19 +9,16 @@ import { playerRegion } from '../world/society';
 import { getLayout, doorOf, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, explore, housesFor } from '../world/life';
 import { findPath, passable } from '../world/path';
-import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { prologueBlocks, prologueItems } from '../world/prologue';
-import { overheard } from '../world/gossip';
 import { convoyPositions } from '../world/trade';
-import { GOOD_COLOR, marketLook } from '../world/marketview';
-import type { Good } from '../world/economy';
+import { marketLook } from '../world/marketview';
 import { idx, speedOf, walkable } from '../world/terrain';
 import { T, TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
 import { CHUNK, ChunkCache, PAD, type StaticObject } from './chunks';
 import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
-import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure';
+import { drawFigure, drawFigureShadow } from '../visual/figure/figure';
 import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
 import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
 import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
@@ -35,6 +32,9 @@ import { drawGrade, Lighting } from './lighting';
 import { Furniture } from './furniture';
 import { actionOf, moodOf } from './mood';
 import * as S from './sprites';
+import type { Drawable } from './drawable';
+import { postDrawables, roadTraffic } from './traffic';
+import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
 
 /**
  * Escena del mundo explorable: cámara que sigue al personaje, terreno por
@@ -45,11 +45,6 @@ import * as S from './sprites';
  * de verdad. Los lejanos "viven" en su rutina abstracta y se materializan
  * en el sitio correcto cuando el jugador se acerca.
  */
-const hashOf = (s: string) => {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-};
 
 export type Target =
   | { kind: 'folk'; id: string; label: string }
@@ -72,7 +67,7 @@ export interface SceneCallbacks {
   onTick(): void; // cada ~1 s real (presencia, descubrimientos, encuentros)
 }
 
-interface Ent {
+export interface Ent {
   x: number;
   y: number;
   path: { x: number; y: number }[];
@@ -132,12 +127,6 @@ interface Particle {
   color: string;
 }
 
-interface Drawable {
-  y: number;
-  draw: () => void;
-  /** Rectángulo que tapa (casas, edificios, puestos): si cubre al jugador, se le dibuja en transparencia. */
-  box?: { x0: number; y0: number; x1: number; y1: number };
-}
 
 const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
 
@@ -152,26 +141,26 @@ function hash(s: string, salt = 0): number {
 
 export class WorldScene {
   readonly canvas: HTMLCanvasElement;
-  private g: CanvasRenderingContext2D; // mundo (misma superficie que la pantalla, con la transformación de la cámara)
+  g: CanvasRenderingContext2D; // mundo (misma superficie que la pantalla, con la transformación de la cámara)
   private screen: CanvasRenderingContext2D; // pantalla (capas de luz, clima, interfaz)
-  private l: Layout;
+  l: Layout;
   private chunks: ChunkCache;
   cam = { x: 0, y: 0, z: ZOOM.explore };
   private userZ = 1; // multiplicador del pellizco
-  private converseId: string | null = null;
-  private apCache = new Map<string, { key: string; ap: Appearance }>();
+  converseId: string | null = null;
+  apCache = new Map<string, { key: string; ap: Appearance }>();
   private playerLook: unknown = null;
   private wxFrame = 'despejado';
   private playerLookKey = '';
   private extras = new Map<string, Extra>();
   private birds: { x: number; y: number; vx: number; ph: number }[] = [];
-  private lights: Light[] = [];
+  lights: Light[] = [];
   private socialAcc = 0;
-  private folkById = new Map<string, Folk>();
+  folkById = new Map<string, Folk>();
   private dpr = 1;
-  private vw = 0;
-  private vh = 0;
-  private ents = new Map<string, Ent>();
+  vw = 0;
+  vh = 0;
+  ents = new Map<string, Ent>();
   private animals = new Map<number, Animal[]>();
   private particles: Particle[] = [];
   private wfx = new Weather();
@@ -183,7 +172,7 @@ export class WorldScene {
   private lodAcc = 0;
   private focusAcc = 0;
   private region = -1;
-  private focus: Target | null = null;
+  focus: Target | null = null;
   private playerAnim = 0;
   private playerMoving = false;
   /** Velocidad real del jugador (teselas/s): acelera y frena, no salta. */
@@ -204,7 +193,7 @@ export class WorldScene {
   /** Anticipación de la cámara, filtrada (no da latigazos al girar). */
   private lookAhead = { x: 0, y: 0 };
   /** Destino tocado: un anillo que se desvanece en el suelo. */
-  private tapMark: { x: number; y: number; t: number } | null = null;
+  tapMark: { x: number; y: number; t: number } | null = null;
   private ro: ResizeObserver | null = null;
   /** Capa de oscuridad nocturna (a media resolución). */
   private onKeyDown = (e: KeyboardEvent) => {
@@ -215,8 +204,8 @@ export class WorldScene {
   private onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
   private playerRun = false;
   private facing = { x: 0, y: 1 };
-  private path: { x: number; y: number }[] = [];
-  private pending: Target | null = null;
+  path: { x: number; y: number }[] = [];
+  pending: Target | null = null;
   private follow: string | null = null;
   private joy: { id: number; bx: number; by: number; x: number; y: number } | null = null;
   private pointers = new Map<number, { x: number; y: number; t: number; sx: number; sy: number }>();
@@ -250,16 +239,16 @@ export class WorldScene {
   private get low(): boolean {
     return VQ().tier === 'low';
   }
-  private sun: SunState = sunAt(12, 'despejado');
-  private shadowQ: (() => void)[] = [];
+  sun: SunState = sunAt(12, 'despejado');
+  shadowQ: (() => void)[] = [];
   private lighting = new Lighting();
-  private focusGrad: CanvasGradient | null = null;
+  focusGrad: CanvasGradient | null = null;
   /** Lo que se pinta sobre el suelo, antes incluso que las sombras (pavimentos con dibujo). */
   private groundQ: (() => void)[] = [];
   private furniture = new Furniture(() => this.w, () => this.l);
 
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
-  private pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
+  pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
     const g = this.g;
     const sun = this.sun;
     this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
@@ -268,7 +257,7 @@ export class WorldScene {
 
   /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
   debugWeather: string | null = null;
-  private weatherHere(): string {
+  weatherHere(): string {
     return this.debugWeather ?? weatherIn(this.w, playerRegion(this.w));
   }
 
@@ -470,7 +459,7 @@ export class WorldScene {
     return { x: ((sx - r.left - this.vw / 2) / this.cam.z + this.cam.x) / TILE, y: ((sy - r.top - this.vh / 2) / this.cam.z + this.cam.y) / TILE };
   }
 
-  private toScreen(x: number, y: number): { x: number; y: number } {
+  toScreen(x: number, y: number): { x: number; y: number } {
     return { x: (x - this.cam.x) * this.cam.z + this.vw / 2, y: (y - this.cam.y) * this.cam.z + this.vh / 2 };
   }
 
@@ -1065,7 +1054,7 @@ export class WorldScene {
   // -------------------------------------------------------------------------
   // Objetivos de interacción
   // -------------------------------------------------------------------------
-  private targetPos(t: Target): { x: number; y: number } | undefined {
+  targetPos(t: Target): { x: number; y: number } | undefined {
     const w = this.w;
     const life = ensureLife(w);
     switch (t.kind) {
@@ -1250,7 +1239,7 @@ export class WorldScene {
     // Puestos fronterizos, campamentos de guerra y soldados.
     this.l.posts.forEach((p) => {
       if (!inView(p.x * TILE, p.y * TILE, 200)) return;
-      this.postDrawables(p, items, t);
+      postDrawables(this, p, items, t);
     });
     // Lugares.
     for (const p of this.l.places) {
@@ -1270,7 +1259,7 @@ export class WorldScene {
       } else items.push({ y: it.y * TILE, draw: () => S.drawSprite(g, S.prologueProp(it.id as 'mochila'), it.x * TILE, it.y * TILE) });
     }
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
-    this.roadTraffic(items, inView, t);
+    roadTraffic(this, items, inView, t);
     // Vecinos: figura completa cerca, simplificada a media distancia, silueta lejos.
     for (const [id, e] of this.ents) {
       if (e.inside || !inView(e.x * TILE, e.y * TILE)) continue;
@@ -1339,7 +1328,7 @@ export class WorldScene {
 
     this.drawParticles(g, t);
     this.drawBirds(g);
-    this.drawMarkers(g, t);
+    drawMarkers(this, g, t);
     // Lluvia, nieve y viento, en coordenadas de pantalla.
     {
       const dt = this.lastDraw ? Math.min(0.1, (t - this.lastDraw) / 1000) : 1 / 60;
@@ -1362,8 +1351,8 @@ export class WorldScene {
     const nightK = Math.min(1, darkness(life.clock) / 0.62);
     drawGrade(g, hourOf(life.clock), weather, this.vw, this.vh, nightK > 0.01);
     this.lighting.night(g, weather, nightK, this.lights, this.cam, this.vw, this.vh);
-    this.drawLabels(g);
-    this.drawEdgeArrows(g, t);
+    drawLabels(this, g);
+    drawEdgeArrows(this, g, t);
     const cine = this.cineAmount();
     if (cine > 0) {
       // Franjas de cine (2,35:1 aproximado) que entran y salen.
@@ -1480,7 +1469,7 @@ export class WorldScene {
     }
   }
 
-  private hueOf(regionId: number): number {
+  hueOf(regionId: number): number {
     const r = this.w.regions[regionId];
     return (r.isHome ? PLAYER_CULTURE : CULTURES.find((c) => c.id === r.culture) ?? PLAYER_CULTURE).hue;
   }
@@ -1816,159 +1805,7 @@ export class WorldScene {
     return best;
   }
 
-  private postDrawables(p: { routeId: number; a: number; b: number; x: number; y: number; pathIndex: number }, items: Drawable[], t: number): void {
-    const w = this.w;
-    const g = this.g;
-    const route = w.routes[p.routeId];
-    const a = w.regions[p.a];
-    const b = w.regions[p.b];
-    const px = p.x * TILE;
-    const py = p.y * TILE;
-    const closed = route.status !== 'abierta';
-    const owner = a.isHome ? b : a;
-    items.push({ y: py + 4, draw: () => S.drawSprite(g, S.post(`hsl(${this.hueOf(owner.id)} 60% 45%)`, closed), px - 30, py + 4) });
-    if (closed) items.push({ y: py + 6, draw: () => S.drawSprite(g, S.barricade(), px + 4, py + 6) });
-    if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 44, k: 0.9 });
-    const sec = t / 1000;
-    const lifeW = ensureLife(w);
-    const weather = this.weatherHere();
-    // Guardias según la tensión; campamentos si hay guerra.
-    const war = a.relations[b.id]?.war;
-    const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
-    const guards = war ? 8 : mil > 0.55 ? 4 : mil > 0.35 ? 2 : route.status === 'cerrada' ? 2 : 1;
-    if (war) {
-      // Dos bandos frente a frente a cada lado de la barrera, con sus estandartes.
-      for (const [k, side] of [[-1, a], [1, b]] as const) {
-        const bt = bannerTex(this.hueOf(side.id), side.id);
-        const bx = px + k * 92;
-        const by = py + 4;
-        this.shadowQ.push(() => castShadow(g, silhouette(bt), bt.w, bt.h, bt.ax, bt.ay, bx, by, this.sun, 0.45));
-        items.push({ y: by, draw: () => put(g, bt, bx, by, k > 0) });
-      }
-    }
-    for (let i = 0; i < guards; i++) {
-      const side = i % 2 ? a : b;
-      const row = i >> 1;
-      const sx = war ? px + (i % 2 ? -1 : 1) * (34 + (row % 2) * 22) : px + (i % 2 ? -1 : 1) * (26 + row * 20);
-      const sy = war ? py + 6 + row * 14 : py + 18 + row * 10;
-      const ap = this.extraAp(`g:${p.routeId}:${side.id}:${i}`, side.id, 'guardia', 24 + i * 5);
-      const me = lifeW.player;
-      const close = Math.hypot(me.x * TILE - sx, me.y * TILE - sy) < 70;
-      const pose: Pose = {
-        facing: close && !war ? 'front' : 'side',
-        // En guerra se miran unos a otros: cada bando hacia la barrera.
-        flip: war ? i % 2 === 0 : i % 2 === 0,
-        phase: 0,
-        action: war ? (row % 2 === 0 ? (Math.floor(sec / 2.2 + i * 0.7) % 3 === 0 ? 'argue' : 'fight') : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : Math.floor(sec / 1.6 + i) % 3 === 1 ? 'point' : 'look') : close ? 'idle' : 'look',
-        t: sec + i,
-        expr: war ? (row % 2 === 0 ? 'hostil' : 'enfadado') : mil > 0.55 ? 'desconfianza' : 'neutral',
-        lod: this.lodAt(sx / TILE, sy / TILE),
-        hood: weather === 'lluvia' || weather === 'tormenta',
-        heavy: weather === 'nieve',
-      };
-      this.pushPerson(items, ap, pose, sx, sy);
-    }
-    if (war) {
-      for (let i = 0; i < 3; i++) {
-        const tx = px + (i - 1) * 70;
-        const ty = py - 70 - (i % 2) * 16;
-        items.push({ y: ty, draw: () => put(g, tentTex(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
-      }
-      this.lights.push({ x: px, y: py - 50, r: 64, k: 1 });
-      items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.1) });
-    }
-  }
-
-  /** Comercio, refugiados, soldados y caravanas por los caminos (solo lo visible). */
-  private roadTraffic(items: Drawable[], inView: (x: number, y: number, m?: number) => boolean, t: number): void {
-    const w = this.w;
-    const g = this.g;
-    const life = ensureLife(w);
-    const h = hourOf(life.clock);
-    const day = h > 6.5 && h < 20;
-    const clock = life.clock;
-    for (const road of this.l.roads) {
-      const len = road.path.length;
-      if (len < 4) continue;
-      // Soldados en marcha entre regiones en guerra.
-      if (w.regions[road.a].relations[road.b]?.war) {
-        for (let i = 0; i < 5; i++) {
-          const phase = ((clock * 1.5) / len + i * 0.04) % 1;
-          const pos = along(road.path, 0.35 + phase * 0.3);
-          const px = pos.x * TILE + (i % 2) * 14;
-          const py = pos.y * TILE + (i % 3) * 8;
-          if (!inView(px, py)) continue;
-          const side = i % 2 ? road.a : road.b;
-          const ap = this.extraAp(`s:${road.routeId}:${i}`, side, 'guardia', 22 + i * 3);
-          const pose = this.marchPose(pos.dx, pos.dy, t / 1000 + i * 1.3, 'enfadado', px, py, ap);
-          this.pushPerson(items, ap, pose, px, py);
-        }
-      }
-    }
-    // Caravanas de verdad: cada carreta lleva una carga concreta de un pueblo a otro.
-    for (const cv of convoyPositions(w)) {
-      const px = cv.x * TILE;
-      const py = cv.y * TILE;
-      if (!inView(px, py)) continue;
-      const main = Object.keys(cv.c.cargo)[0] as Good | undefined;
-      const color = cv.c.status === 'atacada' ? '#5a4a3a' : main ? GOOD_COLOR[main] : '#d9c08a';
-      const moving = cv.c.status === 'viaje' && day;
-      items.push({ y: py, draw: () => S.drawSprite(g, S.cart(moving ? Math.floor(t / 250) % 4 : 0, cv.dx < 0, color), px, py) });
-      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => put(g, propTex('cajas', 1), px + 26, py + 8) });
-    }
-    // Refugiados: caminan de verdad de su región a la de destino.
-    for (const r of w.regions) {
-      const mig = r.flags.emigrando;
-      if (!mig) continue;
-      const to = Number(mig.data?.to);
-      const path = roadPath(w, r.id, to);
-      if (!path.length) continue;
-      for (let i = 0; i < 4; i++) {
-        const phase = ((clock * 0.8) / path.length + i * 0.015 + r.id * 0.21) % 1;
-        const pos = along(path, phase);
-        const px = pos.x * TILE + (i % 2) * 12;
-        const py = pos.y * TILE + (i % 3) * 7;
-        if (!inView(px, py)) continue;
-        const role: FolkRole = (['campesino', 'anciano', 'campesino', 'nino'] as FolkRole[])[i];
-        const ap = this.extraAp(`r:${r.id}:${i}`, r.id, role, role === 'nino' ? 9 : role === 'anciano' ? 66 : 30, (a) => {
-          a.outfit.item = role === 'anciano' ? 'baston' : 'saco';
-          a.outfit.patches = true;
-        });
-        const pose = this.marchPose(pos.dx, pos.dy, t / 1000 + i, i % 2 ? 'triste' : 'miedo', px, py, ap);
-        this.pushPerson(items, ap, pose, px, py);
-      }
-    }
-    // Tus caravanas: salen del almacén y llegan días después.
-    for (const c of life.caravans) {
-      const path = roadPath(w, w.player.home, c.to);
-      if (!path.length) continue;
-      const k = (clock - c.depart) / Math.max(1, c.arrive - c.depart);
-      if (k < 0 || k > 1) continue;
-      const pos = along(path, k);
-      const px = pos.x * TILE;
-      const py = pos.y * TILE;
-      if (!inView(px, py)) continue;
-      const driver = this.extraAp(`c:${c.id}`, w.player.home, 'comerciante', 34);
-      const dpose = this.marchPose(pos.dx, pos.dy, t / 1000, 'neutral', px, py, driver);
-      items.push({
-        y: py + 12,
-        draw: () => {
-          S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, pos.dx < 0, c.kind === 'regalo' ? '#c98ad0' : '#e3c070'), px, py);
-          drawFigure(g, driver, dpose, px + (pos.dx < 0 ? 10 : -10), py + 12);
-          g.fillStyle = '#5a3a22';
-          g.fillRect(px - 1, py - 78, 2, 26);
-          g.fillStyle = '#e9b44c';
-          g.beginPath();
-          g.moveTo(px + 1, py - 78);
-          g.lineTo(px + 15, py - 73);
-          g.lineTo(px + 1, py - 68);
-          g.fill();
-        },
-      });
-    }
-  }
-
-  private fire(px: number, py: number, t: number, scale = 1): void {
+  fire(px: number, py: number, t: number, scale = 1): void {
     drawFire(this.g, px, py, t, scale >= 1.15, this.reduceMotion);
   }
 
@@ -1990,212 +1827,6 @@ export class WorldScene {
   }
 
   /** "!" sobre los encuentros, y resaltado del objetivo enfocado. */
-  private drawMarkers(g: CanvasRenderingContext2D, t: number): void {
-    const life = ensureLife(this.w);
-    // La caja perdida destella de vez en cuando: miel al sol.
-    for (const it of prologueItems(this.w)) {
-      if (it.id !== 'caja' || (!this.reduceMotion && Math.floor(t / 180) % 9 > 2)) continue;
-      const X = Math.round(it.x * TILE + 5);
-      const Y = Math.round(it.y * TILE - 16);
-      g.fillStyle = '#fff6c8';
-      g.fillRect(X, Y - 2, 1, 5);
-      g.fillRect(X - 2, Y, 5, 1);
-      g.fillStyle = '#ffd36a';
-      g.fillRect(X, Y, 1, 1);
-    }
-    for (const e of life.encounters) {
-      if (e.resolved) continue;
-      const bob = this.reduceMotion ? 0 : Math.sin(t / 250) * 2;
-      g.fillStyle = '#f3e8cf';
-      g.strokeStyle = '#2b1e15';
-      g.lineWidth = 1.5;
-      g.beginPath();
-      g.arc(e.x * TILE, Math.round(e.y * TILE - 44 + bob), 5, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
-      g.fillStyle = '#b5562d';
-      g.font = '700 8px Alegreya, Georgia, serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('!', e.x * TILE, Math.round(e.y * TILE - 43.5 + bob));
-    }
-    // Foco: un resplandor cálido en el suelo bajo quien o lo que se puede usar (no bajo el propio jugador).
-    const f = this.focus ? this.targetPos(this.focus) : undefined;
-    const meP = ensureLife(this.w).player;
-    if (f && Math.hypot(f.x - meP.x, f.y - meP.y) > 0.7) {
-      const fx = f.x * TILE;
-      const fy = f.y * TILE;
-      const pulse = 0.75 + Math.sin(performance.now() / 420) * 0.25;
-      g.save();
-      g.translate(fx, fy);
-      g.scale(1, 0.38);
-      // Gradiente fijo (creado una vez); el pulso va en la opacidad.
-      if (!this.focusGrad) {
-        this.focusGrad = g.createRadialGradient(0, 0, 2, 0, 0, 12);
-        this.focusGrad.addColorStop(0, 'rgba(255,226,150,0.42)');
-        this.focusGrad.addColorStop(0.65, 'rgba(255,210,120,0.18)');
-        this.focusGrad.addColorStop(1, 'rgba(255,210,120,0)');
-      }
-      g.globalAlpha = pulse;
-      g.fillStyle = this.focusGrad;
-      g.beginPath();
-      g.arc(0, 0, 12, 0, Math.PI * 2);
-      g.fill();
-      g.restore();
-    }
-    // Destino tocado: un anillo que se abre y se apaga.
-    if (this.tapMark) {
-      // Se queda hasta llegar: un aro dorado que late, con contorno oscuro para verse sobre cualquier suelo.
-      if (!this.path.length && !this.pending) this.tapMark = null;
-      else {
-        const age = ((performance.now() - this.tapMark.t) / 900) % 1;
-        const r = 6 + age * 9;
-        const x = this.tapMark.x * TILE;
-        const y = this.tapMark.y * TILE;
-        g.lineWidth = 2.2;
-        g.strokeStyle = `rgba(30,20,10,${(0.45 * (1 - age)).toFixed(3)})`;
-        g.beginPath();
-        g.ellipse(x, y, r, r * 0.42, 0, 0, Math.PI * 2);
-        g.stroke();
-        g.lineWidth = 1.2;
-        g.strokeStyle = `rgba(240,205,130,${(0.95 * (1 - age)).toFixed(3)})`;
-        g.stroke();
-        g.fillStyle = 'rgba(240,205,130,0.85)';
-        g.beginPath();
-        g.ellipse(x, y, 2, 0.9, 0, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-  }
-
-  private drawLabels(g: CanvasRenderingContext2D): void {
-    const w = this.w;
-    const life = ensureLife(w);
-    const me = life.player;
-    g.textAlign = 'center';
-    g.textBaseline = 'bottom';
-    // Nombre de las personas cercanas que ya conoces.
-    for (const [id, e] of this.ents) {
-      if (e.inside || Math.hypot(e.x - me.x, e.y - me.y) > 5) continue;
-      const f = this.folkById.get(id);
-      if (!f || f.lastMet < 0 || id === this.converseId) continue;
-      const ap0 = this.apCache.get(id)?.ap;
-      const p = this.toScreen(e.x * TILE, e.y * TILE - (ap0 ? figureTop(ap0) + 4 : 35));
-      // Bajo la franja del HUD no se lee: el nombre se queda justo debajo de ella.
-      p.y = Math.max(p.y, 78);
-      g.font = '600 12px Alegreya, Georgia, serif';
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(30,25,20,0.7)';
-      g.strokeText(f.name, p.x, p.y);
-      g.fillStyle = '#f6ecd2';
-      g.fillText(f.name, p.x, p.y);
-    }
-    // Lo que se oye al pasar: frases sueltas de quienes charlan cerca (y gritos de quienes discuten).
-    let bubbles = 0;
-    const slot = Math.floor(performance.now() / 5200);
-    for (const [id, e] of this.ents) {
-      if (bubbles >= 2 || e.inside || !e.partner || id > e.partner || Math.hypot(e.x - me.x, e.y - me.y) > 6.5) continue;
-      const a = this.folkById.get(id);
-      const b = this.folkById.get(e.partner);
-      const o = this.ents.get(e.partner);
-      if (!a || !b || !o) continue;
-      const angry = /discute|pelea/.test(e.act);
-      const text = angry ? (slot % 2 ? '«¡Eso es mentira!»' : '«¡No vuelvas a hablarme así!»') : overheard(w, slot % 2 ? a : b, slot % 2 ? b : a, slot + hashOf(id));
-      if (!text || (slot + hashOf(id)) % 3 === 2) continue;
-      bubbles++;
-      const p = this.toScreen(((e.x + o.x) / 2) * TILE, Math.min(e.y, o.y) * TILE - 46);
-      g.font = 'italic 12px Alegreya, Georgia, serif';
-      const wpx = Math.min(240, g.measureText(text).width + 14);
-      g.fillStyle = angry ? 'rgba(120,30,25,0.82)' : 'rgba(30,25,20,0.72)';
-      g.beginPath();
-      g.roundRect(p.x - wpx / 2, p.y - 20, wpx, 20, 8);
-      g.fill();
-      g.fillStyle = '#f6ecd2';
-      g.fillText(text.length > 38 ? `${text.slice(0, 36)}…»` : text, p.x, p.y - 4);
-    }
-    // Nombre del pueblo al acercarse a la plaza.
-    for (const v of this.l.villages) {
-      const d = Math.hypot(v.cx - me.x, v.cy - me.y);
-      if (d > 16) continue;
-      const p = this.toScreen((v.cx + 0.5) * TILE, (v.cy - v.plazaR - 1) * TILE);
-      g.globalAlpha = Math.min(1, (16 - d) / 6);
-      g.font = '700 17px Alegreya, Georgia, serif';
-      g.lineWidth = 4;
-      g.strokeStyle = 'rgba(30,25,20,0.65)';
-      g.strokeText(w.regions[v.regionId].name, p.x, p.y);
-      g.fillStyle = '#f3e3b5';
-      g.fillText(w.regions[v.regionId].name, p.x, p.y);
-      g.globalAlpha = 1;
-    }
-  }
-
-  /** Flechas en el borde de la pantalla hacia encuentros cercanos fuera de la vista. */
-  private drawEdgeArrows(g: CanvasRenderingContext2D, t: number): void {
-    const life = ensureLife(this.w);
-    if (this.waypoint) {
-      const wp = this.waypoint;
-      const p = this.toScreen(wp.x * TILE, wp.y * TILE);
-      const cx = this.vw / 2;
-      const cy = this.vh / 2;
-      const onScreen = p.x > 20 && p.y > 60 && p.x < this.vw - 20 && p.y < this.vh - 20;
-      const a = Math.atan2(p.y - cy, p.x - cx);
-      const x = onScreen ? p.x : cx + Math.cos(a) * (this.vw / 2 - 40);
-      const y = onScreen ? p.y - 30 : cy + Math.sin(a) * (this.vh / 2 - 90);
-      g.save();
-      g.translate(x, y);
-      if (!onScreen) g.rotate(a);
-      g.fillStyle = '#e9b44c';
-      g.strokeStyle = '#2b1e15';
-      g.lineWidth = 2;
-      g.beginPath();
-      if (onScreen) (g.moveTo(0, 10), g.lineTo(-8, -4), g.lineTo(8, -4));
-      else (g.moveTo(16, 0), g.lineTo(-8, -10), g.lineTo(-3, 0), g.lineTo(-8, 10));
-      g.closePath();
-      g.fill();
-      g.stroke();
-      g.restore();
-      const dist = Math.hypot(wp.x - life.player.x, wp.y - life.player.y);
-      g.font = '600 12px "Alegreya Sans", system-ui, sans-serif';
-      g.textAlign = 'center';
-      g.fillStyle = '#f6ecd2';
-      g.strokeStyle = 'rgba(30,25,20,0.7)';
-      g.lineWidth = 3;
-      const label = `${wp.label} · ${Math.round(dist * 2)} pasos`;
-      const ly = onScreen ? y - 14 : y + (Math.sin(a) > 0 ? -18 : 26);
-      g.strokeText(label, x, ly);
-      g.fillText(label, x, ly);
-    }
-    for (const e of life.encounters) {
-      if (e.resolved) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE);
-      if (p.x > 0 && p.y > 0 && p.x < this.vw && p.y < this.vh) continue;
-      const cx = this.vw / 2;
-      const cy = this.vh / 2;
-      const a = Math.atan2(p.y - cy, p.x - cx);
-      const r = Math.min(this.vw, this.vh) / 2 - 34;
-      const x = cx + Math.cos(a) * r;
-      const y = cy + Math.sin(a) * r * (this.vh / this.vw);
-      g.save();
-      g.translate(x, y);
-      g.rotate(a);
-      g.globalAlpha = 0.6 + Math.sin(t / 300) * 0.3;
-      g.fillStyle = '#f3e8cf';
-      g.beginPath();
-      g.moveTo(12, 0);
-      g.lineTo(-8, -8);
-      g.lineTo(-4, 0);
-      g.lineTo(-8, 8);
-      g.closePath();
-      g.fill();
-      g.restore();
-      g.globalAlpha = 1;
-    }
-  }
-
-  /**
-   * Noche: una capa de oscuridad azulada con huecos donde hay luz (ventanas,
-   * faroles, hogueras, tu farol) y, encima, un halo cálido aditivo.
-   */
   private litWindow(x: number, y: number, w: number, h: number, t: number): void {
     const g = this.g;
     const flick = this.reduceMotion ? 0 : Math.sin(t / 340) * 0.05 + Math.sin(t / 97) * 0.03;
@@ -2244,7 +1875,7 @@ export class WorldScene {
   // Aspecto y postura de las personas
   // -------------------------------------------------------------------------
   /** Nivel de detalle por distancia al jugador (y por zoom). */
-  private lodAt(x: number, y: number): 0 | 1 | 2 {
+  lodAt(x: number, y: number): 0 | 1 | 2 {
     const me = ensureLife(this.w).player;
     const d = Math.hypot(x - me.x, y - me.y) * (this.cam.z < 0.85 ? 1.6 : 1);
     const q = VQ();
@@ -2280,7 +1911,7 @@ export class WorldScene {
   }
 
   /** Aspecto de figurantes (soldados, refugiados, mensajeros, gentío). */
-  private extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance {
+  extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance {
     const key = `${regionId}:${role}`;
     const c = this.apCache.get(id);
     if (c && c.key === key) return c.ap;
@@ -2368,7 +1999,7 @@ export class WorldScene {
   }
 
   /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
-  private marchPose(dx: number, dy: number, t: number, expr: Expr, px: number, py: number, ap: Appearance): Pose {
+  marchPose(dx: number, dy: number, t: number, expr: Expr, px: number, py: number, ap: Appearance): Pose {
     const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
     const weather = this.weatherHere();
     // La fase sale de la posición en el camino: el paso va al ritmo del avance.

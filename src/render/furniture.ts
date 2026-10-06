@@ -30,8 +30,8 @@ export class Furniture {
     const v = this.l().villages[regionId];
     const r = this.w().regions[regionId];
     const taken: { x: number; y: number; r: number }[] = [{ x: v.cx + 0.5, y: v.cy + 1.3, r: 2.8 }, { x: v.sign.x + 1.2, y: v.sign.y + 0.4, r: 1.4 }];
-    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.2 });
-    for (const p of v.props) if (Math.hypot(p.x - v.cx, p.y - v.cy) < v.plazaR + 2) taken.push({ x: p.x, y: p.y, r: p.kind === 'banco' ? 1.3 : 0.8 });
+    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.05 });
+    for (const p of v.props) if (Math.hypot(p.x - v.cx, p.y - v.cy) < v.plazaR + 2) taken.push({ x: p.x, y: p.y - (p.kind === 'banco' ? 0.4 : 0), r: p.kind === 'banco' ? 1.15 : 0.7 });
     const look = plazaLook(this.w().seed, regionId, v.cx, v.cy, v.plazaR, !r.isHome && v.plazaR >= 6, taken, (x, y) => passable(this.w(), this.l(), x, y));
     this.plazas.set(regionId, look);
     return look;

@@ -53,7 +53,9 @@ COMPOSICIÓN (render/scene.ts, render/chunks.ts)
    sombras → objetos), clima (visual/weather.ts), etiquetas
    ├─ render/lighting.ts   noche (oscuridad con huecos, halos a media resolución, reflejos,
    │                       núcleos) y gradación por franjas; recibe luces, cámara y tamaño
-   └─ render/furniture.ts  colisión fina del jugador con el mobiliario y carácter de cada plaza
+   ├─ render/furniture.ts  colisión fina del jugador con el mobiliario y carácter de cada plaza
+   ├─ render/traffic.ts    puestos fronterizos (guardias, bandos en guerra) y tráfico de caminos
+   └─ render/overlay.ts    marcas de destino y foco, nombres, bocadillos, flechas de borde
 ```
 
 | Módulo | Qué hace |
@@ -69,6 +71,8 @@ COMPOSICIÓN (render/scene.ts, render/chunks.ts)
 | `visual/env/props.ts`, `structures.ts`, `interiors.ts` | Mobiliario, puestos, animales, fuente animada; montañas, puestos fronterizos, barricadas, lugares, carros, mojones; viñetas de interiores animadas con quien está dentro. |
 | `visual/env/plaza.ts` | Lo que distingue cada plaza (solo aspecto, determinista por semilla y región): pavimento con dibujo recortado al empedrado, árbol en alcorque, jardineras de temporada, terrazas, estandartes, guirnaldas entre faroles. |
 | `render/lighting.ts` | `Lighting.night()` y `drawGrade()`: la oscuridad de luna se normaliza (la simulación da 0–0,62), los huecos de luz nunca borran la noche del todo, los halos se suman en una capa a media resolución y la viñeta nocturna va dentro de la capa oscura. |
+| `render/traffic.ts`, `render/overlay.ts` | Funciones que reciben de la escena solo lo que necesitan (`TrafficHost`, `OverlayHost`): lo de fuera de los pueblos y lo que se pinta encima del mundo. `scene.ts` baja de 2.702 a ~2.000 líneas. |
+| `ui/map/relief.ts`, `ui/map/inkicons.ts` | Mapa a tinta: relieve sacado del terreno real (montañas, bosques, juncos, olas) solo en lo conocido; iconos propios en medallón en lugar de emojis. |
 | `render/furniture.ts` | Elipses de colisión (fuente, pozo, estatua, bancos, puestos, adornos) que frenan solo al jugador; al aparecer dentro de un mueble, se le aparta. |
 | `visual/weather.ts` | Lluvia en tres capas de profundidad, salpicaduras, tormenta, nieve, niebla en bancos, viento con hojas. |
 | `ui/icons.ts`, `theme.css` | Iconos propios (SVG de tinta y oro) que sustituyen a los emojis en toda la interfaz; tema de pergamino con tipografía Alegreya empaquetada. |
