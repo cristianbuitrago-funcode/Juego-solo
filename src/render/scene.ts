@@ -25,12 +25,14 @@ import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure
 import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
 import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
 import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
-import { bannerTex, drawGarland, pavingTex, planterTex, plazaLook, tableTex, treeBedTex, type PlazaLook } from '../visual/env/plaza';
+import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { marketOf } from '../world/economy';
 import { VQ, resolveTier, setTier, type QualitySetting, type Tier } from '../visual/quality';
 import { clearTextures, nextFrame, put, silhouette } from '../visual/paint';
 import { drawFire, drawFlame, drawPuff } from './fx';
 import { Weather } from '../visual/weather';
+import { drawGrade, Lighting } from './lighting';
+import { Furniture } from './furniture';
 import { actionOf, moodOf } from './mood';
 import * as S from './sprites';
 
@@ -193,7 +195,6 @@ export class WorldScene {
   private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
   private playerHidden = false;
   /** Huellas sólidas del mobiliario (elipses en teselas): solo frenan al jugador. */
-  private solids = new Map<object, { x: number; y: number; rx: number; ry: number }[]>();
   private snowCheck = -1e9;
   private snowWeather = '';
   private realDt = 0;
@@ -204,7 +205,6 @@ export class WorldScene {
   private tapMark: { x: number; y: number; t: number } | null = null;
   private ro: ResizeObserver | null = null;
   /** Capa de oscuridad nocturna (a media resolución). */
-  private dark = document.createElement('canvas');
   private onKeyDown = (e: KeyboardEvent) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
     this.keys.add(e.key.toLowerCase());
@@ -232,6 +232,10 @@ export class WorldScene {
   /** Nivel gráfico (LOW–ULTRA, o automático): resolución, texturas, sombras, partículas y gentío. */
   private qualitySetting: QualitySetting = 'auto';
   private frameMs: number[] = [];
+  /** Intervalos entre fotogramas (ms) y el mejor ritmo visto: así se nota la carga de la GPU, que no sale en el tiempo de dibujo. */
+  private gapMs: number[] = [];
+  private bestGap = 1e9;
+  private lastFrameT = 0;
   private lastDowngrade = 0;
   setQuality(q: QualitySetting): void {
     this.qualitySetting = q;
@@ -245,9 +249,10 @@ export class WorldScene {
   }
   private sun: SunState = sunAt(12, 'despejado');
   private shadowQ: (() => void)[] = [];
+  private lighting = new Lighting();
   /** Lo que se pinta sobre el suelo, antes incluso que las sombras (pavimentos con dibujo). */
   private groundQ: (() => void)[] = [];
-  private plazas = new Map<number, PlazaLook>();
+  private furniture = new Furniture(() => this.w, () => this.l);
 
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
   private pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
@@ -297,7 +302,8 @@ export class WorldScene {
         const w0 = performance.now();
         this.draw(t);
         // Se mide el trabajo de dibujo (no el intervalo entre fotogramas: un móvil a 30 Hz no es lento).
-        if (!this.paused) this.watchFrames(performance.now() - w0);
+        if (!this.paused) this.watchFrames(performance.now() - w0, this.lastFrameT ? t - this.lastFrameT : 0);
+        this.lastFrameT = this.paused ? 0 : t;
       }
       this.raf = requestAnimationFrame(loop);
     };
@@ -317,26 +323,38 @@ export class WorldScene {
    * pintarse cada fotograma: si el 95 % pasa de 16 ms, baja un nivel; si dos
    * tandas seguidas se quedan por debajo de 7 ms, sube (sin pasar del detectado).
    */
-  private watchFrames(ms: number): void {
+  private watchFrames(ms: number, gap: number): void {
     if (this.qualitySetting !== 'auto' || document.hidden || ms > 250 || ms <= 0) return;
     this.frameMs.push(ms);
+    if (gap > 0 && gap < 250) this.gapMs.push(gap);
     if (this.frameMs.length < 240) return;
-    const sorted = [...this.frameMs].sort((a, b) => a - b);
-    this.frameMs.length = 0;
+    const sorted = this.frameMs.sort((a, b) => a - b);
     const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    this.frameMs.length = 0;
+    // Ritmo real de la pantalla: la mediana de los intervalos. Si antes se alcanzó un ritmo
+    // mucho mejor, la pantalla puede ir más rápido y algo (GPU incluida) la está frenando.
+    let gapMed = 0;
+    if (this.gapMs.length > 60) {
+      const gs = this.gapMs.sort((a, b) => a - b);
+      gapMed = gs[Math.floor(gs.length / 2)];
+      this.bestGap = Math.min(this.bestGap, gapMed);
+    }
+    this.gapMs.length = 0;
+    const gpuBound = gapMed > 22 && gapMed > this.bestGap * 1.4;
     const now = performance.now();
     const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
     const i = order.indexOf(VQ().tier);
     const cap = order.indexOf(resolveTier('auto'));
     let next = i;
-    if (p95 > 16 && i > 0 && now - this.lastDowngrade > 15000) next = i - 1;
-    this.calmWindows = p95 < 7 ? this.calmWindows + 1 : 0;
+    if ((p95 > 16 || gpuBound) && i > 0 && now - this.lastDowngrade > 15000) next = i - 1;
+    this.calmWindows = p95 < 7 && !gpuBound ? this.calmWindows + 1 : 0;
     if (this.calmWindows >= 2 && i < cap && now - this.lastDowngrade > 30000) next = i + 1;
     if (next === i) return;
     this.lastDowngrade = now;
     this.calmWindows = 0;
     setTier(order[next]);
-    clearTextures();
+    // Las texturas llevan la resolución en su clave: las nuevas se pintan según se
+    // necesitan y las viejas salen solas del caché (vaciarlo de golpe daba un tirón).
     S.clearSprites();
     this.resize();
   }
@@ -351,6 +369,7 @@ export class WorldScene {
 
   setWorld(w: WorldState): void {
     this.w = w;
+    this.furniture.clear();
     this.chunks.setWorld(w);
   }
 
@@ -380,7 +399,7 @@ export class WorldScene {
     const p = ensureLife(this.w).player;
     p.x = x;
     p.y = y;
-    this.unstick(p);
+    this.furniture.unstick(p);
     this.cam.x = x * TILE;
     this.cam.y = y * TILE;
     this.path = [];
@@ -452,8 +471,7 @@ export class WorldScene {
     this.canvas.height = Math.round(r.height * this.dpr);
     this.canvas.style.width = `${r.width}px`;
     this.canvas.style.height = `${r.height}px`;
-    this.dark.width = Math.max(1, Math.ceil(r.width / 2));
-    this.dark.height = Math.max(1, Math.ceil(r.height / 2));
+    this.lighting.resize(r.width, r.height);
   }
 
   private toWorld(sx: number, sy: number): { x: number; y: number } {
@@ -644,7 +662,7 @@ export class WorldScene {
   private movePlayer(dt: number): void {
     const life = ensureLife(this.w);
     const me = life.player;
-    this.unstick(me);
+    this.furniture.unstick(me);
     let dx = 0;
     let dy = 0;
     let run = this.running;
@@ -716,8 +734,8 @@ export class WorldScene {
     const ox = me.x;
     const oy = me.y;
     // Si ya está dentro de un mueble (al aparecer o cargar), puede salir libremente.
-    const stuck = this.solidAt(me.x, me.y);
-    const ok = (x: number, y: number) => passable(this.w, this.l, x, y) && (stuck || !this.solidAt(x, y));
+    const stuck = this.furniture.solidAt(me.x, me.y);
+    const ok = (x: number, y: number) => passable(this.w, this.l, x, y) && (stuck || !this.furniture.solidAt(x, y));
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
     else if (ok(me.x, ny)) me.y = ny;
@@ -740,60 +758,6 @@ export class WorldScene {
     const pap = this.apCache.get('@player')?.ap;
     this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
     if (moved < 0.002 && !want) this.playerMoving = false;
-  }
-
-  /** El carácter de cada plaza (pavimento y adornos), elegido una vez por pueblo. */
-  private plazaOf(regionId: number): PlazaLook {
-    const hit = this.plazas.get(regionId);
-    if (hit) return hit;
-    const v = this.l.villages[regionId];
-    const r = this.w.regions[regionId];
-    const taken: { x: number; y: number; r: number }[] = [{ x: v.cx + 0.5, y: v.cy + 1.3, r: 2.8 }, { x: v.sign.x + 1.2, y: v.sign.y + 0.4, r: 1.4 }];
-    for (const st of v.stalls) taken.push({ x: st.x, y: st.y, r: 1.5 });
-    for (const p of v.props) if (Math.hypot(p.x - v.cx, p.y - v.cy) < v.plazaR + 2) taken.push({ x: p.x, y: p.y, r: p.kind === 'banco' ? 1.3 : 0.8 });
-    const look = plazaLook(this.w.seed, regionId, v.cx, v.cy, v.plazaR, !r.isHome && v.plazaR >= 6, taken);
-    this.plazas.set(regionId, look);
-    return look;
-  }
-
-  /** Si aparece dentro de un mueble, se le aparta hacia abajo (hacia la cámara). */
-  private unstick(me: { x: number; y: number }): void {
-    for (let i = 0; i < 16 && this.solidAt(me.x, me.y) && passable(this.w, this.l, me.x, me.y + 0.15); i++) me.y += 0.15;
-  }
-
-  /**
-   * ¿Pisa (x, y) la base de una fuente, un banco, un puesto…? Las teselas bloqueadas
-   * son demasiado gruesas para el mobiliario de la plaza: sin esto el jugador se metía
-   * dentro de la fuente o atravesaba los bancos.
-   */
-  private solidAt(x: number, y: number): boolean {
-    for (const v of this.l.villages) {
-      const reach = v.plazaR + 3;
-      if (Math.abs(x - v.cx) > reach || Math.abs(y - v.cy) > reach) continue;
-      let list = this.solids.get(v);
-      if (!list) {
-        const F: Partial<Record<string, [number, number, number]>> = {
-          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [0.95, 0.32, 0.3],
-          cartel: [0.3, 0.2, 0.05], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
-          carro: [1.7, 0.5, 0.3], abrevadero: [1.15, 0.32, 0.2], heno: [0.95, 0.42, 0.25], lenya: [0.9, 0.3, 0.15],
-        };
-        list = [];
-        for (const p of v.props) {
-          const f = F[p.kind];
-          if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
-        }
-        for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.3, rx: 1.15, ry: 0.4 });
-        const D = { arbol: [0.75, 0.4], jardinera: [0.85, 0.3], mesa: [1.15, 0.4], estandarte: [0.25, 0.15] } as const;
-        for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1] });
-        this.solids.set(v, list);
-      }
-      for (const c of list) {
-        const ex = (x - c.x) / c.rx;
-        const ey = (y - c.y) / c.ry;
-        if (ex * ex + ey * ey < 1) return true;
-      }
-    }
-    return false;
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -1385,8 +1349,10 @@ export class WorldScene {
   /** Capa de pantalla: luz del día, noche, clima, joystick, etiquetas. */
   private drawScreen(g: CanvasRenderingContext2D, t: number, weather: string, life: ReturnType<typeof ensureLife>): void {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawGrade(g, hourOf(life.clock), weather);
-    this.drawNight(g, weather);
+    // darkness() llega a 0,62 en plena noche (lo usa también la simulación): aquí, de 0 a 1.
+    const nightK = Math.min(1, darkness(life.clock) / 0.62);
+    drawGrade(g, hourOf(life.clock), weather, this.vw, this.vh, nightK > 0.01);
+    this.lighting.night(g, weather, nightK, this.lights, this.cam, this.vw, this.vh);
     this.drawLabels(g);
     this.drawEdgeArrows(g, t);
     const cine = this.cineAmount();
@@ -1639,7 +1605,7 @@ export class WorldScene {
     }
     // Lo propio de esta plaza: pavimento con dibujo, árboles, jardineras, terrazas, estandartes, guirnaldas.
     {
-      const pl = this.plazaOf(regionId);
+      const pl = this.furniture.plazaOf(regionId);
       const season = seasonOf(w.day);
       const ox = (v.cx + 0.5) * TILE;
       const oy = (v.cy + 0.5) * TILE;
@@ -2214,156 +2180,6 @@ export class WorldScene {
    * Noche: una capa de oscuridad azulada con huecos donde hay luz (ventanas,
    * faroles, hogueras, tu farol) y, encima, un halo cálido aditivo.
    */
-  private drawNight(g: CanvasRenderingContext2D, weather: string): void {
-    const life = ensureLife(this.w);
-    // darkness() llega a 0,62 en plena noche (lo usa también la simulación): aquí, de 0 a 1.
-    const d = Math.min(1, darkness(life.clock) / 0.62);
-    const gloom = weather === 'tormenta' ? 0.45 : weather === 'lluvia' || weather === 'niebla' ? 0.3 : 0;
-    // Cuánto se notan las luces: de noche del todo; con lluvia o niebla, algo.
-    const glow = Math.max(d, gloom * 0.6);
-    if (glow <= 0.01) return;
-    const vis: { x: number; y: number; r: number; k: number; flat: number }[] = [];
-    const cap = VQ().lights;
-    for (const l of this.lights) {
-      const p = this.toScreen(l.x, l.y);
-      const r = l.r * this.cam.z;
-      if (p.x < -r || p.y < -r || p.x > this.vw + r || p.y > this.vh + r) continue;
-      vis.push({ x: p.x, y: p.y, r, k: l.k, flat: l.flat ?? 1 });
-      if (vis.length >= cap) break;
-    }
-    if (d > 0.01) {
-      // Oscuridad de luna (azul frío, a media resolución) con huecos de caída
-      // suave donde hay luz: lo iluminado conserva sus colores de verdad y lo
-      // demás queda en penumbra azulada. Una sola pasada de pantalla.
-      const dc = this.dark.getContext('2d')!;
-      const W = this.dark.width;
-      const H = this.dark.height;
-      const sx = W / this.vw;
-      dc.globalCompositeOperation = 'source-over';
-      dc.clearRect(0, 0, W, H);
-      const a = 0.84 * d;
-      const sky = dc.createLinearGradient(0, 0, 0, H);
-      sky.addColorStop(0, `rgba(18,28,64,${(a * 0.9).toFixed(3)})`);
-      sky.addColorStop(1, `rgba(8,12,34,${a.toFixed(3)})`);
-      dc.fillStyle = sky;
-      dc.fillRect(0, 0, W, H);
-      dc.globalCompositeOperation = 'destination-out';
-      dc.imageSmoothingQuality = 'low';
-      const hole = lightSprite('hole');
-      for (const l of vis) {
-        // Ni la luz más fuerte borra del todo la noche: el charco se lee como charco.
-        dc.globalAlpha = Math.min(0.88, l.k * 0.85);
-        dc.drawImage(hole, (l.x - l.r) * sx, (l.y - l.r * l.flat) * sx, l.r * 2 * sx, l.r * 2 * l.flat * sx);
-      }
-      dc.globalAlpha = 1;
-      dc.globalCompositeOperation = 'source-over';
-      g.imageSmoothingQuality = 'low';
-      g.drawImage(this.dark, 0, 0, this.vw, this.vh);
-    }
-    // 4) El fuego tiñe de ámbar lo que toca (aditivo).
-    g.globalCompositeOperation = 'lighter';
-    // Texturas suaves ampliadas: el filtrado bilineal basta (el bicúbico de «high» es muy caro al ampliar).
-    g.imageSmoothingQuality = 'low';
-    const warm = lightSprite('warm');
-    // Solo las luces que de verdad iluminan alrededor (faroles, hogueras, puertas):
-    // las ventanas ya brillan por sí mismas. Cada halo es mucha superficie que pintar.
-    for (const l of vis) {
-      if (l.r < 26 * this.cam.z) continue;
-      g.globalAlpha = Math.min(1, (l.flat < 1 ? 0.5 : 0.3) * glow * l.k);
-      g.drawImage(warm, l.x - l.r * 0.8, l.y - l.r * 0.8 * l.flat, l.r * 1.6, l.r * 1.6 * l.flat);
-    }
-    // Suelo mojado: cada charco de luz se refleja alargado hacia abajo, como en el adoquín empapado.
-    if (weather === 'lluvia' || weather === 'tormenta') {
-      const refl = lightSprite('reflect');
-      for (const l of vis) {
-        if (l.flat === 1) continue;
-        const ww = l.r * 0.26;
-        g.globalAlpha = Math.min(1, 0.45 * glow * l.k);
-        if (g.globalAlpha < 0.02) continue;
-        g.drawImage(refl, l.x - ww, l.y - l.r * 0.15, ww * 2, l.r * 0.8);
-      }
-      g.globalAlpha = 1;
-    }
-    // Lo que emite luz (cristal de las farolas, ventanas, llamas) brilla por encima de la oscuridad.
-    const core = lightSprite('core');
-    for (const l of vis) {
-      if (l.flat !== 1 || l.r > 60 * this.cam.z) continue;
-      const rr = Math.min(l.r * 0.42, 16 * this.cam.z);
-      g.globalAlpha = Math.min(1, 0.9 * glow * l.k);
-      g.drawImage(core, l.x - rr, l.y - rr, rr * 2, rr * 2);
-    }
-    g.globalAlpha = 1;
-    g.globalCompositeOperation = 'source-over';
-  }
-
-  /**
-   * Luz del día por franjas: madrugada fría y violácea, mañana suave,
-   * mediodía limpio, tarde dorada, atardecer anaranjado con la luz baja
-   * desde el oeste. Con nubes o lluvia, todo se vuelve gris, frío y menos
-   * saturado. Los tintes de cada franja se combinan en un solo color de
-   * multiplicar y otro de aclarar: dos pasadas de pantalla, no nueve.
-   */
-  private drawGrade(g: CanvasRenderingContext2D, h: number, weather: string): void {
-    const W = this.vw;
-    const H = this.vh;
-    const bump = (c: number, wdt: number) => Math.max(0, 1 - Math.abs(h - c) / wdt);
-    const rain = weather === 'lluvia' || weather === 'tormenta';
-    const grey = weather === 'nublado' || rain || weather === 'niebla' || weather === 'nieve' ? 1 : 0;
-    const clear = 1 - grey * 0.75;
-    const dawn = bump(6.2, 1.6);
-    const morning = bump(9, 2);
-    const noon = bump(12.8, 1.8);
-    const afternoon = bump(16.7, 3); // desde las 13:45 y plena a las 16:45
-    const dusk = bump(18.9, 1.9);
-    const mul = [1, 1, 1];
-    const scr = [0, 0, 0];
-    const M = (r: number, gg: number, b: number, a: number) => {
-      if (a <= 0) return;
-      mul[0] *= 1 - a * (1 - r / 255);
-      mul[1] *= 1 - a * (1 - gg / 255);
-      mul[2] *= 1 - a * (1 - b / 255);
-    };
-    const Sc = (r: number, gg: number, b: number, a: number) => {
-      if (a <= 0) return;
-      scr[0] = 1 - (1 - scr[0]) * (1 - (a * r) / 255);
-      scr[1] = 1 - (1 - scr[1]) * (1 - (a * gg) / 255);
-      scr[2] = 1 - (1 - scr[2]) * (1 - (a * b) / 255);
-    };
-    M(150, 150, 215, dawn * 0.4);
-    Sc(255, 200, 205, dawn * 0.1 * clear);
-    Sc(255, 244, 226, morning * 0.06 * clear);
-    M(236, 242, 255, morning * 0.12 * clear); // sombras de la mañana algo frías
-    Sc(255, 252, 240, noon * 0.06 * clear);
-    M(255, 206, 142, afternoon * 0.46 * clear); // tarde dorada
-    Sc(255, 190, 110, afternoon * 0.1 * clear);
-    M(255, 140, 80, dusk * 0.5 * clear);
-    M(170, 110, 160, dusk * 0.12);
-    // Lluvia y tormenta: menos luz y más fría.
-    // (gris azulado: apaga a la vez la luz y el color, sin una pasada aparte de saturación)
-    M(118, 130, 150, rain ? (weather === 'tormenta' ? 0.66 : 0.55) : grey * 0.28);
-    if (weather === 'nieve') Sc(200, 215, 235, 0.04);
-    // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
-    // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
-    overMultiply(g, mul[0], mul[1], mul[2], W, H);
-    overScreen(g, scr[0], scr[1], scr[2], W, H);
-    g.globalCompositeOperation = 'source-over';
-    if (!VQ().grade) return;
-    // Resplandor del sol bajo (por la mañana desde el este; al atardecer, desde el oeste).
-    const low = Math.max(dawn * 0.6 + morning * 0.25, dusk + afternoon * 0.35) * clear;
-    if (low > 0.02) {
-      const fromWest = h > 12;
-      g.globalCompositeOperation = 'lighter';
-      g.globalAlpha = Math.min(1, low) * 0.7;
-      g.drawImage(lightSprite(fromWest ? 'sunW' : 'sunE'), 0, 0, W, H);
-      g.globalAlpha = 1;
-      g.globalCompositeOperation = 'source-over';
-    }
-    // Viñeta suave (textura cacheada): centra la mirada en el protagonista.
-    g.globalAlpha = 0.8 + grey * 0.25;
-    g.drawImage(lightSprite('vignette'), 0, 0, W, H);
-    g.globalAlpha = 1;
-  }
-
   private litWindow(x: number, y: number, w: number, h: number, t: number): void {
     const g = this.g;
     const flick = this.reduceMotion ? 0 : Math.sin(t / 340) * 0.05 + Math.sin(t / 97) * 0.03;
@@ -2548,94 +2364,6 @@ export class WorldScene {
 
 export { TW };
 
-/** Texturas de luz pintadas una vez (sin crear degradados en cada fotograma). */
-const lightCache = new Map<string, HTMLCanvasElement>();
-function lightSprite(kind: 'hole' | 'warm' | 'core' | 'reflect' | 'moon' | 'sunW' | 'sunE' | 'vignette'): HTMLCanvasElement {
-  const hit = lightCache.get(kind);
-  if (hit) return hit;
-  const c = document.createElement('canvas');
-  const S = kind === 'vignette' || kind === 'sunW' || kind === 'sunE' || kind === 'moon' ? 128 : 96;
-  c.width = c.height = S;
-  const g = c.getContext('2d')!;
-  const h = S / 2;
-  const radial = (stops: [number, string][], cx = h, cy = h, r0 = 0, r1 = h) => {
-    const gr = g.createRadialGradient(cx, cy, r0, cx, cy, r1);
-    for (const [o, col] of stops) gr.addColorStop(o, col);
-    g.fillStyle = gr;
-    g.fillRect(0, 0, S, S);
-  };
-  switch (kind) {
-    case 'hole': // caída suave tipo 1/(1+d²)
-      radial([[0, 'rgba(0,0,0,1)'], [0.2, 'rgba(0,0,0,0.92)'], [0.42, 'rgba(0,0,0,0.62)'], [0.65, 'rgba(0,0,0,0.3)'], [0.85, 'rgba(0,0,0,0.1)'], [1, 'rgba(0,0,0,0)']]);
-      break;
-    case 'reflect': {
-      // Reflejo vertical en el suelo mojado: un huso continuo y suave, más fuerte arriba
-      // (sin rayas: a pantalla completa en modo «lighter» se leían como un fallo gráfico).
-      radial([[0, 'rgba(255,196,120,0.7)'], [0.45, 'rgba(255,176,96,0.32)'], [1, 'rgba(255,160,80,0)']]);
-      const fade = g.createLinearGradient(0, 0, 0, S);
-      fade.addColorStop(0, 'rgba(0,0,0,1)');
-      fade.addColorStop(0.5, 'rgba(0,0,0,0.85)');
-      fade.addColorStop(1, 'rgba(0,0,0,0)');
-      g.globalCompositeOperation = 'destination-in';
-      g.fillStyle = fade;
-      g.fillRect(0, 0, S, S);
-      g.globalCompositeOperation = 'source-over';
-      break;
-    }
-    case 'core': // núcleo de una luz: casi blanco cálido en el centro
-      radial([[0, 'rgba(255,240,200,0.95)'], [0.25, 'rgba(255,200,120,0.6)'], [0.6, 'rgba(255,150,60,0.18)'], [1, 'rgba(255,120,40,0)']]);
-      break;
-    case 'warm':
-      radial([[0, 'rgba(255,190,110,0.9)'], [0.3, 'rgba(255,150,70,0.5)'], [0.7, 'rgba(220,100,40,0.14)'], [1, 'rgba(200,80,30,0)']]);
-      break;
-    case 'moon': {
-      const gr = g.createLinearGradient(0, 0, 0, S);
-      gr.addColorStop(0, 'rgba(90,120,190,0.55)');
-      gr.addColorStop(1, 'rgba(90,120,190,0)');
-      g.fillStyle = gr;
-      g.fillRect(0, 0, S, S);
-      break;
-    }
-    case 'sunW':
-    case 'sunE': {
-      const west = kind === 'sunW';
-      radial([[0, west ? 'rgba(255,170,90,0.3)' : 'rgba(255,200,150,0.3)'], [1, 'rgba(255,170,90,0)']], west ? S * 1.05 : -S * 0.05, S * 0.15, 0, S * 0.9);
-      break;
-    }
-    case 'vignette':
-      radial([[0, 'rgba(12,8,18,0)'], [0.45, 'rgba(12,8,18,0)'], [1, 'rgba(12,8,18,0.36)']], h, h * 0.96, 0, h * 1.42);
-      break;
-  }
-  lightCache.set(kind, c);
-  return c;
-}
-
-/**
- * Aproxima «multiplicar por (r,g,b)» con una mezcla normal: un velo de color
- * con la opacidad que oscurece igual un tono medio. Mucho más barato.
- */
-function overMultiply(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
-  const mx = Math.max(r, gg, b);
-  if (mx > 0.995 && Math.min(r, gg, b) > 0.995) return;
-  const a = Math.min(0.95, 1 - (r + gg + b) / 3 + (mx - Math.min(r, gg, b)) * 0.35);
-  if (a <= 0.004) return;
-  // Color del velo para que un gris medio (0,5) quede en 0,5·c.
-  const k = (c: number) => Math.round(Math.max(0, Math.min(1, (0.5 * c - 0.5 * (1 - a)) / a)) * 255);
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = `rgba(${k(r)},${k(gg)},${k(b)},${a.toFixed(3)})`;
-  g.fillRect(0, 0, W, H);
-}
-
-/** «Aclarar» con un velo claro y transparente (exacto si los tres canales son iguales). */
-function overScreen(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
-  const a = Math.max(r, gg, b);
-  if (a <= 0.004) return;
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = `rgba(${Math.round((r / a) * 255)},${Math.round((gg / a) * 255)},${Math.round((b / a) * 255)},${a.toFixed(3)})`;
-  g.fillRect(0, 0, W, H);
-}
-
-/** Zancada (teselas por paso) de un cuerpo andando o corriendo: así el ciclo de piernas sigue al avance. */
 function strideOf(ap: Appearance | undefined, run: boolean): number {
   const leg = ap ? bodyOf(ap).leg : 14.4;
   return (2 * leg * Math.sin(run ? 0.78 : 0.52)) / TILE;

@@ -299,11 +299,16 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
       const k = R.sitting > 0.5 ? 0.26 : 1 - Math.min(0.75, l.lift * 0.45);
       // La pierna que avanza se acerca a la cámara (de frente) o se aleja (de espaldas).
       if (R.sitting < 0.5) g.translate(0, (pose.facing === 'back' ? -1 : 1) * l.lift * 1.6);
-      g.rotate(hx > 0 ? -0.03 : 0.03);
+      // La rodilla que sube se abre un poco hacia fuera y la espinilla se acorta (escorzo).
+      const splay = R.sitting > 0.5 ? 0 : l.lift * 0.14;
+      g.rotate(hx > 0 ? -0.03 - splay : 0.03 + splay);
       g.scale(1, k);
       put(g, tTH, 0, 0);
       g.scale(1, 1 / k);
       g.translate(0, B.thigh * k);
+      g.rotate(hx > 0 ? splay * 1.6 : -splay * 1.6);
+      const ks = R.sitting > 0.5 ? 1 : 1 - Math.min(0.4, l.lift * 0.22);
+      g.scale(1, ks);
       put(g, tSH(false), 0, 0);
     }
     g.restore();

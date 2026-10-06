@@ -106,9 +106,10 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       } else {
         r.legs[0] = { a: 0, b: 0, lift: pos(S(p)) * 1.4 };
         r.legs[1] = { a: 0, b: 0, lift: pos(-S(p)) * 1.4 };
-        r.arms[0] = { a: 0.16, b: 1.1, lift: pos(-S(p)), fist: true };
-        r.arms[1] = { a: 0.16, b: 1.1, lift: pos(S(p)), fist: true };
-        r.x = S(p) * 0.4;
+        r.arms[0] = { a: 0.22, b: 1.25 + pos(-S(p)) * 0.4, lift: pos(-S(p)) * 1.2, fist: true };
+        r.arms[1] = { a: 0.22, b: 1.25 + pos(S(p)) * 0.4, lift: pos(S(p)) * 1.2, fist: true };
+        r.x = S(p) * 0.5;
+        r.lean = 0.12;
       }
       r.head.nod = 0.06;
       r.skirt = S(p) * 0.22;
@@ -124,9 +125,11 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       r.y = (1 - e) * 0.6;
       r.legs[0] = { a: -0.18, b: 0.1, lift: 0 };
       r.legs[1] = { a: 0.22, b: -0.25, lift: 0 };
-      r.arms[0] = { a: 0.4 + e * 1.9, b: 0.3, lift: 0.3 };
-      r.arms[1] = { a: 0.55 + e * 1.8, b: 0.2, lift: 0.3 };
-      r.item = -0.4 + e * 0.5;
+      r.arms[0] = { a: 0.4 + e * 1.95, b: 0.3 - e * 0.15, lift: 0.3 };
+      r.arms[1] = { a: 0.55 + e * 1.85, b: 0.2 - e * 0.1, lift: 0.3 };
+      // La azada describe un arco: abajo, la hoja muerde la tierra por delante;
+      // arriba, el mango pasa por encima de la cabeza hacia atrás.
+      r.item = 0.67 - e * 2.5;
       r.head.nod = 0.1;
       break;
     }

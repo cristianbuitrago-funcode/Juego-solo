@@ -43,7 +43,7 @@ export function showGallery(root: HTMLElement): void {
   const fig = (ap: ReturnType<typeof appearanceOf>, p: Pose, x: number, y: number, k: number) => {
     g.setTransform(k, 0, 0, k, x, y);
     drawFigureShadow(g, ap, 0, 0, { dx: 0.8, dy: 0.35, len: 0.7, a: 0.5 });
-    drawFigure(g, ap, p, 0, 0);
+    drawFigure(g, ap, p, 0, 0, { res: k * Math.min(3, window.devicePixelRatio || 1) });
   };
   const folk = (id: string, role: FolkRole, age: number, regionId: number, gender?: 'f' | 'm'): Folk => ({ id, name: id, regionId, role, age, born: 0, house: 0, alive: true, trust: 0.5, fear: 0, gratitude: 0, resentment: 0, honesty: 0.5, memories: [], lastMet: -1, gender });
   // Fila 1: oficios de varias regiones, de frente.

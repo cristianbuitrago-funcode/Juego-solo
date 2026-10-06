@@ -28,8 +28,9 @@ interface Spot {
 /** Elige y coloca la decoración de una plaza. Determinista: misma semilla, misma plaza. */
 export function plazaLook(seed: number, regionId: number, cx: number, cy: number, plazaR: number, big: boolean, taken: Spot[]): PlazaLook {
   const R = rng(((seed >>> 0) * 977 + regionId * 131 + 5) >>> 0);
-  const pavings: PlazaLook['paving'][] = ['anillo', 'rosa', 'damero', null];
-  const paving = big ? pavings[Math.floor(R() * 3)] : pavings[Math.floor(R() * 4)];
+  // (El damero se probó y se leía como la rejilla de «transparente» de un editor: fuera.)
+  const pavings: PlazaLook['paving'][] = ['anillo', 'rosa', null];
+  const paving = big ? pavings[Math.floor(R() * 2)] : pavings[Math.floor(R() * 3)];
   const pool: (DecorKind | 'guirnalda')[] = ['arbol', 'jardinera', 'mesa', 'estandarte', 'guirnalda'];
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(R() * (i + 1));

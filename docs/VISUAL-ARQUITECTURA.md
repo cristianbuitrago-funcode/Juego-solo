@@ -49,13 +49,16 @@ PINTURA EN CACHÉ (visual/paint.ts → tex(): texturas con presupuesto de memori
                                                              estructuras, interiores
    ↓
 COMPOSICIÓN (render/scene.ts, render/chunks.ts)
-   cámara, culling por fragmentos y vista, LOD, orden en profundidad, pasada de sombras,
-   luces, gradación, clima (visual/weather.ts), etiquetas
+   cámara, culling por fragmentos y vista, LOD, orden en profundidad (pasada de suelo →
+   sombras → objetos), clima (visual/weather.ts), etiquetas
+   ├─ render/lighting.ts   noche (oscuridad con huecos, halos a media resolución, reflejos,
+   │                       núcleos) y gradación por franjas; recibe luces, cámara y tamaño
+   └─ render/furniture.ts  colisión fina del jugador con el mobiliario y carácter de cada plaza
 ```
 
 | Módulo | Qué hace |
 | --- | --- |
-| `visual/quality.ts` | Niveles LOW/MEDIUM/HIGH/ULTRA (dpr, resolución de figuras, objetos y suelo, sombras, partículas, gentío, luces, distancias de LOD, hierba, gradación, presupuesto de texturas), detección del dispositivo y bajada automática de nivel si el p95 de fotograma pasa de 22 ms. |
+| `visual/quality.ts` | Niveles LOW/MEDIUM/HIGH/ULTRA (dpr, resolución de figuras, objetos y suelo, sombras, partículas, gentío, luces, distancias de LOD, hierba, gradación, presupuesto de texturas), detección del dispositivo y nivel adaptativo: baja si el p95 del tiempo de dibujo pasa de 16 ms o si el intervalo entre fotogramas empeora un 40 % respecto al mejor visto (carga de GPU); sube tras dos ventanas tranquilas. Al cambiar de nivel no se vacía el caché: las claves llevan la resolución. |
 | `visual/paint.ts` | Color (mezcla, luz cálida, sombra violácea), degradados, curvas suaves, `tex()` con presupuesto y LRU, `silhouette()` para sombras. |
 | `visual/light.ts` | Sol por hora y tiempo (dirección, longitud con un único tope `SHADOW_MAX`, opacidad), sombra proyectada afín y sombra de contacto en textura. |
 | `visual/figure/` | `body.ts` proporciones por edad y complexión; `rig.ts` de la acción al esqueleto; `head.ts` rostro con 12 expresiones, pelo, sombreros, capucha; `clothes.ts` ropa y objetos; `figure.ts` composición, mezcla entre acciones (0,22 s) y giros, objeto según la acción, figura tumbada, LOD estatua, sombras; `portrait.ts` retratos. |
@@ -64,6 +67,9 @@ COMPOSICIÓN (render/scene.ts, render/chunks.ts)
 | `visual/env/flora.ts` | Árboles pintados por valores (sombra, medio tono, luces, pinceladas de hoja), pinos por pisos, estaciones, viento, oclusión con silueta del jugador. |
 | `visual/env/buildings.ts` | Casas y edificios con volumen, estados (normal, deteriorada, quemada, destruida, obra, restaurada, abandonada), riqueza y variante nevada. |
 | `visual/env/props.ts`, `structures.ts`, `interiors.ts` | Mobiliario, puestos, animales, fuente animada; montañas, puestos fronterizos, barricadas, lugares, carros, mojones; viñetas de interiores animadas con quien está dentro. |
+| `visual/env/plaza.ts` | Lo que distingue cada plaza (solo aspecto, determinista por semilla y región): pavimento con dibujo recortado al empedrado, árbol en alcorque, jardineras de temporada, terrazas, estandartes, guirnaldas entre faroles. |
+| `render/lighting.ts` | `Lighting.night()` y `drawGrade()`: la oscuridad de luna se normaliza (la simulación da 0–0,62), los huecos de luz nunca borran la noche del todo, los halos se suman en una capa a media resolución y la viñeta nocturna va dentro de la capa oscura. |
+| `render/furniture.ts` | Elipses de colisión (fuente, pozo, estatua, bancos, puestos, adornos) que frenan solo al jugador; al aparecer dentro de un mueble, se le aparta. |
 | `visual/weather.ts` | Lluvia en tres capas de profundidad, salpicaduras, tormenta, nieve, niebla en bancos, viento con hojas. |
 | `ui/icons.ts`, `theme.css` | Iconos propios (SVG de tinta y oro) que sustituyen a los emojis en toda la interfaz; tema de pergamino con tipografía Alegreya empaquetada. |
 
