@@ -197,8 +197,10 @@ function paintGrade(g: CanvasRenderingContext2D, h: number, weather: string, W: 
   M(170, 110, 160, dusk * 0.12);
   // Lluvia y tormenta: menos luz y más fría.
   // (gris azulado: apaga a la vez la luz y el color, sin una pasada aparte de saturación)
-  M(118, 130, 150, rain ? (weather === 'tormenta' ? 0.66 : 0.55) : grey * 0.28);
-  if (weather === 'nieve') Sc(200, 215, 235, 0.04);
+  const snow = weather === 'nieve';
+  M(118, 130, 150, rain ? (weather === 'tormenta' ? 0.66 : 0.55) : snow ? 0 : grey * 0.28);
+  // La nieve devuelve la luz: día frío y claro, no gris sucio (el manto no debe verse malva).
+  if (snow) M(206, 218, 240, 0.24), Sc(225, 235, 250, 0.07);
   // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
   // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
   let drew = overMultiply(g, mul[0], mul[1], mul[2], W, H);

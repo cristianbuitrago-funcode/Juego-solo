@@ -986,7 +986,8 @@ export class WorldScene {
     const vw = this.vw / this.cam.z;
     const vh = this.vh / this.cam.z;
     this.birds = this.birds.filter((b) => Math.abs(b.x - this.cam.x) < vw && Math.abs(b.y - this.cam.y) < vh);
-    if (this.birds.length < want && Math.random() < dt * 0.4) {
+    // Una bandada de vez en cuando, no una nube constante sobre la gente.
+    if (this.birds.length < want && Math.random() < dt * 0.12) {
       const dir = Math.random() < 0.5 ? 1 : -1;
       const y0 = this.cam.y - vh * 0.4 + Math.random() * vh * 0.5;
       for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) this.birds.push({ x: this.cam.x - dir * (vw * 0.55 + i * 14), y: y0 + (i % 2) * 9 + i * 4, vx: dir * (55 + Math.random() * 10), ph: Math.random() * 6 });
@@ -1294,6 +1295,7 @@ export class WorldScene {
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
     roadTraffic(this, items, inView, t);
     // Vecinos: figura completa cerca, simplificada a media distancia, silueta lejos.
+    const anvils: { x: number; y: number }[] = [];
     for (const [id, e] of this.ents) {
       if (e.inside || !inView(e.x * TILE, e.y * TILE)) continue;
       const f = this.folkById.get(id);
@@ -1301,8 +1303,11 @@ export class WorldScene {
       const ap = this.dress(this.apOf(f), wet, cold);
       e.stride = strideOf(ap, false);
       const pose = this.entPose(id, e, f, sec, wet, cold);
+      // Un yunque por forja: quien llega después a la misma ayuda acarreando, no forma una fila de yunques.
+      if (pose.action === 'hammer' && anvils.some((a) => Math.abs(a.x - e.x) < 2.6 && Math.abs(a.y - e.y) < 1.6)) pose.action = 'carry';
       this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
       if (pose.action === 'hammer') {
+        anvils.push(e);
         // El yunque delante, donde cae el martillo.
         const ax = e.x * TILE + (pose.flip ? -12 : 12);
         const ay = e.y * TILE + 1;
@@ -1672,7 +1677,9 @@ export class WorldScene {
           this.shadowQ.push(() => drawTreeShadow(g, kind, season, d.v, dx, dy, sun, snowRoofs));
           items.push({ y: dy, draw: () => void (drawTree(g, kind, season, d.v, dx, dy, sec, windK, snowRoofs, focus) && (this.playerHidden = true)) });
         } else {
-          const tx = d.kind === 'jardinera' ? planterTex(season, d.v) : d.kind === 'mesa' ? tableTex((hue + 20) % 360, d.v) : bannerTex(hue, regionId);
+          // Nevando, las jardineras se ven en su versión de invierno y las mesas con su capa de nieve.
+          const tx0 = d.kind === 'jardinera' ? planterTex(snowRoofs ? 'invierno' : season, d.v) : d.kind === 'mesa' ? tableTex((hue + 20) % 360, d.v) : bannerTex(hue, regionId);
+          const tx = snowRoofs && d.kind === 'mesa' ? snowCapped(tx0, -tx0.ay + tx0.h * 0.3) : tx0;
           if (d.kind === 'estandarte' || d.kind === 'mesa') this.shadowQ.push(() => castShadow(g, silhouette(tx), tx.w, tx.h, tx.ax, tx.ay, dx, dy, this.sun, 0.45));
           else this.shadowQ.push(() => contactShadow(g, dx, dy, tx.w * 0.5, 3, 0.35));
           items.push({ y: dy, draw: () => put(g, tx, dx, dy) });
@@ -1898,8 +1905,9 @@ export class WorldScene {
       g.ellipse(b.x + 10, b.y + 26, 2.2, 0.8, 0, 0, Math.PI * 2);
       g.fill();
     }
-    g.strokeStyle = 'rgba(40,34,36,0.85)';
-    g.fillStyle = 'rgba(40,34,36,0.9)';
+    // Algo atenuadas por la distancia (están en lo alto), para no leerse como flechas.
+    g.strokeStyle = 'rgba(52,46,50,0.6)';
+    g.fillStyle = 'rgba(52,46,50,0.62)';
     g.lineWidth = 0.7;
     for (const b of this.birds) {
       // Silueta de ave, no una «m»: cuerpo fusiforme con cola y alas rellenas que baten.

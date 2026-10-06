@@ -9,7 +9,7 @@ import { plazaLook, type PlazaLook } from '../visual/env/plaza';
  * plaza. Solo afecta al jugador en la escena: la simulación sigue usando teselas.
  */
 export class Furniture {
-  private solids = new Map<object, { x: number; y: number; rx: number; ry: number }[]>();
+  private solids = new Map<object, { x: number; y: number; rx: number; ry: number; tall?: number; wide?: number }[]>();
   private plazas = new Map<number, PlazaLook>();
 
   constructor(
@@ -40,7 +40,8 @@ export class Furniture {
   /** Si aparece dentro de un mueble, se le lleva al sitio libre más cercano (preferiblemente delante). */
   unstick(me: { x: number; y: number }, wide = false): void {
     // El cuerpo ocupa algo más que un punto: se mira un poco a cada lado.
-    const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3)));
+    // Al llegar, además, que no quede justo detrás de algo alto (farol, árbol, estandarte) que lo tape.
+    const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y)));
     if (clear(me.x, me.y)) return;
     const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
     for (let r = 0.25; r <= 3; r += 0.25)
@@ -63,6 +64,22 @@ export class Furniture {
    * dentro de la fuente o atravesaba los bancos.
    */
   solidAt(x: number, y: number): boolean {
+    for (const c of this.near(x, y)) {
+      const ex = (x - c.x) / c.rx;
+      const ey = (y - c.y) / c.ry;
+      if (ex * ex + ey * ey < 1) return true;
+    }
+    return false;
+  }
+
+  /** ¿Taparía al jugador en (x, y) algo alto que está justo delante (más abajo en pantalla)? */
+  hiddenAt(x: number, y: number): boolean {
+    // `tall`: cuánto sube el objeto en teselas; `wide`: media anchura de lo que tapa (la copa de un árbol, el farol).
+    for (const c of this.near(x, y)) if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6)) return true;
+    return false;
+  }
+
+  private *near(x: number, y: number): Generator<{ x: number; y: number; rx: number; ry: number; tall?: number; wide?: number }> {
     for (const v of this.l().villages) {
       const reach = v.plazaR + 3;
       if (Math.abs(x - v.cx) > reach || Math.abs(y - v.cy) > reach) continue;
@@ -76,19 +93,16 @@ export class Furniture {
         list = [];
         for (const p of v.props) {
           const f = F[p.kind];
-          if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
+          if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1], tall: TALL[p.kind], wide: TALL[p.kind] && 0.7 });
         }
         for (const st of v.stalls) if (Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6) list.push({ x: st.x, y: st.y - 0.45, rx: 1.25, ry: 0.55 });
         const D = { arbol: [0.75, 0.4], jardinera: [0.85, 0.3], mesa: [1.15, 0.4], estandarte: [0.25, 0.15] } as const;
-        for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1] });
+        for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1], tall: d.kind === 'arbol' ? 3.2 : d.kind === 'estandarte' ? 2.4 : undefined, wide: d.kind === 'arbol' ? 1.5 : 0.6 });
         this.solids.set(v, list);
       }
-      for (const c of list) {
-        const ex = (x - c.x) / c.rx;
-        const ey = (y - c.y) / c.ry;
-        if (ex * ex + ey * ey < 1) return true;
-      }
+      yield* list;
     }
-    return false;
   }
 }
+
+const TALL: Partial<Record<string, number>> = { farol: 2.4, cartel: 1.6, estatua: 2 };

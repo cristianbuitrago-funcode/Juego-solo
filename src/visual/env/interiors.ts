@@ -21,6 +21,8 @@ export interface InteriorPerson {
   flip?: boolean;
   /** Sitio fijo (no se reparte en filas de profundidad): alguien sentado a una mesa. */
   fixed?: boolean;
+  /** Tras la barra: más al fondo y con la barra delante (el posadero). */
+  behind?: boolean;
 }
 
 export interface InteriorOpts {
@@ -86,9 +88,11 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
     case 'posada':
       hearth(g, 18, floorY, fire);
       shelf(g, R, IW * 0.36, 30, 70, ['#8a5a2a', '#5a7a4a', '#a8a090', '#7a4a3a'], o.wealth);
+      for (const p of o.people) if (p.behind) person(g, p, o.t, k, 1.75, 40 + p.x * (IW - 80), floorY - 16); // asoma de cintura arriba
       counter(g, IW * 0.32, floorY, 120, P.wood);
       barrels(g, IW * 0.86, floorY, P.wood);
-      table(g, IW * 0.6, floorY + 16, 46, P.wood, true);
+      // La mesa entre los dos que beben sentados (a 0,36 y 0,62 del ancho).
+      table(g, 40 + 0.49 * (IW - 80), floorY + 24, 50, P.wood, true);
       break;
     case 'forja':
       forge(g, 22, floorY, fire);
@@ -120,23 +124,9 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
   }
   // Gente: de pie o sentada, en tamaño de «retrato de grupo».
   // Dos filas de profundidad (los de atrás, algo más pequeños y más arriba): un grupo, no una fila de cola.
-  const byX = [...o.people].sort((a, b) => a.x - b.x).map((p, i) => ({ p, back: !p.fixed && i % 2 === 1 && o.people.length > 2 }));
+  const byX = [...o.people].filter((p) => !p.behind).sort((a, b) => a.x - b.x).map((p, i) => ({ p, back: !p.fixed && i % 2 === 1 && o.people.length > 2 }));
   const sorted = [...byX.filter((q) => q.back), ...byX.filter((q) => !q.back)];
-  for (const { p, back } of sorted) {
-    const scale = back ? 1.8 : 2.1;
-    g.save();
-    const px = 40 + p.x * (IW - 80) + (back ? 10 : 0);
-    const py = IH - 6 - (back ? 16 : 0);
-    g.translate(px, py);
-    g.scale(scale, scale);
-    // Sombra en el suelo.
-    g.fillStyle = 'rgba(20,12,8,0.35)';
-    g.beginPath();
-    g.ellipse(0, 0, 8, 2.2, 0, 0, Math.PI * 2);
-    g.fill();
-    drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: o.t + p.x * 7, expr: p.expr, lod: 0 }, 0, 0, { res: k * scale });
-    g.restore();
-  }
+  for (const { p, back } of sorted) person(g, p, o.t, k, back ? 1.8 : 2.1, 40 + p.x * (IW - 80) + (back ? 10 : 0), IH - 6 - (back ? 16 : 0));
   // Luz: el fuego o las velas calientan; la sala se oscurece en los bordes.
   const lx = kind === 'templo' || kind === 'salon' ? IW / 2 : kind === 'almacen' ? wx + 20 : 40;
   const flick = 1 + Math.sin(fire / 120) * 0.05 + Math.sin(fire / 47) * 0.03;
@@ -153,6 +143,19 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
   v.addColorStop(1, o.night ? 'rgba(10,6,4,0.7)' : 'rgba(10,6,4,0.5)');
   g.fillStyle = v;
   g.fillRect(0, 0, IW, IH);
+}
+
+function person(g: CanvasRenderingContext2D, p: InteriorPerson, t: number, k: number, scale: number, px: number, py: number): void {
+  g.save();
+  g.translate(px, py);
+  g.scale(scale, scale);
+  // Sombra en el suelo.
+  g.fillStyle = 'rgba(20,12,8,0.35)';
+  g.beginPath();
+  g.ellipse(0, 0, 8, 2.2, 0, 0, Math.PI * 2);
+  g.fill();
+  drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: t + p.x * 7, expr: p.expr, lod: 0 }, 0, 0, { res: k * scale });
+  g.restore();
 }
 
 const PALETTE: Record<InteriorKind, { wall: string; wood: string; floor: string; stone?: boolean }> = {

@@ -522,14 +522,16 @@ export class App {
     // Los momentos que merecen cartel (llegar a un sitio nuevo, descubrirse, una nueva
     // generación) merecen plano de cine; el amanecer de cada día, no.
     if (!cine) return;
-    this.scene?.cinematic({ seconds: 3.4 });
+    this.scene?.cinematic({ seconds: 3.6 }); // franjas abiertas hasta ~2,7 s, cerradas a 3,6 s
     this.stage.classList.add('cine');
     // Al llegar a un sitio, lo que se susurraba antes (p. ej. «hay humo hacia allí») ya no vale.
     if (/^(Llegas|De vuelta)/.test(top)) this.whisperBox?.replaceChildren();
     // Un solo temporizador: si llega otro cartel, el HUD no reaparece a mitad del plano.
     window.clearTimeout(this.cineTimer);
-    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3650); // después de que el rótulo se vaya (3,6 s): no salta arriba al final
-    window.setTimeout(() => b.remove(), 3600);
+    // El rótulo se ha ido a 2,8 s (antes de que se cierren las franjas); el HUD vuelve
+    // mientras se cierran, sin un hueco vacío al final.
+    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3150);
+    window.setTimeout(() => b.remove(), 3000);
   }
 
   // -------------------------------------------------------------------------
