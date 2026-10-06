@@ -289,9 +289,10 @@ export class ChunkCache {
           const rg = region[k];
           if (snowA && rg >= 0 && snowReg[rg]) {
             // Más fina en caminos y plazas (pisada), con claros donde el viento la barre.
-            const trod = t === T.Road || t === T.Plaza || t === T.Bridge ? 0.45 : 1;
+            const trod = t === T.Road || t === T.Plaza || t === T.Bridge ? 0.78 : 1;
             const patch = vnoise(wx / 21 + 13, wy / 21 + 7);
-            snowA[py * BP + px] = Math.round(255 * Math.max(0, Math.min(1, (0.55 + patch * 0.7) * trod)));
+            const fine = vnoise(wx / 5 + 3, wy / 5 + 9);
+            snowA[py * BP + px] = Math.round(255 * Math.max(0, Math.min(1, (0.7 + patch * 0.5 - (trod < 1 ? fine * 0.25 : 0)) * trod)));
           }
         }
         d[q] = r;

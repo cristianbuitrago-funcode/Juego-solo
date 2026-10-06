@@ -133,6 +133,8 @@ let texBytes = 0;
 let frame = 0;
 
 export const nextFrame = () => frame++;
+/** Número del fotograma en curso (lo avanza la escena con `nextFrame`). */
+export const frameNo = () => frame;
 export const texStats = () => ({ count: texCache.size, mb: texBytes / 1048576 });
 
 /** Vacía todas las texturas (al cambiar de nivel gráfico). */

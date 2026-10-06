@@ -1,5 +1,5 @@
 import type { Appearance } from '../../render/appearance';
-import { put, tex, type Tex } from '../paint';
+import { frameNo, put, tex, type Tex } from '../paint';
 import { contactShadow } from '../light';
 import { VQ } from '../quality';
 import { bodyOf, type Body } from './body';
@@ -103,6 +103,7 @@ interface Mem {
   last: Rig | null;
   turn: number;
   multi: boolean; // se dibuja varias veces por fotograma (galería): sin mezcla
+  frame: number;
 }
 const BLEND = 0.22;
 const TURN = 0.14;
@@ -116,13 +117,16 @@ function blended(g: CanvasRenderingContext2D, ap: Appearance, pose: Pose, B: Bod
   const key = pose.action;
   const t = pose.t;
   let m = byCtx.get(ap);
-  if (m && t === m.t && (m.key !== key || m.facing !== facing)) m.multi = true;
+  const fr = frameNo();
+  // La misma persona dibujada dos veces en un fotograma con otra acción (galería): sin mezcla.
+  if (m && m.frame === fr && (m.key !== key || m.facing !== facing)) m.multi = true;
   if (m?.multi) return { R: target, squash: 1 };
   if (!m || t < m.t || t - m.t > 0.5) {
-    m = { key, facing, t, from: null, since: -9, last: target, turn: -9, multi: false };
+    m = { key, facing, t, from: null, since: -9, last: target, turn: -9, multi: false, frame: fr };
     byCtx.set(ap, m);
     return { R: target, squash: 1 };
   }
+  m.frame = fr;
   if (m.key !== key) {
     m.from = m.last;
     m.since = t;
@@ -398,6 +402,8 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
 
   const [L0, L1] = R.legs;
   const [A0, A1] = R.arms;
+  // Sentado: siempre sobre algo (un taburete de tres patas), nunca en el aire.
+  if (R.sitting > 0.5) stool(g, B, hipY, side);
   if (f === 'front') {
     cape();
     hairBack();
@@ -431,6 +437,27 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
     capeFront();
     arm(A1, 1, false, true);
   }
+}
+
+function stool(g: CanvasRenderingContext2D, B: Body, hipY: number, side: boolean): void {
+  const top = hipY + 0.6;
+  const w = B.hip * (side ? 1.6 : 2.1);
+  g.strokeStyle = '#5a3e26';
+  g.lineWidth = 0.9;
+  g.beginPath();
+  g.moveTo(-w * 0.7, 0);
+  g.lineTo(-w * 0.45, top + 1);
+  g.moveTo(w * 0.7, 0);
+  g.lineTo(w * 0.45, top + 1);
+  g.moveTo(0, 0.4);
+  g.lineTo(0, top + 1);
+  g.stroke();
+  g.fillStyle = '#8a6440';
+  g.beginPath();
+  g.ellipse(0, top + 0.6, w * 0.62, 1.2, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#6a4a2e';
+  g.fillRect(-w * 0.62, top + 0.6, w * 1.24, 0.9);
 }
 
 /** LOD lejano: la figura entera en una sola imagen, de pie (con un leve vaivén al andar). */
