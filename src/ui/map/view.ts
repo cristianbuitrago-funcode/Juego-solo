@@ -198,14 +198,21 @@ export class MapView {
         [r, g, b] = e === 3 ? [178, 196, 196] : [90 * s, 122 * s, 136 * s];
       } else {
         const c = lut[id];
-        const s = 0.88 + gr * 0.2;
+        // Acuarela: el pigmento se acumula en manchas (más contraste de grano).
+        const s = 0.84 + gr * 0.26;
         r = c[0] * s;
         g = c[1] * s;
         b = c[2] * s;
         if (fog[id]) {
+          // Lo desconocido: niebla pintada (nubes de bruma), no un rayado técnico.
           const x = k % BW;
           const y = (k / BW) | 0;
-          if ((x + y) % 7 === 0) (r *= 0.75), (g *= 0.75), (b *= 0.75);
+          const cloud = fbm(x / 22, y / 22, w.seed + 77, 3);
+          const m = Math.min(1, 0.55 + cloud * 0.5);
+          const curl = Math.abs(cloud - 0.5) < 0.025 ? 0.86 : 1; // vetas suaves en la bruma
+          r = (r * (1 - m) + 226 * m) * curl;
+          g = (g * (1 - m) + 222 * m) * curl;
+          b = (b * (1 - m) + 212 * m) * curl;
         }
         if (e === 1) {
           // Entre dueños distintos la frontera se marca más (y cambia si cambia el dueño).
@@ -447,7 +454,7 @@ export class MapView {
       g.arc(p.x, p.y, 6, 0, Math.PI * 2);
       g.fill();
       g.stroke();
-      g.font = '700 12px Georgia, serif';
+      g.font = '700 13px Alegreya, Georgia, serif';
       g.textAlign = 'center';
       g.textBaseline = 'bottom';
       g.lineWidth = 3;
@@ -456,7 +463,12 @@ export class MapView {
       g.fillStyle = '#2b1e15';
       g.fillText('Estás aquí', p.x, p.y - 12);
     }
+    // Marco de pergamino: los bordes del mapa se oscurecen y amarillean.
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    if (!this.frameTex || this.frameTex.width !== Math.round(cw) || this.frameTex.height !== Math.round(ch)) this.frameTex = parchmentFrame(Math.round(cw), Math.round(ch));
+    g.drawImage(this.frameTex, 0, 0, cw, ch);
   }
+  private frameTex: HTMLCanvasElement | null = null;
 
   private drawRiver(g: CanvasRenderingContext2D): void {
     if (this.riverPath.length < 2) return;
@@ -672,7 +684,7 @@ export class MapView {
       g.rect(x - size, y - size, size * 2, size * 2);
       g.fill();
       g.stroke();
-      g.font = '600 11px Georgia, serif';
+      g.font = '600 11px Alegreya, Georgia, serif';
       g.fillStyle = '#2b1e15';
       g.fillText(s.name, x, y + size + 9);
     }
@@ -683,7 +695,7 @@ export class MapView {
     // Nombres de los estados (capa «Estados»).
     if (this.layer === 'estados' && w.life?.society) for (const st of statesOf(w)) if (st.regions.length > 1 && known(st.capital)) {
       const c = w.regions[st.capital].center;
-      g.font = '700 15px Georgia, serif';
+      g.font = '700 15px Alegreya, Georgia, serif';
       g.lineWidth = 4;
       g.strokeStyle = 'rgba(244,233,206,0.9)';
       g.strokeText(st.name, c.x, c.y + 44);
@@ -845,7 +857,7 @@ export class MapView {
       g.stroke();
       // Nombre.
       const name = intel.level === 0 ? '¿?' : r.name;
-      g.font = `${r.isHome ? 700 : 600} ${r.isHome ? 15 : 14}px Georgia, 'Times New Roman', serif`;
+      g.font = `${r.isHome ? 700 : 600} ${r.isHome ? 15 : 14}px Alegreya, Georgia, serif`;
       g.textAlign = 'center';
       g.textBaseline = 'top';
       // Evita que las etiquetas se pisen: prueba debajo, más abajo y encima.
@@ -880,5 +892,54 @@ export class MapView {
       }
     }
   }
+}
+
+/** Bordes de pergamino envejecido (se pinta una vez por tamaño de pantalla). */
+function parchmentFrame(W: number, H: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d')!;
+  const v = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.72);
+  v.addColorStop(0, 'rgba(60,40,20,0)');
+  v.addColorStop(0.75, 'rgba(70,46,22,0.18)');
+  v.addColorStop(1, 'rgba(48,30,14,0.55)');
+  g.fillStyle = v;
+  g.fillRect(0, 0, W, H);
+  // Filete doble tinta y oro.
+  g.strokeStyle = 'rgba(43,30,21,0.55)';
+  g.lineWidth = 2;
+  g.strokeRect(7, 7, W - 14, H - 14);
+  g.strokeStyle = 'rgba(201,160,82,0.7)';
+  g.lineWidth = 1;
+  g.strokeRect(11, 11, W - 22, H - 22);
+  // Rosa de los vientos en una esquina.
+  const x = W - 46;
+  const y = H - 96;
+  g.save();
+  g.translate(x, y);
+  g.globalAlpha = 0.75;
+  g.strokeStyle = 'rgba(43,30,21,0.8)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.arc(0, 0, 20, 0, Math.PI * 2);
+  g.stroke();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+    const L = i % 2 ? 13 : 26;
+    g.fillStyle = i % 2 ? 'rgba(201,160,82,0.9)' : i === 0 ? 'rgba(160,50,30,0.95)' : 'rgba(43,30,21,0.85)';
+    g.beginPath();
+    g.moveTo(Math.cos(a) * L, Math.sin(a) * L);
+    g.lineTo(Math.cos(a + 0.3) * 4, Math.sin(a + 0.3) * 4);
+    g.lineTo(Math.cos(a - 0.3) * 4, Math.sin(a - 0.3) * 4);
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = 'rgba(43,30,21,0.9)';
+  g.font = '700 11px Alegreya, Georgia, serif';
+  g.textAlign = 'center';
+  g.fillText('N', 0, -30);
+  g.restore();
+  return c;
 }
 

@@ -214,15 +214,50 @@ function roof(g: CanvasRenderingContext2D, R: () => number, x0: number, top: num
     }
     return tall;
   }
-  // Faldón lateral (en sombra).
-  g.fillStyle = vgrad(g, top - tall, top, [[0, shd(c, 0.25)], [1, shd(c, 0.45)]]);
+  // Faldón lateral (en sombra), con sus hileras de tejas: es tejado, no una tabla.
+  const sidePath = () => {
+    g.beginPath();
+    g.moveTo(x0 + W - 6, top - tall);
+    g.lineTo(x0 + W - 6 + DEPTH, top - tall - DY);
+    g.lineTo(x0 + W + over + DEPTH, top + 2 - DY);
+    g.lineTo(x0 + W + over, top + 2);
+    g.closePath();
+  };
+  g.fillStyle = vgrad(g, top - tall, top, [[0, shd(c, 0.16)], [1, shd(c, 0.32)]]);
+  sidePath();
+  g.fill();
+  g.save();
+  sidePath();
+  g.clip();
+  const srows = kind === 'alto' ? 10 : 7;
+  for (let r = 1; r <= srows; r++) {
+    const f = r / srows;
+    // Cada hilera es paralela al alero lateral, subiendo hacia la cumbrera.
+    const ax = x0 + W + over - (over + 6) * f;
+    const ay = top + 2 - (tall + 2) * f;
+    g.strokeStyle = alpha(shd(c, 0.55), 0.55);
+    g.lineWidth = 0.9;
+    g.beginPath();
+    g.moveTo(ax, ay);
+    g.lineTo(ax + DEPTH, ay - DY);
+    g.stroke();
+    g.strokeStyle = alpha(lit(c, 0.05), 0.35);
+    g.lineWidth = 0.5;
+    g.beginPath();
+    g.moveTo(ax - 0.3, ay - 1.2);
+    g.lineTo(ax - 0.3 + DEPTH, ay - 1.2 - DY);
+    g.stroke();
+  }
+  g.restore();
+  // Cumbrera lateral (arista entre los dos faldones).
+  g.strokeStyle = shd(c, 0.45);
+  g.lineWidth = 1.6;
   g.beginPath();
   g.moveTo(x0 + W - 6, top - tall);
-  g.lineTo(x0 + W - 6 + DEPTH, top - tall - DY);
-  g.lineTo(x0 + W + over + DEPTH, top + 2 - DY);
   g.lineTo(x0 + W + over, top + 2);
-  g.closePath();
-  g.fill();
+  g.moveTo(x0 + W - 6, top - tall);
+  g.lineTo(x0 + W - 6 + DEPTH, top - tall - DY);
+  g.stroke();
   // Faldón delantero.
   const front = () => {
     g.beginPath();

@@ -1,4 +1,5 @@
 import './styles.css';
+import './theme.css';
 import { App } from './ui/app';
 import { watchIcons } from './ui/icons';
 

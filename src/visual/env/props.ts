@@ -310,27 +310,71 @@ export function stallTex(full: boolean, color: string, v = 0, goods?: string[]):
 }
 
 export function tentTex(color: string): Tex {
-  return tex(`tent2:${color}`, 40, 30, 20, 28, (g) => {
-    g.fillStyle = vgrad(g, 0, 28, [[0, lit(color, 0.2)], [1, shd(color, 0.3)]]);
+  // Tienda de lona en volumen: faldón delantero con luz, lateral en sombra,
+  // lona que se comba entre palos, costuras, vientos con estacas y la
+  // entrada recogida con su interior oscuro.
+  return tex(`tent3:${color}`, 48, 34, 22, 31, (g) => {
+    const R = rng(color.length * 13);
+    // Vientos (cuerdas) y estacas.
+    g.strokeStyle = 'rgba(70,56,40,0.75)';
+    g.lineWidth = 0.4;
     g.beginPath();
-    g.moveTo(-18, 0);
-    g.lineTo(0, -26);
-    g.lineTo(18, 0);
-    g.closePath();
-    g.fill();
-    g.fillStyle = shd(color, 0.35);
+    g.moveTo(0, -27);
+    g.lineTo(-21, 1);
+    g.moveTo(0, -27);
+    g.lineTo(23, -2);
+    g.stroke();
+    post(g, -21.5, -1, 1, 2.5, '#5a3c24');
+    post(g, 22.5, -4, 1, 2.5, '#5a3c24');
+    // Lateral (fondo, en sombra).
+    g.fillStyle = vgrad(g, -27, 0, [[0, shd(color, 0.3)], [1, shd(color, 0.48)]]);
     g.beginPath();
-    g.moveTo(0, -26);
-    g.lineTo(18, 0);
-    g.lineTo(6, 0);
+    g.moveTo(0, -27);
+    g.lineTo(9, -30);
+    g.quadraticCurveTo(17, -14, 25, -3);
+    g.lineTo(17, 0);
+    g.quadraticCurveTo(9, -12, 0, -27);
     g.fill();
-    g.fillStyle = '#1e1612';
+    // Faldón delantero: la lona se comba un poco entre el palo y el suelo.
+    g.fillStyle = vgrad(g, -27, 0, [[0, lit(color, 0.22)], [0.6, color], [1, shd(color, 0.2)]]);
     g.beginPath();
-    g.moveTo(-5, 0);
-    g.lineTo(0, -15);
-    g.lineTo(5, 0);
+    g.moveTo(0, -27);
+    g.quadraticCurveTo(-7, -12, -18, 0);
+    g.quadraticCurveTo(0, 1.5, 17, 0);
+    g.quadraticCurveTo(8, -12, 0, -27);
     g.fill();
-    post(g, -0.8, -29, 1.6, 4, '#5a3c24');
+    // Pliegues y costuras.
+    g.strokeStyle = alpha(shd(color, 0.4), 0.55);
+    g.lineWidth = 0.45;
+    for (const x of [-11, -5, 6, 11]) {
+      g.beginPath();
+      g.moveTo(x * 0.15, -25);
+      g.quadraticCurveTo(x * 0.55 + (R() - 0.5), -12, x, -0.5);
+      g.stroke();
+    }
+    g.strokeStyle = alpha(lit(color, 0.3), 0.5);
+    g.beginPath();
+    g.moveTo(-1, -26);
+    g.quadraticCurveTo(-6, -13, -15, -1);
+    g.stroke();
+    // Entrada recogida: interior oscuro y la tela doblada a los lados.
+    g.fillStyle = '#1a120e';
+    g.beginPath();
+    g.moveTo(0, -17);
+    g.quadraticCurveTo(-3.5, -8, -5.5, 0.5);
+    g.lineTo(5.5, 0.5);
+    g.quadraticCurveTo(3.5, -8, 0, -17);
+    g.fill();
+    g.fillStyle = shd(color, 0.15);
+    g.beginPath();
+    g.moveTo(0, -17);
+    g.quadraticCurveTo(-5, -7, -8.5, 0.6);
+    g.lineTo(-5.5, 0.5);
+    g.quadraticCurveTo(-3.5, -8, 0, -17);
+    g.fill();
+    // Palo y remate.
+    post(g, -0.6, -31, 1.2, 5, '#5a3c24');
+    ell(g, 0, -31, 1, 0.8, '#c9a65a');
   });
 }
 

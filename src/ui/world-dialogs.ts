@@ -5,6 +5,10 @@ import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { appearanceOf } from '../render/appearance';
 import { drawPortrait } from '../visual/figure/portrait';
+import { IH, IW, paintInterior, type InteriorKind, type InteriorPerson } from '../visual/env/interiors';
+import { darkness } from '../world/clock';
+import { marketOf } from '../world/economy';
+import type { Action, Expr } from '../visual/figure/types';
 import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';
@@ -49,12 +53,53 @@ interface Choice {
 /** Caja de diálogo al estilo de los juegos de rol. */
 export function dialogue(app: App, title: string, subtitle: string, lines: string[], choices: Choice[], portrait?: HTMLCanvasElement): () => void {
   let close = () => {};
+  // Dentro de un edificio, la cabecera es una viñeta pintada del interior.
+  const room = !portrait && interiorCtx ? interiorCanvas(app, interiorCtx.kind, interiorCtx.regionId) : null;
+  const isExit = (c: Choice) => /^(Salir|Pensarlo|Seguir sin|Marcharse|Irte)/.test(c.label);
+  const hasExit = choices.some(isExit);
   close = app.modal(() => [
+    room,
     h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, title), subtitle ? h('div', { class: 'tiny' }, subtitle) : null)),
     ...lines.map((l) => h('p', { class: l.startsWith('«') || l.startsWith('—') ? 'quote' : '' }, l)),
-    h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
-  ], { cls: 'dialog' });
+    h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: isExit(c) ? 'btn exit' : `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+  ], { cls: `dialog ${hasExit ? 'has-exit' : ''} ${room ? 'with-room' : ''}` });
   return close;
+}
+
+// ---------------------------------------------------------------------------
+// Interiores: viñeta pintada y animada de la sala, con quien está dentro.
+// ---------------------------------------------------------------------------
+let interiorCtx: { kind: InteriorKind; regionId: number } | null = null;
+const ROOM_KINDS = new Set(['posada', 'forja', 'salon', 'templo', 'almacen', 'hogar']);
+
+function interiorCanvas(app: App, kind: InteriorKind, regionId: number): HTMLCanvasElement {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const c = h('canvas', { class: 'room', width: String(Math.round(IW * dpr)), height: String(Math.round(IH * dpr)) }) as HTMLCanvasElement;
+  const folk = life.folk.filter((f) => f.alive && f.regionId === regionId && f.age >= 14);
+  const pick = (roles: string[], n: number) => folk.filter((f) => roles.includes(f.role)).slice(0, n);
+  const cast: [string[], number, Action, Expr][] = {
+    posada: [[['posadero'], 1, 'talk', 'feliz'], [['campesino', 'pescador', 'pastor', 'lenador', 'minero'], 2, 'eat', 'neutral'], [['comerciante'], 1, 'listen', 'desconfianza']],
+    forja: [[['artesano', 'carpintero'], 1, 'hammer', 'cansado']],
+    salon: [[['lider'], 1, 'talk', 'confiado'], [['guardia'], 1, 'idle', 'neutral'], [['anciano', 'comerciante'], 1, 'listen', 'preocupado']],
+    templo: [[['anciano', 'sanadora'], 2, 'listen', 'neutral']],
+    almacen: [[['comerciante'], 1, 'carry', 'neutral']],
+    hogar: [],
+  }[kind] as [string[], number, Action, Expr][];
+  const people: InteriorPerson[] = [];
+  for (const [roles, n, action, expr] of cast) for (const f of pick(roles, n)) people.push({ ap: appearanceOf(w, f), action, expr: expr === 'neutral' ? moodOf(w, f) : expr, x: 0, flip: people.length % 2 === 1 });
+  people.forEach((p, i) => (p.x = people.length === 1 ? 0.62 : 0.3 + (i / Math.max(1, people.length - 1)) * 0.6));
+  const opts = { night: darkness(life.clock) > 0.3, wealth: Math.max(0, Math.min(1, marketOf(w, regionId).prosperity)), people, t: 0 };
+  const t0 = performance.now();
+  const paint = () => {
+    opts.t = (performance.now() - t0) / 1000;
+    paintInterior(c, kind, opts);
+  };
+  paint();
+  // Unos pocos fotogramas por segundo: el fuego crepita y la gente respira.
+  const timer = window.setInterval(() => (c.isConnected ? paint() : window.clearInterval(timer)), 110);
+  return c;
 }
 
 const folkOf = (w: WorldState, id: string) => ensureLife(w).folk.find((f) => f.id === id);
@@ -422,13 +467,22 @@ function petition(app: App, petitionId: string): void {
 // Edificios
 // ---------------------------------------------------------------------------
 function building(app: App, regionId: number, kind: string): void {
+  if (visit(app, kind, regionId)) return;
+  interiorCtx = ROOM_KINDS.has(kind) ? { kind: kind as InteriorKind, regionId } : null;
+  try {
+    buildingInside(app, regionId, kind);
+  } finally {
+    interiorCtx = null;
+  }
+}
+
+function buildingInside(app: App, regionId: number, kind: string): void {
   const w = app.w!;
   const r = w.regions[regionId];
   const home = r.isHome;
   const life = ensureLife(w);
   const id = life.identity!;
   const stand = id.standing[regionId] ?? 0;
-  if (visit(app, kind, regionId)) return;
   switch (kind) {
     case 'hogar':
       if (home && !id.housed) {

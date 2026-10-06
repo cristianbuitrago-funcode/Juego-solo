@@ -242,12 +242,14 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       break;
     }
     case 'cry': {
+      // Las manos a la cara, la cabeza hundida y los hombros que tiemblan con el sollozo.
       const sob = pos(S(t * 5)) * 0.4;
-      r.arms[0] = { a: 0.8, b: 2.2, lift: 0.5 };
-      r.arms[1] = { a: 0.8, b: 2.2, lift: 0.5 };
-      r.head.nod = 0.22;
-      r.shrug = sob;
-      r.lean = 0.12;
+      r.arms[0] = { a: 1.0, b: 2.95, lift: 0.55 };
+      r.arms[1] = { a: 1.05, b: 2.9, lift: 0.55 };
+      r.head.nod = 0.3;
+      r.shrug = sob + 0.2;
+      r.lean = 0.16;
+      r.y = sob * 0.4;
       break;
     }
     case 'celebrate': {
@@ -262,11 +264,15 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
     case 'fight': {
       const c = (t * 2.2 + seed * 0.1) % 1;
       const hit = c < 0.2 ? c / 0.2 : 1 - (c - 0.2) / 0.8;
-      r.lean = 0.14 + hit * 0.1;
-      r.legs[0] = { a: -0.35, b: 0.15, lift: 0 };
-      r.legs[1] = { a: 0.4, b: -0.35, lift: 0 };
-      r.arms[1] = { a: 0.9 + hit * 0.8, b: 1.2 - hit * 1.1, lift: 0.4, fist: true };
-      r.arms[0] = { a: 0.9, b: 1.6, lift: 0.4, fist: true };
+      // Guardia alta con el brazo de atrás, golpe con el de delante y el peso que entra.
+      r.lean = 0.14 + hit * 0.14;
+      r.x = side ? hit * 1.2 : 0;
+      r.y = 0.4;
+      r.legs[0] = { a: -0.38, b: 0.2, lift: 0 };
+      r.legs[1] = { a: 0.45, b: -0.45, lift: 0.2 };
+      r.arms[1] = { a: 1.0 + hit * 0.75, b: 1.5 - hit * 1.35, lift: 0.4, fist: true };
+      r.arms[0] = { a: 1.25, b: 2.1, lift: 0.45, fist: true };
+      r.head.nod = -0.04;
       r.item = -hit * 0.9;
       break;
     }

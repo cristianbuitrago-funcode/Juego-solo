@@ -1,4 +1,5 @@
 import { geoOf, weatherIn } from '../world/geography';
+import { playerRegion } from '../world/society';
 import { warOf } from '../world/war';
 import { darkness } from '../world/clock';
 import { renderWorld } from './screens/world';
@@ -9,7 +10,7 @@ import { loadGame, saveGame } from '../core/save';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { WorldScene, type Target } from '../render/scene';
-import { clockText, dayOf, hourOf, seasonOf, weatherOf, yearOf } from '../world/clock';
+import { clockText, dayOf, hourOf, seasonOf, yearOf } from '../world/clock';
 import { wireWorld } from '../world';
 import { maybeSpawn } from '../world/encounters';
 import { getLayout } from '../world/layout';
@@ -466,8 +467,9 @@ export class App {
     const w = this.w;
     if (!w || !this.hud) return;
     const life = ensureLife(w);
-    const weather = weatherOf(w, w.day);
-    const wIcon = { despejado: hourOf(life.clock) > 20 || hourOf(life.clock) < 6 ? '🌙' : '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' }[weather];
+    // El tiempo que se ve en la escena (el de tu región), no el general.
+    const weather = (this.scene?.debugWeather ?? weatherIn(w, playerRegion(w))) as keyof typeof WICON;
+    const wIcon = weather === 'despejado' && (hourOf(life.clock) > 20 || hourOf(life.clock) < 6) ? '🌙' : WICON[weather] ?? '☀';
     const inv = life.player.inventory;
     const free = w.player.agents - w.missions.length - Object.values(w.intel).filter((i) => i.observerStationed).length;
     const id = life.identity;
@@ -478,8 +480,8 @@ export class App {
       h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` })), life.prologue?.objective ? h('small', { class: 'objective' }, life.prologue.objective) : null),
       h('div', { class: 'stats' },
         auth >= 5 ? h('span', { class: 'chip', title: 'Provisiones del pueblo' }, '🌾', String(Math.round(w.player.reserves))) : null,
-        needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(needs.coins)) : null,
-        h('span', { class: 'chip', title: 'Tu mochila' }, '🎒', `${inv.comida}·${inv.hierbas}`),
+        needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(Math.floor(needs.coins))) : null,
+        h('span', { class: 'chip', title: 'Comida · hierbas' }, '🍞', String(Math.floor(inv.comida)), h('span', { class: 'sep' }, '·'), '🌿', String(Math.floor(inv.hierbas))),
         life.society && cargoCount(playerEco(w)) > 0 ? h('span', { class: 'chip', title: 'Tu carga' }, playerEco(w).vehicle === 'carreta' ? '🛞' : playerEco(w).vehicle === 'mula' ? '🐴' : '📦', `${Math.round(cargoCount(playerEco(w)))}/${capacityOf(playerEco(w))}`) : null,
         needs && needs.hunger >= 0.6 ? h('span', { class: `chip ${needs.hunger >= 0.8 ? 'warn' : ''}`, title: 'Hambre' }, '🍞') : null,
         needs && needs.fatigue >= 0.65 ? h('span', { class: `chip ${needs.fatigue >= 0.85 ? 'warn' : ''}`, title: 'Cansancio' }, '💤') : null,
@@ -512,6 +514,10 @@ export class App {
     this.stage.querySelector('.banner')?.remove();
     const b = h('div', { class: 'banner' }, h('small', null, top), h('div', null, main));
     this.stage.append(b);
+    // Los momentos que merecen cartel también merecen plano de cine.
+    this.scene?.cinematic({ seconds: 3.4 });
+    this.stage.classList.add('cine');
+    window.setTimeout(() => this.stage?.classList.remove('cine'), 3200);
     window.setTimeout(() => b.remove(), 3600);
   }
 
@@ -523,14 +529,17 @@ export class App {
     audio.sfx('tap');
     this.diaryView = v;
     if (!this.diary) {
-      this.diary = h('section', { class: 'diary' });
+      this.diary = h('section', { class: `diary ${v === 'mapa' ? 'from-world' : ''}` });
       this.stage.append(this.diary);
+      // Transición mundo → mapa: la escena se aleja y se desenfoca mientras el mapa aparece.
+      if (v === 'mapa') this.stage.classList.add('to-map');
     }
     this.pause(true);
     this.renderDiary();
   }
 
   closeDiary(): void {
+    this.stage?.classList.remove('to-map');
     this.map?.destroy();
     this.map = null;
     this.sheet = null;
@@ -710,3 +719,5 @@ export class App {
 export function moodWord(m: WorldState['mood']): string {
   return { calma: 'calma', tension: 'tensión', crisis: 'crisis', descubrimiento: 'hallazgo' }[m];
 }
+
+const WICON = { despejado: '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' } as const;

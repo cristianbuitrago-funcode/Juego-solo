@@ -468,7 +468,11 @@ export class ChunkCache {
         const v2 = (v * 7) & 255;
         const kindOf = (): StaticObject['tree'] =>
           nearWater && v2 < 120 ? 'sauce' : res === 'hierro' || res === 'ambar' ? (v2 % 3 ? 'pino' : 'roble') : res === 'hierbas' ? (v2 % 4 === 0 ? 'abedul' : 'roble') : v2 % 6 === 0 ? 'abedul' : v2 % 9 === 0 ? 'pino' : 'roble';
-        if (t === T.Forest && p < 0.17) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
+        // Bosque con claros: la densidad sigue un ruido amplio (bosquetes espesos y calveros con luz).
+        const grove = vnoise(tx / 7 + 31, ty / 7 + 17);
+        const dens = grove < 0.33 ? 0.02 : grove < 0.5 ? 0.08 : 0.15;
+        if (t === T.Forest && p < dens) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
+        else if (t === T.Forest && grove < 0.33 && p > 0.82) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
         else if ((t === T.Grass || t === T.Meadow) && p < 0.018) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.965) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.9) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });

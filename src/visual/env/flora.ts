@@ -1,4 +1,4 @@
-import { alpha, blob, ell, lit, mix, put, rng, shd, silhouette, smoothPath, tex, type Tex } from '../paint';
+import { alpha, blob, css, ell, lit, mix, put, rng, shd, silhouette, smoothPath, tex, type Tex } from '../paint';
 import { VQ } from '../quality';
 import { contactShadow, type SunState } from '../light';
 
@@ -38,58 +38,69 @@ function specimen(v: number) {
   return { R, size: 0.85 + u * u * 0.75 + R() * 0.15, lean: (R() - 0.5) * 0.12, pal: Math.floor(R() * 4), shape: Math.floor(R() * 5) };
 }
 
-/** Copa de hojas en racimos (centro cx,cy; radios rx,ry). */
-function canopy(g: CanvasRenderingContext2D, R: () => number, cx: number, cy: number, rx: number, ry: number, pal: Pal, density = 1, airy = false): void {
-  // Masa de fondo en sombra.
-  const pts: number[] = [];
-  const n = 14;
+/** Contorno de follaje: una elipse con el borde festoneado en pequeños racimos redondos de hojas. */
+function leafy(g: CanvasRenderingContext2D, R: () => number, cx: number, cy: number, rx: number, ry: number, fill: string | CanvasGradient, bump: number): void {
+  const n = Math.max(8, Math.round(((rx + ry) * Math.PI) / Math.max(1.6, bump * 1.5)));
+  g.fillStyle = fill;
+  g.beginPath();
+  g.ellipse(cx, cy, rx * 0.9, ry * 0.9, 0, 0, Math.PI * 2);
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const k = 0.82 + R() * 0.3;
-    pts.push(cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k);
+    const a = (i / n) * Math.PI * 2 + R() * 0.2;
+    const x = cx + Math.cos(a) * rx * (0.86 + R() * 0.06);
+    const y = cy + Math.sin(a) * ry * (0.86 + R() * 0.06);
+    const r = bump * (0.8 + R() * 0.45);
+    g.moveTo(x + r, y);
+    g.arc(x, y, r, 0, Math.PI * 2);
   }
-  blob(g, pts, shd(pal[0], 0.25), 0.6);
-  // Racimos de atrás hacia delante: los de abajo y a la derecha, más oscuros.
-  const clusters = Math.round((airy ? 10 : 16) * density + rx * 0.25);
-  const order: { x: number; y: number; r: number }[] = [];
-  for (let i = 0; i < clusters; i++) {
+  g.fill('nonzero');
+}
+
+/**
+ * Copa de árbol pintada por valores, como se pinta a mano: una masa en
+ * sombra, encima la masa en tono medio desplazada hacia la luz (arriba a la
+ * izquierda), las luces arriba, y todo cubierto de pinceladas de hoja que
+ * le dan textura (nada de burbujas con brillo cada una).
+ */
+function canopy(g: CanvasRenderingContext2D, R: () => number, cx: number, cy: number, rx: number, ry: number, pal: Pal, density = 1, airy = false): void {
+  const bump = Math.max(1.6, rx * 0.11);
+  const dark = shd(pal[0], 0.28);
+  const mid = css(mix(pal[0], pal[1], 0.55));
+  // 1) Sombra: toda la copa, con algún lóbulo extra para romper la elipse.
+  leafy(g, R, cx, cy, rx, ry, dark, bump);
+  for (let i = 0; i < 3; i++) {
     const a = R() * Math.PI * 2;
-    const d = Math.sqrt(R()) * 0.78;
-    order.push({ x: cx + Math.cos(a) * rx * d, y: cy + Math.sin(a) * ry * d, r: (airy ? 0.22 : 0.3) * Math.min(rx, ry) * (0.7 + R() * 0.6) });
+    leafy(g, R, cx + Math.cos(a) * rx * 0.55, cy + Math.sin(a) * ry * 0.5, rx * (0.4 + R() * 0.15), ry * (0.38 + R() * 0.15), dark, bump);
   }
-  order.sort((a, b) => b.x + b.y - (a.x + a.y));
-  for (const c of order) {
-    const light = Math.max(0, Math.min(1, 0.45 - ((c.x - cx) / rx) * 0.4 - ((c.y - cy) / ry) * 0.55));
-    // Valores claros solo arriba a la izquierda; el resto, entre la sombra y el tono medio.
-    const base = light > 0.62 ? mix(pal[1], pal[2], (light - 0.62) * 1.6) : mix(pal[0], pal[1], light / 0.62);
-    const cp: number[] = [];
-    const m = 9;
-    for (let i = 0; i < m; i++) {
-      const a = (i / m) * Math.PI * 2;
-      const k = 0.75 + R() * 0.4;
-      cp.push(c.x + Math.cos(a) * c.r * k, c.y + Math.sin(a) * c.r * k * 0.86);
-    }
-    const gr = g.createRadialGradient(c.x - c.r * 0.4, c.y - c.r * 0.45, c.r * 0.1, c.x, c.y, c.r * 1.1);
-    gr.addColorStop(0, lit(base, 0.1 * light + 0.03));
-    gr.addColorStop(0.55, `rgb(${base.map(Math.round).join(',')})`);
-    gr.addColorStop(1, shd(base, 0.35));
-    blob(g, cp, gr, 0.55);
+  // 2) Tono medio, desplazado hacia la luz, en dos o tres lóbulos.
+  const lobes = airy ? 2 : 3;
+  for (let i = 0; i < lobes; i++) {
+    const ox = (-0.14 + (R() - 0.5) * 0.4) * rx;
+    const oy = (-0.16 + (R() - 0.5) * 0.3) * ry;
+    const gr = g.createLinearGradient(cx - rx, cy - ry, cx + rx * 0.6, cy + ry * 0.8);
+    gr.addColorStop(0, css(mix(pal[1], pal[2], 0.25)));
+    gr.addColorStop(0.55, mid);
+    gr.addColorStop(1, css(mix(pal[0], pal[1], 0.3)));
+    leafy(g, R, cx + ox, cy + oy, rx * (0.62 + R() * 0.12), ry * (0.6 + R() * 0.12), gr, bump);
   }
-  // Hojas sueltas en el borde (silueta orgánica) y brillos.
-  for (let i = 0; i < Math.round(rx * 1.1 * density); i++) {
+  // 3) Luces: manchas festoneadas arriba a la izquierda.
+  for (let i = 0; i < (airy ? 2 : 3); i++) {
+    const lx = cx - rx * (0.15 + R() * 0.35);
+    const ly = cy - ry * (0.25 + R() * 0.35);
+    leafy(g, R, lx, ly, rx * (0.2 + R() * 0.12), ry * (0.16 + R() * 0.1), alpha(pal[2], 0.85), bump * 0.8);
+  }
+  // 4) Pinceladas de hoja por toda la copa: el tono depende de dónde caen.
+  const leaves = Math.round(rx * ry * 0.22 * density);
+  for (let i = 0; i < leaves; i++) {
     const a = R() * Math.PI * 2;
-    const x = cx + Math.cos(a) * rx * (0.8 + R() * 0.16);
-    const y = cy + Math.sin(a) * ry * (0.8 + R() * 0.16);
-    const lightSide = Math.sin(a) < -0.2 && Math.cos(a) < 0.4;
-    ell(g, x, y, 1.3 + R() * 0.9, 0.8 + R() * 0.5, lightSide ? pal[1] : shd(pal[0], 0.1), R() * 3);
+    const d = Math.sqrt(R()) * 0.95;
+    const x = cx + Math.cos(a) * rx * d;
+    const y = cy + Math.sin(a) * ry * d;
+    const light = Math.max(0, Math.min(1, 0.5 - ((x - cx) / rx) * 0.35 - ((y - cy) / ry) * 0.5 + (R() - 0.5) * 0.25));
+    const col = light > 0.72 ? lit(pal[2], 0.12) : light > 0.45 ? pal[1] : light > 0.25 ? mid : shd(pal[0], 0.15);
+    ell(g, x, y, 0.75 + R() * 0.55, 0.38 + R() * 0.2, alpha(col, 0.75), -0.6 + R() * 1.2);
   }
-  // Huecos oscuros en el interior y brillos del sol arriba a la izquierda.
-  for (let i = 0; i < Math.round(rx * 0.25); i++) ell(g, cx + (R() - 0.3) * rx * 0.9, cy + R() * ry * 0.6, rx * 0.12, ry * 0.08, alpha(shd(pal[0], 0.5), 0.55), R() * 3);
-  for (let i = 0; i < Math.round(rx * 0.7); i++) {
-    const a = Math.PI * (1.08 + R() * 0.6);
-    const d = 0.35 + R() * 0.5;
-    ell(g, cx + Math.cos(a) * rx * d, cy + Math.sin(a) * ry * d, 0.9, 0.55, alpha(lit(pal[2], 0.15), 0.65), R() * 3);
-  }
+  // 5) Huecos oscuros donde se ve el interior (pocos y pequeños).
+  for (let i = 0; i < Math.round(rx * 0.12); i++) ell(g, cx + (R() - 0.2) * rx * 0.8, cy + R() * ry * 0.55, rx * 0.07, ry * 0.05, alpha(shd(pal[0], 0.55), 0.6), R() * 3);
 }
 
 function trunk(g: CanvasRenderingContext2D, R: () => number, x: number, y0: number, y1: number, w0: number, w1: number, bark: string): void {
@@ -175,32 +186,47 @@ function paintTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Season, 
       const H = 80 + shape * 3;
       trunk(g, R, 0, 0, -18, 2.4, 1.8, '#4a3020');
       const p = PINE[season];
-      const tiers = 6;
+      const tiers = 7;
       for (let i = 0; i < tiers; i++) {
         const k = i / (tiers - 1);
         const y = -H + 4 + k * (H - 22);
         const half = 4 + k * 15 + (R() - 0.5) * 2;
-        const hgt = 13 + k * 4;
-        // Cada piso: masa dentada con la cara izquierda en luz.
-        const pts: number[] = [0, y - hgt * 0.55];
-        const teeth = 6;
-        for (let j = 0; j <= teeth; j++) {
-          const t = j / teeth;
-          pts.push(half * t * (1 + (j % 2) * 0.12), y - hgt * 0.55 + hgt * t * 0.95 + (j % 2) * 1.6);
+        const hgt = 12 + k * 4;
+        // Cada piso: ramas que caen en abanico (borde inferior curvo y en punta).
+        const top = y - hgt * 0.6;
+        const pts: number[] = [0, top];
+        const fronds = 4 + Math.round(k * 3);
+        for (let j = 1; j <= fronds; j++) {
+          const t = j / fronds;
+          pts.push(half * t * 0.92, top + hgt * t * 0.75, half * t * 1.04, top + hgt * (0.82 + t * 0.2) + 1.6);
         }
-        for (let j = teeth; j >= 0; j--) {
-          const t = j / teeth;
-          pts.push(-half * t * (1 + (j % 2) * 0.12), y - hgt * 0.55 + hgt * t * 0.95 + (j % 2) * 1.6);
+        for (let j = fronds; j >= 1; j--) {
+          const t = j / fronds;
+          pts.push(-half * t * 1.04, top + hgt * (0.82 + t * 0.2) + 1.6, -half * t * 0.92, top + hgt * t * 0.75);
         }
-        const gr = g.createLinearGradient(-half, 0, half, 0);
+        const gr = g.createLinearGradient(-half, top, half, y + hgt * 0.4);
         gr.addColorStop(0, p[2]);
-        gr.addColorStop(0.45, p[1]);
+        gr.addColorStop(0.4, p[1]);
         gr.addColorStop(1, p[0]);
         g.fillStyle = gr;
         g.beginPath();
-        smoothPath(g, pts, true, 0.2);
+        smoothPath(g, pts, true, 0.15);
         g.fill();
-        if (snowy) blob(g, [0, y - hgt * 0.55, half * 0.6, y - hgt * 0.1, -half * 0.6, y - hgt * 0.1], 'rgba(240,246,252,0.92)', 0.4);
+        // Sombra que deja el piso de encima.
+        if (i > 0) ell(g, half * 0.1, top + hgt * 0.12, half * 0.45, hgt * 0.1, alpha(shd(p[0], 0.4), 0.28));
+        // Agujas: trazos cortos que siguen la caída de las ramas.
+        for (let j = 0; j < 10 + k * 14; j++) {
+          const sx = (R() * 2 - 1) * half * 0.95;
+          const sy = top + hgt * (0.25 + R() * 0.7) * (0.6 + Math.abs(sx / half) * 0.4);
+          const lightSide = sx < 0 && R() < 0.7;
+          g.strokeStyle = alpha(lightSide ? lit(p[2], 0.1) : shd(p[0], 0.25), 0.7);
+          g.lineWidth = 0.45;
+          g.beginPath();
+          g.moveTo(sx, sy);
+          g.lineTo(sx + Math.sign(sx) * 1.6, sy + 1.4);
+          g.stroke();
+        }
+        if (snowy) blob(g, [0, top, half * 0.6, top + hgt * 0.45, 0, top + hgt * 0.3, -half * 0.6, top + hgt * 0.45], 'rgba(240,246,252,0.92)', 0.4);
       }
       break;
     }
@@ -287,24 +313,28 @@ export function treeTex(kind: TreeKind, season: Season, v: number, snowy: boolea
 }
 
 /** Árbol en (x, y) de mundo con su tamaño, inclinación y vaivén con el viento. */
-export function drawTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Season, v: number, x: number, y: number, t: number, wind: number, snowy: boolean, focus?: { x: number; y: number }): void {
+export function drawTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Season, v: number, x: number, y: number, t: number, wind: number, snowy: boolean, focus?: { x: number; y: number }): boolean {
   const t0 = treeTex(kind, season, v, snowy);
   const sp = specimen(v);
   const s = sp.size * (kind === 'muerto' ? 0.9 : 1);
-  const sway = VQ().sway ? Math.sin(t * (1.1 + (v % 7) * 0.07) + v) * 0.018 * (0.6 + wind) : 0;
+  // Con viento las copas se doblan de verdad (y a ráfagas), no solo tiemblan.
+  const gust = wind > 0.5 ? 0.6 + Math.sin(t * 0.7 + v * 0.1) * 0.4 : 0;
+  const sway = VQ().sway ? Math.sin(t * (1.1 + (v % 7) * 0.07 + gust) + v) * 0.018 * (0.6 + wind * 1.8) + gust * 0.05 : 0;
+  let hides = false;
   g.save();
   // Oclusión: solo si el protagonista está detrás del tronco y su cuerpo cae
   // dentro de la copa (no del tronco), la copa se vuelve translúcida.
   if (focus && focus.y < y - 2) {
     const canopyBottom = y - t0.ay * s * 0.32;
     const canopyTop = y - t0.ay * s;
-    if (focus.y - 22 < canopyBottom && focus.y > canopyTop && Math.abs(focus.x - x) < (t0.w / 2) * s * 0.72) g.globalAlpha = 0.5;
+    if (focus.y - 22 < canopyBottom && focus.y > canopyTop && Math.abs(focus.x - x) < (t0.w / 2) * s * 0.72) (hides = true);
   }
   g.translate(x, y);
   g.transform(1, 0, sp.lean + sway, 1, 0, 0);
   g.scale(v & 1 ? -s : s, s);
   g.drawImage(t0.canvas, -t0.ax, -t0.ay, t0.w, t0.h);
   g.restore();
+  return hides;
 }
 
 /** Sombra del árbol proyectada en el suelo según el sol (en la pasada de sombras). */
@@ -317,7 +347,7 @@ export function drawTreeShadow(g: CanvasRenderingContext2D, kind: TreeKind, seas
   if (sun.a <= 0.02 || VQ().shadows === 'blob') return;
   const sil = silhouette(t0);
   g.save();
-  g.globalAlpha = sun.a * (season === 'invierno' && kind !== 'pino' ? 0.35 : 0.7);
+  g.globalAlpha = sun.a * (season === 'invierno' && kind !== 'pino' ? 0.3 : 0.55);
   // La vertical del árbol se proyecta en la dirección de la sombra.
   g.transform(s, 0, -sun.dx * sun.len * s, -sun.dy * sun.len * s, x, y);
   g.drawImage(sil, -t0.ax, -t0.ay, t0.w, t0.h);

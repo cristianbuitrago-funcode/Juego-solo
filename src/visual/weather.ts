@@ -49,7 +49,7 @@ export class Weather {
       this.ps.length = 0;
       return;
     }
-    const n = Math.round(budget * (storm ? 1 : rain ? 0.75 : snow ? 0.7 : 0.18) * ((W * H) / (400 * 850)));
+    const n = Math.round(budget * (storm ? 1 : rain ? 0.75 : snow ? 0.7 : 0.4) * ((W * H) / (400 * 850)));
     while (this.ps.length < n) this.ps.push(this.spawn(W, H, true, rain, snow));
     if (this.ps.length > n) this.ps.length = n;
     const k = Math.min(3, dt * 60);
@@ -139,9 +139,9 @@ export class Weather {
     }
     // Viento: ráfagas de polvo y hojas que giran.
     const gust = 0.6 + Math.sin(t / 1400) * 0.4;
-    g.strokeStyle = 'rgba(240,236,220,0.18)';
-    g.lineWidth = 1;
-    for (let i = 0; i < 8; i++) {
+    g.strokeStyle = 'rgba(240,236,220,0.3)';
+    g.lineWidth = 1.2;
+    for (let i = 0; i < 12; i++) {
       const y = (i * 113 + t * 0.012) % H;
       const x = ((t * 0.25 * gust + i * 217) % (W + 200)) - 100;
       g.beginPath();

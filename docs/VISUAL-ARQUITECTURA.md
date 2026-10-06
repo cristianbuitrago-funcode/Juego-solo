@@ -31,31 +31,50 @@ Se valoraron WebGL directo, Three.js, Babylon.js, Phaser 3 (WebGL) y un renderer
 
 - El cuello de botella **no es la API**: es la tubería de arte (resolución y pintura). Cambiar a Phaser o Three.js obligaría a reescribir ≈6.000 líneas de escena, entrada, procedimientos de dibujo y UI de lienzo sin que, por sí solo, el arte mejore.
 - Canvas 2D en el WebView de Android (Chromium) está **acelerado por GPU**: `drawImage` de texturas en caché con transformaciones es barato. Una escena típica de ECOS son 300–700 llamadas `drawImage` por fotograma.
-- Lo que Canvas 2D **no** hace bien: iluminación por píxel con mapas de normales, cientos de luces dinámicas y postprocesos de pantalla completa (bloom, desenfoque) a 60 fps en gama media. Eso se **aproxima**: luces en un búfer de baja resolución compuesto con `multiply`/`lighter`, sombras proyectadas como siluetas en caché deformadas con una transformación afín, y gradación por capas.
+- Lo que Canvas 2D **no** hace bien: iluminación por píxel con mapas de normales, cientos de luces dinámicas y postprocesos de pantalla completa (bloom, desenfoque) a 60 fps en gama media. Eso se **aproxima**: velos de color con mezcla normal y luces sumadas (`lighter`), sombras proyectadas como siluetas en caché deformadas con una transformación afín, y gradación por capas.
 - Tamaño: Three.js/Babylon añaden 150–600 KB y otra forma de pensar la escena; Phaser, ≈1 MB. ECOS no necesita 3D.
 
-**Decisión**: renderer **Canvas 2D a resolución nativa** con arte **pintado** (vectorial con degradados, pintado una vez en texturas en caché a la resolución que pide cada nivel gráfico) y **personajes con esqueleto 2D por piezas** (animación de recortes al estilo de las herramientas de animación 2D profesionales). Queda preparado un punto de entrada (`visual/quality.ts`) para un compositor WebGL opcional en ULTRA si en dispositivos reales se demuestra rentable; no se cambia de tecnología por moda.
+**Decisión**: renderer **Canvas 2D a resolución nativa** con arte **pintado** (vectorial con degradados, pintado una vez en texturas en caché a la resolución que pide cada nivel gráfico) y **personajes con esqueleto 2D por piezas** (animación de recortes al estilo de las herramientas de animación 2D profesionales). Si en dispositivos reales hiciera falta más (luz por píxel, postproceso), el paso natural sería un compositor WebGL solo para la capa de luz; hoy no está hecho ni hace falta. No se cambia de tecnología por moda.
 
-## 4. Arquitectura nueva
+## 4. Arquitectura nueva (tal como está en el código)
 
 ```
-SIMULACIÓN (core/, world/)            ← sin cambios de lógica
-   ↓  estado del mundo (WorldState, Life, Folk, Town, Atlas…)
-DATOS DE ENTIDAD → REPRESENTACIÓN (render/appearance.ts, render/mood.ts, visual/cityLook.ts)
-   apariencia, expresión, acción, estado de edificios, aspecto de la ciudad
+SIMULACIÓN (core/, world/)            ← sin cambios de lógica; no importa nada visual
+   ↓  estado del mundo (WorldState, Life, Folk, Town, Market…)
+DATOS → REPRESENTACIÓN (render/appearance.ts, render/mood.ts, scene.houseState/entPose)
+   apariencia (cuerpo, edad, ropa por oficio/región/clima), expresión, acción, estado de edificios
    ↓
-PINTURA EN CACHÉ (visual/paint/*, visual/figure/*)
-   piezas de personas, árboles, edificios, suelo, efectos — a la resolución del nivel gráfico
+PINTURA EN CACHÉ (visual/paint.ts → tex(): texturas con presupuesto de memoria y LRU)
+   visual/figure/*  personas por piezas        visual/env/*  suelo, flora, edificios, objetos,
+                                                             estructuras, interiores
    ↓
-COMPOSICIÓN (render/scene.ts)
-   cámara, culling por fragmentos y vista, LOD, orden en profundidad, sombras, luz, clima
+COMPOSICIÓN (render/scene.ts, render/chunks.ts)
+   cámara, culling por fragmentos y vista, LOD, orden en profundidad, pasada de sombras,
+   luces, gradación, clima (visual/weather.ts), etiquetas
 ```
 
-- `visual/quality.ts`: niveles **LOW / MEDIUM / HIGH / ULTRA**, detección del dispositivo (memoria, núcleos, tamaño de pantalla, prueba de rendimiento breve) y presupuesto de cada nivel (resolución de render, resolución de texturas, sombras, partículas, gentío, luces, detalle de figuras).
-- `visual/paint.ts`: color (mezcla, luz/sombra con desplazamiento de tono), degradados, ruido, caché de texturas con presupuesto de memoria.
-- `visual/figure/`: esqueleto (`rig.ts`: de `Pose` a ángulos de huesos por acción y fase), piezas (`parts.ts`: cabeza con rostro y expresión, pelo, sombreros, torso con ropa, extremidades, manos, objetos), composición (`figure.ts`: `drawFigure`, sombras, LOD) y retratos.
-- `visual/env/`: suelo (`terrain.ts`), agua animada, vegetación (`flora.ts`), edificios con estados (`buildings.ts`), mobiliario, animales.
-- `visual/light.ts`: sol por hora (dirección, longitud y color de las sombras), gradación por franja (madrugada, mañana, mediodía, tarde, atardecer, noche), luces puntuales.
-- `visual/weather.ts`: lluvia, tormenta, nieve, niebla, viento y partículas a resolución nativa.
+| Módulo | Qué hace |
+| --- | --- |
+| `visual/quality.ts` | Niveles LOW/MEDIUM/HIGH/ULTRA (dpr, resolución de figuras, objetos y suelo, sombras, partículas, gentío, luces, distancias de LOD, hierba, gradación, presupuesto de texturas), detección del dispositivo y bajada automática de nivel si el p95 de fotograma pasa de 22 ms. |
+| `visual/paint.ts` | Color (mezcla, luz cálida, sombra violácea), degradados, curvas suaves, `tex()` con presupuesto y LRU, `silhouette()` para sombras. |
+| `visual/light.ts` | Sol por hora y tiempo (dirección, longitud con un único tope `SHADOW_MAX`, opacidad), sombra proyectada afín y sombra de contacto en textura. |
+| `visual/figure/` | `body.ts` proporciones por edad y complexión; `rig.ts` de la acción al esqueleto; `head.ts` rostro con 12 expresiones, pelo, sombreros, capucha; `clothes.ts` ropa y objetos; `figure.ts` composición, mezcla entre acciones (0,22 s) y giros, objeto según la acción, figura tumbada, LOD estatua, sombras; `portrait.ts` retratos. |
+| `visual/env/materials.ts` | Texturas de detalle repetibles sin costuras (las aleatorias se graban y se repiten en las copias desplazadas). |
+| `render/chunks.ts` | Suelo por fragmentos 24×24: capa base a media resolución ampliada con suavizado (bordes fundidos), materiales por máscara, nieve por región, bordillos; clave por fragmento (solo sus regiones) y precarga en ratos libres (un fragmento por fotograma como mucho). |
+| `visual/env/flora.ts` | Árboles pintados por valores (sombra, medio tono, luces, pinceladas de hoja), pinos por pisos, estaciones, viento, oclusión con silueta del jugador. |
+| `visual/env/buildings.ts` | Casas y edificios con volumen, estados (normal, deteriorada, quemada, destruida, obra, restaurada, abandonada), riqueza y variante nevada. |
+| `visual/env/props.ts`, `structures.ts`, `interiors.ts` | Mobiliario, puestos, animales, fuente animada; montañas, puestos fronterizos, barricadas, lugares, carros, mojones; viñetas de interiores animadas con quien está dentro. |
+| `visual/weather.ts` | Lluvia en tres capas de profundidad, salpicaduras, tormenta, nieve, niebla en bancos, viento con hojas. |
+| `ui/icons.ts`, `theme.css` | Iconos propios (SVG de tinta y oro) que sustituyen a los emojis en toda la interfaz; tema de pergamino con tipografía Alegreya empaquetada. |
 
-**LOD de entidades**: cerca, figura completa con rostro animado; media distancia, figura sin detalles faciales; lejos, silueta simplificada; muy lejos, no se dibuja (la simulación sigue abstracta). Las texturas en caché tienen presupuesto por nivel y se liberan por antigüedad.
+**LOD de entidades**: cerca (`lodNear`), figura completa con rostro; media distancia (`lodMid`), figura con rostro simplificado y gestos exagerados; lejos, una sola textura («estatua»); fuera de 46 teselas, la simulación sigue sin dibujar.
+
+## 5. Rendimiento: lo que se midió y lo que se decidió
+
+Medido en Chromium sin GPU (solo vale para comparar). Tres hallazgos cambiaron el diseño:
+
+1. **Filtrado `high` al ampliar texturas** (bicúbico) era el mayor coste: con bilineal (`low`) la escena de día pasó de 29 a 46 fps y la de noche de 9 a 32. Las texturas se pintan a una resolución cercana a la de pantalla, así que el bilineal no se nota.
+2. **Mezclas avanzadas a pantalla completa** (`multiply`, `screen`, `saturation`) obligan a la GPU a copiar el fondo en cada pasada (en muchos Android también). La gradación combina todos los tintes en un velo `source-over` y otro claro; la noche es un velo frío y las luces se suman (`lighter`).
+3. **Suelo**: pintar un fragmento costaba 150–240 ms. Ahora la base se calcula a media resolución (4× menos), se evita consultar la orilla lejos del agua y los vecinos se precargan de uno en uno en los fotogramas libres.
+
+Sin degradados creados por fotograma en lo repetido (gotas, charcos, halos, sombras de personas y árboles, niebla, viñeta): son texturas pintadas una vez.

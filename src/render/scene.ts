@@ -183,6 +183,9 @@ export class WorldScene {
   /** Segundos quieto (el acercamiento a quien está al lado espera un poco). */
   private stillT = 0;
   private paintsSeen = 0;
+  /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
+  private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
+  private playerHidden = false;
   /** Destino tocado: un anillo que se desvanece en el suelo. */
   private tapMark: { x: number; y: number; t: number } | null = null;
   private ro: ResizeObserver | null = null;
@@ -259,13 +262,15 @@ export class WorldScene {
     this.resize();
     const loop = (t: number) => {
       this.watchFrames(t - this.last);
-      const dt = Math.min(0.05, (t - this.last) / 1000);
+      const dt0 = Math.min(0.05, (t - this.last) / 1000);
+      const cine = this.cineAmount();
+      const dt = this.cine ? dt0 * (1 - (1 - this.cine.slow) * cine) : dt0;
       this.last = t;
       if (!this.paused) {
         this.converseId = null; // sin diálogo abierto no hay conversación
         this.update(dt);
       }
-      this.updateCamera(dt);
+      this.updateCamera(dt0);
       this.draw(t);
       this.raf = requestAnimationFrame(loop);
     };
@@ -306,6 +311,27 @@ export class WorldScene {
   setWorld(w: WorldState): void {
     this.w = w;
     this.chunks.setWorld(w);
+  }
+
+  /**
+   * Momento importante: la cámara se acerca despacio (al jugador o a un punto,
+   * en teselas), aparecen franjas de cine y el tiempo se ralentiza un poco.
+   */
+  cinematic(o: { x?: number; y?: number; zoom?: number; seconds?: number; slow?: number } = {}): void {
+    if (this.reduceMotion) return;
+    this.cine = { x: o.x, y: o.y, z: o.zoom ?? 1.22, start: performance.now(), dur: (o.seconds ?? 3.2) * 1000, slow: o.slow ?? 0.45 };
+  }
+  /** 0..1..0: cuánto pesa el plano de cine ahora (entra y sale suave). */
+  private cineAmount(): number {
+    const c = this.cine;
+    if (!c) return 0;
+    const u = (performance.now() - c.start) / c.dur;
+    if (u >= 1) {
+      this.cine = null;
+      return 0;
+    }
+    const e = (v: number) => v * v * (3 - 2 * v);
+    return u < 0.2 ? e(u / 0.2) : u > 0.75 ? e((1 - u) / 0.25) : 1;
   }
 
   /** Coloca al jugador (viaje rápido, sucesión). */
@@ -535,6 +561,12 @@ export class WorldScene {
     const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
     // La cámara mira un poco hacia donde se camina (más al correr) y solo se acerca a quien está al lado tras un rato quieto.
     const look = this.reduceMotion ? 0 : 0.38;
+    const cine = this.cineAmount();
+    if (cine > 0 && this.cine) {
+      const cx = (this.cine.x ?? me.x) * TILE;
+      const cy = (this.cine.y ?? me.y) * TILE - 14;
+      return { x: cx, y: cy, z: Math.min(4.6, ZOOM.explore * this.userZ * (1 + (this.cine.z - 1) * cine)) };
+    }
     return {
       x: (me.x + this.vel.x * look) * TILE,
       y: (me.y + this.vel.y * look * 0.8) * TILE - 10,
@@ -883,9 +915,17 @@ export class WorldScene {
           continue;
         }
         const sp = Math.min(d, ({ ciervo: 1.6, perro: 2.2, caballo: 0.8, pato: 0.5 } as Record<string, number>)[a.kind] ?? 0.7) * dt;
-        a.x += ((a.tx - a.x) / d) * sp;
-        a.y += ((a.ty - a.y) / d) * sp;
+        const nx = a.x + ((a.tx - a.x) / d) * sp;
+        const ny = a.y + ((a.ty - a.y) / d) * sp;
+        // Los animales no atraviesan vallas, fuentes ni casas: si el paso está cortado, se paran.
+        if (!a.water && !passable(this.w, this.l, nx, ny)) {
+          a.tx = a.x;
+          a.ty = a.y;
+          continue;
+        }
         a.flip = a.tx < a.x;
+        a.x = nx;
+        a.y = ny;
         a.anim += dt * 6;
       }
     }
@@ -1171,7 +1211,15 @@ export class WorldScene {
     // Las sombras van antes que todo lo que se alza sobre el suelo.
     for (const sh of this.shadowQ) sh();
     items.sort((a, b) => a.y - b.y);
+    this.playerHidden = false;
     for (const it of items) it.draw();
+    // Si el follaje tapa al protagonista, se le sigue viendo en transparencia (no se pierde nunca).
+    if (this.playerHidden) {
+      g.save();
+      g.globalAlpha = 0.5;
+      drawFigure(g, pap, ppose, me.x * TILE, me.y * TILE);
+      g.restore();
+    }
 
     this.drawParticles(g, t);
     this.drawBirds(g);
@@ -1199,6 +1247,14 @@ export class WorldScene {
     this.drawWeather(g, weather, t);
     this.drawLabels(g);
     this.drawEdgeArrows(g, t);
+    const cine = this.cineAmount();
+    if (cine > 0) {
+      // Franjas de cine (2,35:1 aproximado) que entran y salen.
+      const bar = this.vh * 0.11 * cine;
+      g.fillStyle = '#0b0806';
+      g.fillRect(0, 0, this.vw, bar);
+      g.fillRect(0, this.vh - bar, this.vw, bar);
+    }
     if (this.joy) {
       g.fillStyle = 'rgba(243,232,207,0.18)';
       g.strokeStyle = 'rgba(243,232,207,0.5)';
@@ -1278,7 +1334,7 @@ export class WorldScene {
         this.shadowQ.push(() => drawTreeShadow(g, kind, look, o.v, o.x, o.y, sun, snowy));
         const me = ensureLife(this.w).player;
         const focus = { x: me.x * TILE, y: me.y * TILE };
-        items.push({ y: o.y, draw: () => drawTree(g, kind, look, o.v, o.x, o.y, sec, wind, snowy, focus) });
+        items.push({ y: o.y, draw: () => void (drawTree(g, kind, look, o.v, o.x, o.y, sec, wind, snowy, focus) && (this.playerHidden = true)) });
         break;
       }
       case 'arbusto':
@@ -1414,9 +1470,11 @@ export class WorldScene {
       if (!inView(px, py)) continue;
       const frozen = pr.kind === 'fuente' && snowRoofs && seasonOf(w.day) === 'invierno';
       const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.v);
-      if (pr.kind !== 'valla' && pr.kind !== 'vallaV') this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5));
+      // El poste del cruce, a escala humana (algo más alto que una persona, no el doble).
+      const ps = pr.kind === 'cartel' ? 0.72 : 1;
+      if (pr.kind !== 'valla' && pr.kind !== 'vallaV') this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5, ps));
       if (pr.kind === 'fuente' && !frozen) items.push({ y: py, draw: () => (put(g, pt, px, py), drawFountainWater(g, px, py, this.reduceMotion ? 0 : t)) });
-      else items.push({ y: py, draw: () => put(g, pt, px, py) });
+      else items.push({ y: py, draw: () => put(g, pt, px, py, false, ps) });
     }
     const gloomy = ['lluvia', 'tormenta', 'niebla'].includes(this.weatherHere());
     if (night || gloomy) for (const lp of v.lamps) {
@@ -1800,7 +1858,7 @@ export class WorldScene {
       if (!f || f.lastMet < 0 || id === this.converseId) continue;
       const ap0 = this.apCache.get(id)?.ap;
       const p = this.toScreen(e.x * TILE, e.y * TILE - (ap0 ? figureTop(ap0) + 4 : 35));
-      g.font = '600 12px Georgia, serif';
+      g.font = '600 12px Alegreya, Georgia, serif';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(30,25,20,0.7)';
       g.strokeText(f.name, p.x, p.y);
@@ -1821,7 +1879,7 @@ export class WorldScene {
       if (!text || (slot + hashOf(id)) % 3 === 2) continue;
       bubbles++;
       const p = this.toScreen(((e.x + o.x) / 2) * TILE, Math.min(e.y, o.y) * TILE - 46);
-      g.font = 'italic 12px Georgia, serif';
+      g.font = 'italic 12px Alegreya, Georgia, serif';
       const wpx = Math.min(240, g.measureText(text).width + 14);
       g.fillStyle = angry ? 'rgba(120,30,25,0.82)' : 'rgba(30,25,20,0.72)';
       g.beginPath();
@@ -1836,7 +1894,7 @@ export class WorldScene {
       if (d > 16) continue;
       const p = this.toScreen((v.cx + 0.5) * TILE, (v.cy - v.plazaR - 1) * TILE);
       g.globalAlpha = Math.min(1, (16 - d) / 6);
-      g.font = '700 17px Georgia, serif';
+      g.font = '700 17px Alegreya, Georgia, serif';
       g.lineWidth = 4;
       g.strokeStyle = 'rgba(30,25,20,0.65)';
       g.strokeText(w.regions[v.regionId].name, p.x, p.y);
@@ -2040,16 +2098,27 @@ export class WorldScene {
 
   private drawBirds(g: CanvasRenderingContext2D): void {
     if (!this.birds.length) return;
-    g.strokeStyle = 'rgba(46,40,40,0.75)';
-    g.lineWidth = 0.55;
-    g.beginPath();
+    // Vuelan alto: su sombra cae lejos, en el suelo, y eso dice que están en el aire.
+    g.fillStyle = 'rgba(20,16,24,0.16)';
     for (const b of this.birds) {
-      const k = Math.sin(b.ph) * 1.4;
-      g.moveTo(b.x - 2.4, b.y - k);
-      g.quadraticCurveTo(b.x - 1, b.y - 1, b.x, b.y);
-      g.quadraticCurveTo(b.x + 1, b.y - 1, b.x + 2.4, b.y - k);
+      g.beginPath();
+      g.ellipse(b.x + 10, b.y + 26, 2.2, 0.8, 0, 0, Math.PI * 2);
+      g.fill();
     }
-    g.stroke();
+    g.strokeStyle = 'rgba(40,34,36,0.85)';
+    g.fillStyle = 'rgba(40,34,36,0.9)';
+    g.lineWidth = 0.7;
+    for (const b of this.birds) {
+      const k = Math.sin(b.ph) * 1.8;
+      g.beginPath();
+      g.moveTo(b.x - 3, b.y - k);
+      g.quadraticCurveTo(b.x - 1.4, b.y - 1.6 - k * 0.3, b.x, b.y);
+      g.quadraticCurveTo(b.x + 1.4, b.y - 1.6 - k * 0.3, b.x + 3, b.y - k);
+      g.stroke();
+      g.beginPath();
+      g.ellipse(b.x, b.y + 0.2, 0.9, 0.55, 0, 0, Math.PI * 2);
+      g.fill();
+    }
   }
 
   private drawWeather(g: CanvasRenderingContext2D, weather: string, t: number): void {
