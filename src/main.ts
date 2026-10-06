@@ -1,11 +1,13 @@
 import './styles.css';
 import { App } from './ui/app';
+import { watchIcons } from './ui/icons';
 
 /**
  * Punto de entrada. En Android (Capacitor) conecta el botón "atrás" del
  * sistema con la navegación del juego.
  */
 const root = document.getElementById('app')!;
+watchIcons(root);
 const app = new App(root);
 if (location.hash === '#galeria') void import('./render/gallery').then((m) => m.showGallery(root));
 else app.showMenu();

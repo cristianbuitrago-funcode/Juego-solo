@@ -1,6 +1,6 @@
 import type { WorldState } from '../core/types';
 import type { Folk } from '../world/types';
-import type { Action, Expr } from './human';
+import type { Action, Expr } from '../visual/figure/types';
 import { emotionOf, trait } from '../world/society';
 
 /**

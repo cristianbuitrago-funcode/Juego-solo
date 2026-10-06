@@ -4,7 +4,7 @@ import { ROLES } from '../core/content/roles';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { appearanceOf } from '../render/appearance';
-import { drawPortrait } from '../render/human';
+import { drawPortrait } from '../visual/figure/portrait';
 import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';

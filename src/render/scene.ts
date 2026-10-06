@@ -2,6 +2,7 @@ import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
 import { weatherIn } from '../world/geography';
+import { drawSmall, drawTree, drawTreeShadow, type SmallKind, type TreeKind } from '../visual/env/flora';
 import { playerRegion } from '../world/society';
 import { getLayout, doorOf, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, explore, housesFor } from '../world/life';
@@ -14,11 +15,19 @@ import { convoyPositions } from '../world/trade';
 import { GOOD_COLOR, marketLook } from '../world/marketview';
 import type { Good } from '../world/economy';
 import { idx, speedOf, walkable } from '../world/terrain';
-import { TILE, TW, type Folk, type FolkRole } from '../world/types';
+import { T, TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
 import { CHUNK, ChunkCache, type StaticObject } from './chunks';
-import { drawHuman, type Action, type Expr, type Facing, type Pose } from './human';
-import { drawFire, drawFlame, drawPuff, WeatherFx } from './fx';
+import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
+import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure';
+import { castShadow, sunAt, type SunState } from '../visual/light';
+import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
+import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
+import { marketOf } from '../world/economy';
+import { VQ, resolveTier, setTier, type QualitySetting, type Tier } from '../visual/quality';
+import { clearTextures, nextFrame, put, silhouette } from '../visual/paint';
+import { drawFire, drawFlame, drawPuff } from './fx';
+import { Weather } from '../visual/weather';
 import { actionOf, moodOf } from './mood';
 import * as S from './sprites';
 
@@ -103,6 +112,7 @@ interface Light {
   y: number;
   r: number;
   k: number;
+  flat?: number; // charco de luz en el suelo (elipse aplastada)
 }
 
 interface Particle {
@@ -124,7 +134,7 @@ interface Drawable {
 const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
 
 /** Zoom de cámara: explorando, junto a alguien y conversando. */
-const ZOOM = { explore: 2, near: 2.5, talk: 3.5 };
+const ZOOM = { explore: 2.6, near: 3.1, talk: 4.4 };
 
 function hash(s: string, salt = 0): number {
   let h = 2166136261 ^ salt;
@@ -134,16 +144,17 @@ function hash(s: string, salt = 0): number {
 
 export class WorldScene {
   readonly canvas: HTMLCanvasElement;
-  private g: CanvasRenderingContext2D; // mundo, en píxeles de arte 1:1
+  private g: CanvasRenderingContext2D; // mundo (misma superficie que la pantalla, con la transformación de la cámara)
   private screen: CanvasRenderingContext2D; // pantalla (capas de luz, clima, interfaz)
-  private buf = document.createElement('canvas');
   private l: Layout;
   private chunks: ChunkCache;
-  private dark = document.createElement('canvas');
   cam = { x: 0, y: 0, z: ZOOM.explore };
   private userZ = 1; // multiplicador del pellizco
   private converseId: string | null = null;
   private apCache = new Map<string, { key: string; ap: Appearance }>();
+  private playerLook: unknown = null;
+  private wxFrame = 'despejado';
+  private playerLookKey = '';
   private extras = new Map<string, Extra>();
   private birds: { x: number; y: number; vx: number; ph: number }[] = [];
   private lights: Light[] = [];
@@ -155,7 +166,8 @@ export class WorldScene {
   private ents = new Map<string, Ent>();
   private animals = new Map<number, Animal[]>();
   private particles: Particle[] = [];
-  private wfx = new WeatherFx();
+  private wfx = new Weather();
+  private lastCam = { x: 0, y: 0 };
   private lastDraw = 0;
   private raf = 0;
   private last = performance.now();
@@ -166,6 +178,20 @@ export class WorldScene {
   private focus: Target | null = null;
   private playerAnim = 0;
   private playerMoving = false;
+  /** Velocidad real del jugador (teselas/s): acelera y frena, no salta. */
+  private vel = { x: 0, y: 0 };
+  /** Segundos quieto (el acercamiento a quien está al lado espera un poco). */
+  private stillT = 0;
+  private paintsSeen = 0;
+  /** Destino tocado: un anillo que se desvanece en el suelo. */
+  private tapMark: { x: number; y: number; t: number } | null = null;
+  private ro: ResizeObserver | null = null;
+  private onKeyDown = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+    this.keys.add(e.key.toLowerCase());
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) this.stop();
+  };
+  private onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
   private playerRun = false;
   private facing = { x: 0, y: 1 };
   private path: { x: number; y: number }[] = [];
@@ -183,14 +209,36 @@ export class WorldScene {
   reduceMotion = false;
   /** Multiplicador de velocidad del personaje (hambre, cansancio). */
   speed: () => number = () => 1;
-  private quality: 'alta' | 'media' | 'baja' = 'media';
 
-  /** Calidad gráfica: resolución del lienzo, gentío y detalle de las figuras. */
-  setQuality(q: 'alta' | 'media' | 'baja'): void {
-    if (q === this.quality) return;
-    this.quality = q;
+  /** Nivel gráfico (LOW–ULTRA, o automático): resolución, texturas, sombras, partículas y gentío. */
+  private qualitySetting: QualitySetting = 'auto';
+  private frameMs: number[] = [];
+  private lastDowngrade = 0;
+  setQuality(q: QualitySetting): void {
+    this.qualitySetting = q;
+    const changed = setTier(resolveTier(q));
+    if (changed) (clearTextures(), S.clearSprites());
     this.resize();
-    if (q === 'baja') this.extras.clear();
+    if (VQ().crowd === 0) this.extras.clear();
+  }
+  private get low(): boolean {
+    return VQ().tier === 'low';
+  }
+  private sun: SunState = sunAt(12, 'despejado');
+  private shadowQ: (() => void)[] = [];
+
+  /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
+  private pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
+    const g = this.g;
+    const sun = this.sun;
+    this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
+    items.push({ y, draw: () => drawFigure(g, ap, pose, x, y) });
+  }
+
+  /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
+  debugWeather: string | null = null;
+  private weatherHere(): string {
+    return this.debugWeather ?? weatherIn(this.w, playerRegion(this.w));
   }
 
   constructor(private parent: HTMLElement, public w: WorldState, private cb: SceneCallbacks) {
@@ -198,7 +246,7 @@ export class WorldScene {
     this.canvas.className = 'world-canvas';
     parent.appendChild(this.canvas);
     this.screen = this.canvas.getContext('2d')!;
-    this.g = this.buf.getContext('2d')!;
+    this.g = this.screen;
     this.l = getLayout(w);
     for (const c of prologueBlocks(w)) this.l.blocked[idx(c.x, c.y)] = 1;
     this.chunks = new ChunkCache(w, this.l);
@@ -206,9 +254,11 @@ export class WorldScene {
     this.cam.x = life.player.x * TILE;
     this.cam.y = life.player.y * TILE;
     this.bindInput();
-    new ResizeObserver(() => this.resize()).observe(parent);
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(parent);
     this.resize();
     const loop = (t: number) => {
+      this.watchFrames(t - this.last);
       const dt = Math.min(0.05, (t - this.last) / 1000);
       this.last = t;
       if (!this.paused) {
@@ -222,8 +272,34 @@ export class WorldScene {
     this.raf = requestAnimationFrame(loop);
   }
 
+  /**
+   * En automático, si el dispositivo no llega (el 95 % de los fotogramas de
+   * los últimos segundos tarda más de 22 ms), se baja un nivel gráfico.
+   */
+  private watchFrames(ms: number): void {
+    if (this.qualitySetting !== 'auto' || document.hidden || ms > 250 || ms <= 0) return;
+    this.frameMs.push(ms);
+    if (this.frameMs.length < 240) return;
+    const sorted = [...this.frameMs].sort((a, b) => a - b);
+    this.frameMs.length = 0;
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    const now = performance.now();
+    const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
+    const i = order.indexOf(VQ().tier);
+    if (p95 > 22 && i > 0 && now - this.lastDowngrade > 15000) {
+      this.lastDowngrade = now;
+      setTier(order[i - 1]);
+      clearTextures();
+      S.clearSprites();
+      this.resize();
+    }
+  }
+
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    this.ro?.disconnect();
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
     this.canvas.remove();
   }
 
@@ -300,7 +376,7 @@ export class WorldScene {
   // Entrada: joystick virtual, tocar para caminar, pellizcar para zoom.
   // -------------------------------------------------------------------------
   private resize(): void {
-    this.dpr = Math.min(this.quality === 'alta' ? 2 : this.quality === 'media' ? 1.5 : 1, window.devicePixelRatio || 1);
+    this.dpr = Math.min(VQ().dpr, window.devicePixelRatio || 1);
     const r = this.parent.getBoundingClientRect();
     this.vw = r.width;
     this.vh = r.height;
@@ -308,8 +384,6 @@ export class WorldScene {
     this.canvas.height = Math.round(r.height * this.dpr);
     this.canvas.style.width = `${r.width}px`;
     this.canvas.style.height = `${r.height}px`;
-    this.dark.width = Math.ceil(r.width / 2);
-    this.dark.height = Math.ceil(r.height / 2);
   }
 
   private toWorld(sx: number, sy: number): { x: number; y: number } {
@@ -349,7 +423,6 @@ export class WorldScene {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         this.userZ = Math.max(0.55, Math.min(2.2, this.pinch.z * (d / Math.max(1, this.pinch.d))));
-        this.cam.z = this.zoomTarget().z;
         return;
       }
       if (this.joy && this.joy.id === e.pointerId) {
@@ -364,6 +437,8 @@ export class WorldScene {
       if (this.pointers.size < 2) this.pinch = null;
       if (this.joy && this.joy.id === e.pointerId) {
         this.joy = null;
+        // Un toque corto en la zona del joystick sigue siendo un toque.
+        if (p && Math.hypot(p.x - p.sx, p.y - p.sy) < 12 && performance.now() - p.t < 250 && !this.pointers.size) this.tap(e.clientX, e.clientY);
         return;
       }
       if (!p || this.pointers.size) return;
@@ -376,12 +451,8 @@ export class WorldScene {
       e.preventDefault();
       this.userZ = Math.max(0.55, Math.min(2.2, this.userZ * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
     }, { passive: false });
-    window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
-      this.keys.add(e.key.toLowerCase());
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) this.stop();
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
   }
 
   /** Tocar el mundo: caminar hasta allí, o hasta la persona/lugar tocado. */
@@ -400,6 +471,7 @@ export class WorldScene {
         return;
       }
     }
+    this.tapMark = { x: p.x, y: p.y, t: performance.now() };
     this.walkTo(p.x, p.y);
   }
 
@@ -461,15 +533,32 @@ export class WorldScene {
       return { x: ((me.x + conv.x) / 2) * TILE, y: ((me.y + conv.y) / 2) * TILE - 16 + (this.vh * 0.2) / z, z };
     }
     const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
-    return { x: me.x * TILE, y: me.y * TILE - 10, z: Math.max(1, Math.min(4.5, (near && !this.playerMoving ? ZOOM.near : ZOOM.explore) * this.userZ)) };
+    // La cámara mira un poco hacia donde se camina (más al correr) y solo se acerca a quien está al lado tras un rato quieto.
+    const look = this.reduceMotion ? 0 : 0.38;
+    return {
+      x: (me.x + this.vel.x * look) * TILE,
+      y: (me.y + this.vel.y * look * 0.8) * TILE - 10,
+      z: Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ)),
+    };
   }
 
   private updateCamera(dt: number): void {
     const tg = this.zoomTarget();
-    const k = Math.min(1, dt * 6);
-    this.cam.x += (tg.x - this.cam.x) * k;
-    this.cam.y += (tg.y - this.cam.y) * k;
-    this.cam.z += (tg.z - this.cam.z) * Math.min(1, dt * (this.converseId ? 3 : 1.6));
+    // Suavizado exponencial (igual a 30 que a 120 fps) con una zona muerta pequeña.
+    const k = 1 - Math.exp(-dt * 5.5);
+    const ex = tg.x - this.cam.x;
+    const ey = tg.y - this.cam.y;
+    const dead = 3;
+    const ed = Math.hypot(ex, ey);
+    if (ed > dead) {
+      const f = (ed - dead) / ed;
+      this.cam.x += ex * f * k;
+      this.cam.y += ey * f * k;
+    }
+    const zk = 1 - Math.exp(-dt * (this.pinch ? 14 : this.converseId ? 3 : 1.4));
+    // Curva suave: el zoom empieza y termina despacio.
+    const dz = tg.z - this.cam.z;
+    this.cam.z += dz * zk * Math.min(1, 0.35 + Math.abs(dz) * 1.2);
   }
 
   private movePlayer(dt: number): void {
@@ -483,9 +572,11 @@ export class WorldScene {
       const jy = this.joy.y - this.joy.by;
       const len = Math.hypot(jx, jy);
       if (len > 8) {
-        dx = jx / len;
-        dy = jy / len;
-        if (len > 52) run = true;
+        // Analógico: cuanto más se aleja el dedo, más rápido; muy lejos, se corre.
+        const amt = Math.min(1, 0.35 + (len - 8) / 44);
+        dx = (jx / len) * amt;
+        dy = (jy / len) * amt;
+        if (len > 58) run = true;
       }
     } else {
       if (this.keys.has('arrowleft') || this.keys.has('a')) dx -= 1;
@@ -522,14 +613,22 @@ export class WorldScene {
         dy = (n.y - me.y) / d;
       }
     }
-    this.playerMoving = !!(dx || dy);
-    this.playerRun = run;
-    if (!this.playerMoving) return;
-    this.facing = { x: dx, y: dy };
+    const want = !!(dx || dy);
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
-    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed() * dt;
-    const nx = me.x + dx * speed;
-    const ny = me.y + dy * speed;
+    const top = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed();
+    // Inercia: arranca en ~0,12 s y frena en ~0,08 s.
+    const kv = 1 - Math.exp(-dt * (want ? 20 : 34));
+    this.vel.x += (dx * top - this.vel.x) * kv;
+    this.vel.y += (dy * top - this.vel.y) * kv;
+    const v = Math.hypot(this.vel.x, this.vel.y);
+    if (!want && v < 0.25) (this.vel.x = 0), (this.vel.y = 0);
+    this.playerMoving = want || v > 0.6;
+    this.playerRun = run && v > 5;
+    this.stillT = this.playerMoving ? 0 : this.stillT + dt;
+    if (!this.playerMoving && v === 0) return;
+    if (want) this.facing = { x: dx, y: dy };
+    const nx = me.x + this.vel.x * dt;
+    const ny = me.y + this.vel.y * dt;
     const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
@@ -542,7 +641,9 @@ export class WorldScene {
       this.pending = this.path.length ? this.pending : null;
       if (t && at && Math.hypot(at.x - me.x, at.y - me.y) < 2.5) this.cb.onArrive(t);
     }
-    this.playerAnim += dt * (run ? 16 : 11);
+    // El paso sigue al avance real: los pies no patinan.
+    const stride = this.playerRun ? 1.25 : 0.74; // teselas por medio ciclo
+    this.playerAnim += ((v * dt) / stride) * Math.PI;
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -589,12 +690,12 @@ export class WorldScene {
     const me = ensureLife(w).player;
     const keep = new Set<string>();
     const h = hourOf(ensureLife(w).clock);
-    const weather = weatherIn(w, playerRegion(w));
+    const weather = this.weatherHere();
     const out = h < 7 || h > 21 || weather === 'lluvia' || weather === 'tormenta';
     for (const v of this.l.villages) {
       const r = w.regions[v.regionId];
-      if (out || this.quality === 'baja' || r.abandoned || r.population < 800 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
-      const n = Math.min(16, Math.floor((r.population - 600) / 110) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
+      if (out || this.low || r.abandoned || r.population < 800 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
+      const n = Math.min(VQ().crowd, Math.floor((r.population - 600) / 110) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
       for (let i = 0; i < n; i++) {
         const id = `x:${v.regionId}:${i}`;
         keep.add(id);
@@ -646,7 +747,7 @@ export class WorldScene {
     e.flip = e.dx < 0;
     e.moving = true;
     e.inside = false;
-    e.anim += dt * 11;
+    e.anim += (sp / 0.74) * Math.PI;
   }
 
   /**
@@ -738,8 +839,8 @@ export class WorldScene {
 
   private moveBirds(dt: number): void {
     const h = hourOf(ensureLife(this.w).clock);
-    const weather = weatherIn(this.w, playerRegion(this.w));
-    const want = this.reduceMotion || this.quality === 'baja' || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
+    const weather = this.weatherHere();
+    const want = this.reduceMotion || this.low || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
     const vw = this.vw / this.cam.z;
     const vh = this.vh / this.cam.z;
     this.birds = this.birds.filter((b) => Math.abs(b.x - this.cam.x) < vw && Math.abs(b.y - this.cam.y) < vh);
@@ -942,42 +1043,49 @@ export class WorldScene {
     const life = ensureLife(w);
     const g = this.g;
     const z = this.cam.z;
-    // El mundo se dibuja a 1 píxel de arte por píxel de mundo en un lienzo
-    // intermedio y se amplía sin suavizado: todo comparte la misma rejilla.
-    const bw = Math.ceil(this.vw / z) + 2;
-    const bh = Math.ceil(this.vh / z) + 2;
-    if (this.buf.width < bw || this.buf.height < bh || this.buf.width > bw + 160 || this.buf.height > bh + 160) {
-      this.buf.width = bw + 48;
-      this.buf.height = bh + 48;
-    }
-    const ox = Math.floor(this.cam.x - this.vw / 2 / z);
-    const oy = Math.floor(this.cam.y - this.vh / 2 / z);
+    // El mundo se dibuja directamente a la resolución de la pantalla, con
+    // suavizado: las texturas pintadas se ven nítidas a cualquier zoom.
+    nextFrame();
+    const dz = this.dpr * z;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#2f5468';
-    g.fillRect(0, 0, bw, bh);
-    g.setTransform(1, 0, 0, 1, -ox, -oy);
-    g.imageSmoothingEnabled = false;
-
+    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    g.setTransform(dz, 0, 0, dz, this.dpr * (this.vw / 2 - this.cam.x * z), this.dpr * (this.vh / 2 - this.cam.y * z));
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'low';
+    this.sun = sunAt(hourOf(life.clock), this.weatherHere());
+    this.shadowQ = [];
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
     const y1 = this.cam.y + this.vh / 2 / z;
     const season = seasonOf(w.day);
-    const weather = weatherIn(w, playerRegion(w));
+    const weather = this.weatherHere();
+    this.wxFrame = weather;
     const look = (season === 'invierno' || weather === 'nieve' ? 'invierno' : season) as S.SeasonLook;
+    // Dónde nieva ahora (el suelo se cubre por regiones).
+    const snowNow = this.chunks.snowing;
+    snowNow.clear();
+    const pr = playerRegion(w);
+    w.regions.forEach((_, i) => {
+      if ((i === pr ? weather : weatherIn(w, i)) === 'nieve') snowNow.add(i);
+    });
     const stateKey = this.chunks.stateKey(season);
     const CPX = CHUNK * TILE;
     const cx0 = Math.max(0, Math.floor(x0 / CPX));
     const cy0 = Math.max(0, Math.floor(y0 / CPX));
     const cx1 = Math.floor(x1 / CPX);
     const cy1 = Math.floor(y1 / CPX);
-    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX, cy * CPX);
-    if (weather === 'nieve' || w.regions.some((r) => r.flags.invierno)) {
-      g.fillStyle = 'rgba(240,245,250,0.32)';
-      g.fillRect(x0, y0, x1 - x0, y1 - y0);
-    }
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX, cy * CPX, CPX + 0.5, CPX + 0.5);
+    // Si este fotograma no ha tenido que pintar suelo, se adelanta un vecino (hacia donde se camina).
+    if (this.chunks.paints === this.paintsSeen) this.chunks.prewarm(Math.floor(this.cam.x / CPX), Math.floor(this.cam.y / CPX), Math.sign(this.vel.x), Math.sign(this.vel.y), season, stateKey);
+    this.paintsSeen = this.chunks.paints;
 
+    // Suelo mojado: más oscuro, con charcos que reflejan y ondas de lluvia.
+    if (weather === 'lluvia' || weather === 'tormenta') this.drawWet(g, x0, y0, x1, y1, t, weather === 'tormenta');
     const items: Drawable[] = [];
+    const reg0 = playerRegion(w);
+    const snowyHere = reg0 >= 0 && this.chunks.snowyRegion(reg0, season);
     this.lights = [];
     this.folkById.clear();
     for (const f of life.folk) if (f.alive) this.folkById.set(f.id, f);
@@ -991,7 +1099,7 @@ export class WorldScene {
       for (let cx = cx0; cx <= cx1; cx++)
         for (const o of this.chunks.objectsOf(cx, cy)) {
           if (!inView(o.x, o.y)) continue;
-          items.push({ y: o.y, draw: () => this.drawStatic(o, look) });
+          this.drawStatic(o, look, t, snowyHere, items);
         }
 
     // Pueblos.
@@ -1017,7 +1125,8 @@ export class WorldScene {
       if (!inView(it.x * TILE, it.y * TILE)) continue;
       if (it.id === 'cabana') {
         const st = this.styleOf(w.player.home);
-        items.push({ y: (it.y + 1) * TILE, draw: () => S.drawSprite(g, S.house(st, 'abandonada', 1, 4), it.x * TILE, (it.y + 1) * TILE) });
+        const ct = houseTex(st, 'abandonada', 1, 4, 0.2);
+        items.push({ y: (it.y + 1) * TILE, draw: () => put(g, ct, it.x * TILE, (it.y + 1) * TILE) });
       } else items.push({ y: it.y * TILE, draw: () => S.drawSprite(g, S.prologueProp(it.id as 'mochila'), it.x * TILE, it.y * TILE) });
     }
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
@@ -1029,7 +1138,7 @@ export class WorldScene {
       if (!f) continue;
       const ap = this.dress(this.apOf(f), wet, cold);
       const pose = this.entPose(id, e, f, sec, wet, cold);
-      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
+      this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
     }
     // Gentío de las ciudades grandes.
     for (const [id, e] of this.extras) {
@@ -1037,52 +1146,48 @@ export class WorldScene {
       const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'pastor', 'comerciante'];
       const ap = this.dress(this.extraAp(id, e.regionId, roles[Math.floor(hash(id, 4) * roles.length)], 14 + Math.floor(hash(id, 5) * 50)), wet, cold);
       const pose = this.entPose(id, e, undefined, sec, wet, cold);
-      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
+      this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
     }
     // Mensajeros esperando ante tu salón.
     for (const m of this.messengers()) {
       const ap = this.extraAp(`m:${m.id}`, m.regionId, 'exploradora', 30, (a) => (a.outfit.item = 'saco'));
       const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet, heavy: cold };
-      items.push({ y: m.y * TILE, draw: () => drawHuman(g, ap, pose, m.x * TILE, m.y * TILE) });
+      this.pushPerson(items, ap, pose, m.x * TILE, m.y * TILE);
     }
     // Animales.
     for (const list of this.animals.values())
       for (const a of list) {
         if (!inView(a.x * TILE, a.y * TILE)) continue;
         const moving = Math.hypot(a.tx - a.x, a.ty - a.y) > 0.2;
-        items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => S.drawSprite(g, S.animal(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.flip, a.v), a.x * TILE, a.y * TILE) });
+        items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => put(g, animalTex(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.v), a.x * TILE, a.y * TILE, a.flip) });
       }
     // Jugador.
     const me = life.player;
     const pap = this.dress(this.playerAp(darkness(life.clock) > 0.3), wet, cold);
     const ppose = this.playerPose(sec, wet, cold);
-    items.push({ y: me.y * TILE, draw: () => drawHuman(g, pap, ppose, me.x * TILE, me.y * TILE) });
+    this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
     if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 72, k: 1 });
 
+    // Las sombras van antes que todo lo que se alza sobre el suelo.
+    for (const sh of this.shadowQ) sh();
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
 
     this.drawParticles(g, t);
     this.drawBirds(g);
     this.drawMarkers(g, t);
-    // Lluvia, nieve y viento en la misma rejilla de píxeles que el mundo.
+    // Lluvia, nieve y viento, en coordenadas de pantalla.
     {
       const dt = this.lastDraw ? Math.min(0.1, (t - this.lastDraw) / 1000) : 1 / 60;
       this.lastDraw = t;
-      g.setTransform(1, 0, 0, 1, 0, 0);
-      this.wfx.draw(g, weather, bw, bh, t, this.paused && !this.converseId ? 0 : dt, this.reduceMotion);
+      g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      // Las partículas se desplazan con el mundo cuando se mueve la cámara.
+      const cdx = (this.lastCam.x - this.cam.x) * z;
+      const cdy = (this.lastCam.y - this.cam.y) * z;
+      this.lastCam = { x: this.cam.x, y: this.cam.y };
+      this.wfx.draw(g, weather, this.vw, this.vh, t, this.paused && !this.converseId ? 0 : dt, this.reduceMotion, Math.abs(cdx) < 50 ? cdx : 0, Math.abs(cdy) < 50 ? cdy : 0);
     }
-
-    // Ampliación a pantalla (vecino más próximo) con el resto de subpíxel para un desplazamiento suave.
     const sg = this.screen;
-    {
-      const sc = z * this.dpr;
-      const fx = this.cam.x - this.vw / 2 / z - ox;
-      const fy = this.cam.y - this.vh / 2 / z - oy;
-      sg.setTransform(1, 0, 0, 1, 0, 0);
-      sg.imageSmoothingEnabled = false;
-      sg.drawImage(this.buf, 0, 0, bw, bh, Math.round(-fx * sc), Math.round(-fy * sc), bw * sc, bh * sc);
-    }
     this.drawScreen(sg, t, weather, life);
   }
 
@@ -1090,7 +1195,7 @@ export class WorldScene {
   private drawScreen(g: CanvasRenderingContext2D, t: number, weather: string, life: ReturnType<typeof ensureLife>): void {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawGrade(g, hourOf(life.clock), weather);
-    this.drawNight(g);
+    this.drawNight(g, weather);
     this.drawWeather(g, weather, t);
     this.drawLabels(g);
     this.drawEdgeArrows(g, t);
@@ -1113,33 +1218,83 @@ export class WorldScene {
     }
   }
 
-  private drawStatic(o: StaticObject, look: S.SeasonLook): void {
+  /** Lluvia en el suelo: oscurece la tierra y pinta charcos con reflejo y ondas en caminos y plazas. */
+  private drawWet(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, t: number, storm: boolean): void {
+    // El suelo empapado se oscurece (antes de las sombras y las figuras).
+    g.fillStyle = storm ? 'rgba(14,20,32,0.3)' : 'rgba(18,26,40,0.24)';
+    g.fillRect(x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4);
+    const tiles = this.l.terrain.tiles;
+    for (let ty = Math.floor(y0 / TILE); ty <= Math.ceil(y1 / TILE); ty++)
+      for (let tx = Math.floor(x0 / TILE); tx <= Math.ceil(x1 / TILE); tx++) {
+        const tt = tiles[idx(Math.max(0, tx), Math.max(0, ty))];
+        if (tt !== T.Road && tt !== T.Plaza && tt !== T.Clay) continue;
+        const h2 = Math.imul(tx, 73856093) ^ Math.imul(ty, 19349663);
+        const hh = ((Math.imul(h2 ^ (h2 >>> 13), 1274126177) >>> 0) % 1000) / 1000;
+        if (hh > 0.09) continue;
+        const cx = tx * TILE + 3 + ((hh * 7919) % 1) * 10;
+        const cy = ty * TILE + 4 + ((hh * 104729) % 1) * 8;
+        const rx = 4 + ((hh * 31) % 1) * 7;
+        // Charco sin contorno: forma irregular (dos óvalos), oscuro por dentro y
+        // con el cielo reflejado en una franja; un brillo fino en el borde.
+        g.fillStyle = 'rgba(40,52,70,0.42)';
+        g.beginPath();
+        g.ellipse(cx, cy, rx, rx * 0.34, 0, 0, Math.PI * 2);
+        g.ellipse(cx + rx * 0.45, cy + rx * 0.1, rx * 0.6, rx * 0.26, 0, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = 'rgba(176,192,214,0.32)';
+        g.beginPath();
+        g.ellipse(cx - rx * 0.1, cy - rx * 0.06, rx * 0.7, rx * 0.12, 0, 0, Math.PI * 2);
+        g.fill();
+        g.strokeStyle = 'rgba(230,238,250,0.35)';
+        g.lineWidth = 0.4;
+        g.beginPath();
+        g.ellipse(cx, cy, rx * 0.95, rx * 0.32, 0, Math.PI * 1.1, Math.PI * 1.6);
+        g.stroke();
+        if (this.reduceMotion) continue;
+        // Ondas: anillos que nacen y se abren.
+        for (let k = 0; k < 2; k++) {
+          const ph = ((t / 900 + hh * 7 + k * 0.5) % 1);
+          g.strokeStyle = `rgba(220,232,245,${(0.5 * (1 - ph)).toFixed(3)})`;
+          g.lineWidth = 0.35;
+          g.beginPath();
+          g.ellipse(cx + (k - 0.5) * rx * 0.5, cy, 0.5 + ph * rx * 0.4, (0.5 + ph * rx * 0.4) * 0.36, 0, 0, Math.PI * 2);
+          g.stroke();
+        }
+      }
+  }
+
+  /** Árboles, matorrales, hierba alta, flores, juncos y rocas (pintados), con su sombra. */
+  private drawStatic(o: StaticObject, look: S.SeasonLook, t: number, snowy: boolean, items: Drawable[]): void {
     const g = this.g;
     const r = o.region >= 0 ? this.w.regions[o.region] : undefined;
+    const sec = t / 1000;
+    const wind = this.wxFrame === 'viento' || this.wxFrame === 'tormenta' ? 1 : 0.2;
     switch (o.kind) {
       case 'arbol': {
-        let kind: S.TreeKind = o.tree ?? 'roble';
+        let kind: TreeKind = (o.tree ?? 'roble') as TreeKind;
         // Un ecosistema degradado deja árboles muertos.
         if (r && r.ecology < 0.42 && o.v % 3 !== 0) kind = 'muerto';
-        S.drawSprite(g, S.tree(kind, look, o.v), o.x, o.y);
+        const sun = this.sun;
+        this.shadowQ.push(() => drawTreeShadow(g, kind, look, o.v, o.x, o.y, sun, snowy));
+        const me = ensureLife(this.w).player;
+        const focus = { x: me.x * TILE, y: me.y * TILE };
+        items.push({ y: o.y, draw: () => drawTree(g, kind, look, o.v, o.x, o.y, sec, wind, snowy, focus) });
         break;
       }
       case 'arbusto':
-        S.drawSprite(g, S.tree('arbusto', look, o.v), o.x, o.y);
-        break;
       case 'junco':
       case 'hierba':
       case 'flores':
-        S.drawSprite(g, S.tree(o.kind, look, o.v), o.x, o.y);
-        break;
       case 'roca':
-        S.drawSprite(g, S.rock(o.v, look === 'invierno'), o.x, o.y);
+        // En los niveles bajos se pinta menos hierba alta y flores (las rocas, siempre).
+        if (o.kind !== 'roca' && ((o.v * 2654435761) >>> 0) % 1000 > VQ().grass * 1000) break;
+        items.push({ y: o.y, draw: () => drawSmall(g, o.kind as SmallKind, look, o.v, o.x, o.y, sec, snowy) });
         break;
       case 'pico':
-        S.drawSprite(g, S.peak(o.v), o.x, o.y);
+        items.push({ y: o.y, draw: () => S.drawSprite(g, S.peak(o.v), o.x, o.y) });
         break;
       case 'mojon':
-        S.drawSprite(g, S.boundaryStone(), o.x, o.y);
+        items.push({ y: o.y, draw: () => S.drawSprite(g, S.boundaryStone(), o.x, o.y) });
         break;
     }
   }
@@ -1167,10 +1322,20 @@ export class WorldScene {
         if (!walkable(this.l.terrain.tiles[k]) || this.l.blocked[k]) continue;
         const hx = tx * TILE;
         const hy = ty * TILE;
-        const spr = st.state === 'ruinas' ? S.placeSprite('ruinas') : st.tier === 'campamento' && st.state === 'vivo' ? S.tent(style.roof) : S.house(style, st.state === 'abandonado' ? 'abandonada' : 'normal', Math.floor(hash(st.id, i + 9) * 3), 3 + (i % 2));
-        items.push({ y: hy, draw: () => S.drawSprite(g, spr, hx, hy) });
+        if (st.state === 'ruinas' || (st.tier === 'campamento' && st.state === 'vivo')) {
+          if (st.state === 'ruinas') {
+            const spr = S.placeSprite('ruinas');
+            items.push({ y: hy, draw: () => S.drawSprite(g, spr, hx, hy) });
+          } else {
+            const tt = tentTex(style.roof);
+            items.push({ y: hy, draw: () => put(g, tt, hx, hy) });
+          }
+        } else {
+          const ht = houseTex(style, st.state === 'abandonado' ? 'abandonada' : 'normal', Math.floor(hash(st.id, i + 9) * 3), 3 + (i % 2), 0.4);
+          items.push({ y: hy, draw: () => put(g, ht, hx, hy) });
+        }
       }
-      if (st.state === 'vivo' && st.tier !== 'campamento') items.push({ y: (st.y + 0.5) * TILE, draw: () => S.drawSprite(g, S.prop('pozo'), st.x * TILE, (st.y + 0.5) * TILE) });
+      if (st.state === 'vivo' && st.tier !== 'campamento') items.push({ y: (st.y + 0.5) * TILE, draw: () => put(g, propTex('pozo'), st.x * TILE, (st.y + 0.5) * TILE) });
     }
     for (const p of a.pois) {
       if (!inView(p.x * TILE, p.y * TILE)) continue;
@@ -1194,7 +1359,9 @@ export class WorldScene {
     const st = this.styleOf(regionId);
     const hue = this.hueOf(regionId);
     const night = darkness(life.clock) > 0.3;
+    const snowRoofs = this.chunks.snowyRegion(regionId, seasonOf(w.day));
     const built = Math.min(v.houses.length, town?.houses ?? 3);
+    const wealth = Math.max(0, Math.min(1, marketOf(w, regionId).prosperity));
     const target = housesFor(w, regionId);
     const abandonedFrom = built - (town?.abandoned ?? 0);
     v.houses.forEach((b, i) => {
@@ -1202,15 +1369,19 @@ export class WorldScene {
       const bx = (b.x + b.w / 2) * TILE;
       const by = (b.y + b.h) * TILE;
       if (!inView(bx, by)) return;
-      const state: S.HouseState = i === built ? 'obra' : town?.burned.includes(i) ? 'quemada' : i >= abandonedFrom ? 'abandonada' : 'normal';
+      const state = this.houseState(regionId, i, built, abandonedFrom, wealth);
       // De noche, las ventanas de las casas habitadas se encienden (no todas a la vez).
-      const lit = state === 'normal' && night && (hash(`${regionId}:${i}`) < 0.82 || hourOf(life.clock) < 23);
-      const wins = st.shape === 'redondo' ? [{ x: -b.w * 8 + 10, y: -32, w: 11, h: 11 }] : S.houseWindows(b.w);
+      const lit = (state === 'normal' || state === 'restaurada' || state === 'deteriorada') && night && (hash(`${regionId}:${i}`) < 0.82 || hourOf(life.clock) < 23);
+      const wins = st.shape === 'redondo' ? [{ x: -b.w * 8 + 12, y: -32, w: 11, h: 11 }] : houseWindows(b.w);
       if (lit) for (const wn of wins) this.lights.push({ x: bx + wn.x + wn.w / 2, y: by + wn.y + wn.h / 2, r: 20, k: 0.8 });
+      const ht0 = houseTex(st, state, i % 3, b.w, wealth);
+      const ht = snowRoofs && state !== 'destruida' ? snowCapped(ht0, -WALL_H - 3) : ht0;
+      const sun = this.sun;
+      this.shadowQ.push(() => castShadow(g, silhouette(ht), ht.w, ht.h, ht.ax, ht.ay, bx, by, sun, 0.62));
       items.push({
         y: by,
         draw: () => {
-          S.drawSprite(g, S.house(st, state, i % 3, b.w), bx, by);
+          put(g, ht, bx, by);
           if (lit) for (const wn of wins) this.litWindow(bx + wn.x, by + wn.y, wn.w, wn.h, t + i * 300);
         },
       });
@@ -1224,7 +1395,11 @@ export class WorldScene {
       const by = (b.y + b.h) * TILE;
       if (!inView(bx, by)) continue;
       const extra = b.kind === 'almacen' ? (food < 4 ? 'vacio' : '') : b.kind === 'salon' ? `hsl(${hue} 55% 45%)` : '';
-      items.push({ y: by, draw: () => S.drawSprite(g, S.keyBuilding(b.kind, st, extra), bx, by) });
+      const kt0 = keyTex(b.kind, st, extra, wealth);
+      const kt = snowRoofs ? snowCapped(kt0, -kt0.h * 0.42) : kt0;
+      const sun = this.sun;
+      this.shadowQ.push(() => castShadow(g, silhouette(kt), kt.w, kt.h, kt.ax, kt.ay, bx, by, sun, 0.62));
+      items.push({ y: by, draw: () => put(g, kt, bx, by) });
       if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 42 : 30, k: 0.85 });
       if (b.kind === 'forja') {
         const working = hourOf(life.clock) > 8 && hourOf(life.clock) < (r.militancy > 0.55 ? 23 : 18);
@@ -1237,13 +1412,20 @@ export class WorldScene {
       const px = pr.x * TILE;
       const py = pr.y * TILE;
       if (!inView(px, py)) continue;
-      items.push({ y: py, draw: () => S.drawSprite(g, S.prop(pr.kind, pr.v), px, py) });
+      const frozen = pr.kind === 'fuente' && snowRoofs && seasonOf(w.day) === 'invierno';
+      const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.v);
+      if (pr.kind !== 'valla' && pr.kind !== 'vallaV') this.shadowQ.push(() => castShadow(g, silhouette(pt), pt.w, pt.h, pt.ax, pt.ay, px, py, this.sun, 0.5));
+      if (pr.kind === 'fuente' && !frozen) items.push({ y: py, draw: () => (put(g, pt, px, py), drawFountainWater(g, px, py, this.reduceMotion ? 0 : t)) });
+      else items.push({ y: py, draw: () => put(g, pt, px, py) });
     }
-    if (night) for (const lp of v.lamps) {
+    const gloomy = ['lluvia', 'tormenta', 'niebla'].includes(this.weatherHere());
+    if (night || gloomy) for (const lp of v.lamps) {
       const px = lp.x * TILE;
       const py = lp.y * TILE + 9; // cabeza del farol (el farol mide ~43 px)
       if (!inView(px, py)) continue;
-      this.lights.push({ x: px, y: py, r: 36, k: 0.95 });
+      // La lámpara y, sobre todo, el charco de luz que deja en el suelo.
+      this.lights.push({ x: px, y: py, r: 20, k: 0.9 });
+      this.lights.push({ x: px, y: py + 38, r: 100, k: 1, flat: 0.55 });
       items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
     }
     // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
@@ -1252,7 +1434,7 @@ export class WorldScene {
       const stallGoods = look.stalls[i];
       if (stallGoods === undefined) return; // sin comerciante: no hay puesto
       const open = stallGoods.length > 0;
-      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
+      items.push({ y: s.y * TILE, draw: () => put(g, stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
     });
     void food;
     // Empalizada.
@@ -1331,7 +1513,7 @@ export class WorldScene {
     }
     // Hoguera de la plaza al anochecer.
     const hh = hourOf(life.clock);
-    if ((hh > 19 || hh < 1) && !r.abandoned && weatherIn(w, playerRegion(w)) !== 'lluvia' && weatherIn(w, playerRegion(w)) !== 'tormenta') {
+    if ((hh > 19 || hh < 1) && !r.abandoned && this.weatherHere() !== 'lluvia' && this.weatherHere() !== 'tormenta') {
       const spot = this.fireSpot(regionId);
       const px = spot.x * TILE;
       const py = spot.y * TILE;
@@ -1339,6 +1521,24 @@ export class WorldScene {
       items.push({ y: py, draw: () => this.fire(px, py, t, 1.2) });
       if (!this.reduceMotion && Math.random() < 0.05) this.puff(px, py - 26, 'rgba(120,110,100,', 1);
     }
+  }
+
+  /**
+   * Estado visual de una casa, leído de la simulación: en obra (el pueblo
+   * crece), quemada (guerra), destruida (quemada mientras la guerra sigue),
+   * abandonada (se fue la gente), deteriorada (pobreza), restaurada (se
+   * reconstruye) o normal.
+   */
+  private houseState(regionId: number, i: number, built: number, abandonedFrom: number, wealth: number): BuildState {
+    const r = this.w.regions[regionId];
+    const town = ensureLife(this.w).towns[regionId];
+    const hh = hash(`${regionId}:${i}`, 7);
+    if (i === built) return 'obra';
+    if (town?.burned.includes(i)) return r.flags.guerra && hh < 0.35 ? 'destruida' : 'quemada';
+    if (i >= abandonedFrom) return 'abandonada';
+    if (r.flags.reconstruyendo && hh < 0.6) return 'restaurada';
+    if (wealth < 0.38 && hh < (0.38 - wealth) * 2.6) return 'deteriorada';
+    return 'normal';
   }
 
   /** Hueco más despejado de la plaza para la hoguera (lejos de puestos, bancos y fuente). */
@@ -1377,7 +1577,7 @@ export class WorldScene {
     if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 44, k: 0.9 });
     const sec = t / 1000;
     const lifeW = ensureLife(w);
-    const weather = weatherIn(w, playerRegion(w));
+    const weather = this.weatherHere();
     // Guardias según la tensión; campamentos si hay guerra.
     const war = a.relations[b.id]?.war;
     const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
@@ -1400,13 +1600,13 @@ export class WorldScene {
         hood: weather === 'lluvia' || weather === 'tormenta',
         heavy: weather === 'nieve',
       };
-      items.push({ y: sy, draw: () => drawHuman(g, ap, pose, sx, sy) });
+      this.pushPerson(items, ap, pose, sx, sy);
     }
     if (war) {
       for (let i = 0; i < 3; i++) {
         const tx = px + (i - 1) * 70;
         const ty = py - 70 - (i % 2) * 16;
-        items.push({ y: ty, draw: () => S.drawSprite(g, S.tent(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
+        items.push({ y: ty, draw: () => put(g, tentTex(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
       }
       this.lights.push({ x: px, y: py - 50, r: 64, k: 1 });
       items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.1) });
@@ -1435,7 +1635,7 @@ export class WorldScene {
           const side = i % 2 ? road.a : road.b;
           const ap = this.extraAp(`s:${road.routeId}:${i}`, side, 'guardia', 22 + i * 3);
           const pose = this.marchPose(pos.dx, 0, t / 1000 * 9 + i * 1.3, 'enfadado', px, py, false);
-          items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
+          this.pushPerson(items, ap, pose, px, py);
         }
       }
     }
@@ -1448,7 +1648,7 @@ export class WorldScene {
       const color = cv.c.status === 'atacada' ? '#5a4a3a' : main ? GOOD_COLOR[main] : '#d9c08a';
       const moving = cv.c.status === 'viaje' && day;
       items.push({ y: py, draw: () => S.drawSprite(g, S.cart(moving ? Math.floor(t / 250) % 4 : 0, cv.dx < 0, color), px, py) });
-      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => S.drawSprite(g, S.prop('cajas', 1), px + 26, py + 8) });
+      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => put(g, propTex('cajas', 1), px + 26, py + 8) });
     }
     // Refugiados: caminan de verdad de su región a la de destino.
     for (const r of w.regions) {
@@ -1469,7 +1669,7 @@ export class WorldScene {
           a.outfit.patches = true;
         });
         const pose = this.marchPose(pos.dx, 0, t / 1000 * 6 + i, i % 2 ? 'triste' : 'miedo', px, py, true);
-        items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
+        this.pushPerson(items, ap, pose, px, py);
       }
     }
     // Tus caravanas: salen del almacén y llegan días después.
@@ -1488,7 +1688,7 @@ export class WorldScene {
         y: py + 12,
         draw: () => {
           S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, pos.dx < 0, c.kind === 'regalo' ? '#c98ad0' : '#e3c070'), px, py);
-          drawHuman(g, driver, dpose, px + (pos.dx < 0 ? 10 : -10), py + 12);
+          drawFigure(g, driver, dpose, px + (pos.dx < 0 ? 10 : -10), py + 12);
           g.fillStyle = '#5a3a22';
           g.fillRect(px - 1, py - 78, 2, 26);
           g.fillStyle = '#e9b44c';
@@ -1553,15 +1753,37 @@ export class WorldScene {
       g.textBaseline = 'middle';
       g.fillText('!', e.x * TILE, Math.round(e.y * TILE - 43.5 + bob));
     }
+    // Foco: un resplandor cálido en el suelo bajo quien o lo que se puede usar (no bajo el propio jugador).
     const f = this.focus ? this.targetPos(this.focus) : undefined;
-    if (f) {
-      g.strokeStyle = 'rgba(255,240,190,0.9)';
-      g.lineWidth = 1.5;
-      g.setLineDash([2, 2]);
+    const meP = ensureLife(this.w).player;
+    if (f && Math.hypot(f.x - meP.x, f.y - meP.y) > 0.7) {
+      const fx = f.x * TILE;
+      const fy = f.y * TILE;
+      const pulse = 0.75 + Math.sin(performance.now() / 420) * 0.25;
+      g.save();
+      g.translate(fx, fy);
+      g.scale(1, 0.38);
+      const gr = g.createRadialGradient(0, 0, 2, 0, 0, 12);
+      gr.addColorStop(0, `rgba(255,226,150,${(0.42 * pulse).toFixed(3)})`);
+      gr.addColorStop(0.65, `rgba(255,210,120,${(0.18 * pulse).toFixed(3)})`);
+      gr.addColorStop(1, 'rgba(255,210,120,0)');
+      g.fillStyle = gr;
       g.beginPath();
-      g.ellipse(Math.round(f.x * TILE), Math.round(f.y * TILE), 8, 3, 0, 0, Math.PI * 2);
-      g.stroke();
-      g.setLineDash([]);
+      g.arc(0, 0, 12, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+    // Destino tocado: un anillo que se abre y se apaga.
+    if (this.tapMark) {
+      const age = (performance.now() - this.tapMark.t) / 650;
+      if (age >= 1 || !this.path.length) this.tapMark = age >= 1 ? null : this.tapMark;
+      if (this.tapMark) {
+        g.strokeStyle = `rgba(255,236,190,${(0.8 * (1 - age)).toFixed(3)})`;
+        g.lineWidth = 1.1;
+        g.beginPath();
+        g.ellipse(this.tapMark.x * TILE, this.tapMark.y * TILE, 3 + age * 7, (3 + age * 7) * 0.4, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
     }
   }
 
@@ -1576,7 +1798,8 @@ export class WorldScene {
       if (e.inside || Math.hypot(e.x - me.x, e.y - me.y) > 5) continue;
       const f = this.folkById.get(id);
       if (!f || f.lastMet < 0 || id === this.converseId) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE - 33 * (this.apCache.get(id)?.ap.height ?? 1));
+      const ap0 = this.apCache.get(id)?.ap;
+      const p = this.toScreen(e.x * TILE, e.y * TILE - (ap0 ? figureTop(ap0) + 4 : 35));
       g.font = '600 12px Georgia, serif';
       g.lineWidth = 3;
       g.strokeStyle = 'rgba(30,25,20,0.7)';
@@ -1690,84 +1913,112 @@ export class WorldScene {
    * Noche: una capa de oscuridad azulada con huecos donde hay luz (ventanas,
    * faroles, hogueras, tu farol) y, encima, un halo cálido aditivo.
    */
-  private drawNight(g: CanvasRenderingContext2D): void {
+  private drawNight(g: CanvasRenderingContext2D, weather: string): void {
     const life = ensureLife(this.w);
     const d = darkness(life.clock);
-    if (d <= 0.01) return;
-    const dc = this.dark.getContext('2d')!;
-    const W = this.dark.width;
-    const H = this.dark.height;
-    dc.globalCompositeOperation = 'source-over';
-    dc.clearRect(0, 0, W, H);
-    dc.fillStyle = `rgba(8,12,34,${Math.min(0.9, d * 1.38)})`;
-    dc.fillRect(0, 0, W, H);
-    dc.globalCompositeOperation = 'destination-out';
-    const vis: { x: number; y: number; r: number; k: number }[] = [];
+    const gloom = weather === 'tormenta' ? 0.45 : weather === 'lluvia' || weather === 'niebla' ? 0.3 : 0;
+    // Cuánto se notan las luces: de noche del todo; con lluvia o niebla, algo.
+    const glow = Math.max(d, gloom * 0.6);
+    if (glow <= 0.01) return;
+    const vis: { x: number; y: number; r: number; k: number; flat: number }[] = [];
+    const cap = VQ().lights;
     for (const l of this.lights) {
       const p = this.toScreen(l.x, l.y);
       const r = l.r * this.cam.z;
       if (p.x < -r || p.y < -r || p.x > this.vw + r || p.y > this.vh + r) continue;
-      vis.push({ x: p.x, y: p.y, r, k: l.k });
-      if (vis.length > 140) break;
+      vis.push({ x: p.x, y: p.y, r, k: l.k, flat: l.flat ?? 1 });
+      if (vis.length >= cap) break;
     }
-    for (const l of vis) {
-      const x = l.x / 2;
-      const y = l.y / 2;
-      const r = l.r / 2;
-      const grad = dc.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(0,0,0,${0.95 * l.k})`);
-      grad.addColorStop(0.45, `rgba(0,0,0,${0.55 * l.k})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      dc.fillStyle = grad;
-      dc.beginPath();
-      dc.arc(x, y, r, 0, Math.PI * 2);
-      dc.fill();
+    if (d > 0.01) {
+      // La luna enfría y oscurece sin borrar las formas: un relleno que
+      // multiplica (algo más claro arriba, donde «está» el cielo). Las luces
+      // se suman después: el fuego devuelve el color a lo que toca.
+      const m = Math.min(1, d * 1.2);
+      overMultiply(g, 1 - m * 0.83, 1 - m * 0.76, 1 - m * 0.53, this.vw, this.vh);
     }
-    // Los charcos de luz no son neutros: el fuego tiñe de ámbar lo que ilumina.
-    dc.globalCompositeOperation = 'source-over';
-    for (const l of vis) {
-      const x = l.x / 2;
-      const y = l.y / 2;
-      const r = l.r / 2;
-      const grad = dc.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(255,150,60,${0.1 * l.k * d})`);
-      grad.addColorStop(0.6, `rgba(200,90,40,${0.16 * l.k * d})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      dc.fillStyle = grad;
-      dc.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    g.drawImage(this.dark, 0, 0, this.vw, this.vh);
-    // Halo cálido: la luz del fuego tiñe lo que toca.
+    // 4) El fuego tiñe de ámbar lo que toca (aditivo).
     g.globalCompositeOperation = 'lighter';
+    // Texturas suaves ampliadas: el filtrado bilineal basta (el bicúbico de «high» es muy caro al ampliar).
+    g.imageSmoothingQuality = 'low';
+    const warm = lightSprite('warm');
+    // Solo las luces que de verdad iluminan alrededor (faroles, hogueras, puertas):
+    // las ventanas ya brillan por sí mismas. Cada halo es mucha superficie que pintar.
     for (const l of vis) {
-      const grad = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
-      grad.addColorStop(0, `rgba(255,150,60,${0.17 * d * l.k})`);
-      grad.addColorStop(1, 'rgba(255,120,40,0)');
-      g.fillStyle = grad;
-      g.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+      if (l.r < 26 * this.cam.z) continue;
+      g.globalAlpha = Math.min(1, (d > 0.01 ? 0.75 : 0.4) * glow * l.k);
+      g.drawImage(warm, l.x - l.r, l.y - l.r * l.flat, l.r * 2, l.r * 2 * l.flat);
     }
+    g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
   }
 
-  /** Luz del día: mañana suave y rosada, mediodía limpio, tarde dorada. */
+  /**
+   * Luz del día por franjas: madrugada fría y violácea, mañana suave,
+   * mediodía limpio, tarde dorada, atardecer anaranjado con la luz baja
+   * desde el oeste. Con nubes o lluvia, todo se vuelve gris, frío y menos
+   * saturado. Los tintes de cada franja se combinan en un solo color de
+   * multiplicar y otro de aclarar: dos pasadas de pantalla, no nueve.
+   */
   private drawGrade(g: CanvasRenderingContext2D, h: number, weather: string): void {
-    const tint = (color: string, a: number, op: GlobalCompositeOperation) => {
-      if (a <= 0.004) return;
-      g.globalCompositeOperation = op;
-      g.fillStyle = color.replace('A', a.toFixed(3));
-      g.fillRect(0, 0, this.vw, this.vh);
-    };
+    const W = this.vw;
+    const H = this.vh;
     const bump = (c: number, wdt: number) => Math.max(0, 1 - Math.abs(h - c) / wdt);
-    const dawn = bump(6.6, 1.8);
-    const dusk = bump(18.9, 2.1);
-    const grey = weather === 'nublado' || weather === 'lluvia' || weather === 'tormenta' || weather === 'niebla' ? 1 : 0;
-    tint('rgba(255,206,196,A)', dawn * 0.32 * (1 - grey * 0.6), 'multiply');
-    tint('rgba(255,236,220,A)', dawn * 0.08, 'screen');
-    tint('rgba(255,150,80,A)', dusk * 0.55 * (1 - grey * 0.45), 'multiply');
-    tint('rgba(255,150,70,A)', dusk * 0.08 * (1 - grey), 'screen');
-    tint('rgba(140,150,170,A)', grey * (weather === 'tormenta' ? 0.6 : 0.26), 'multiply');
-    if (weather === 'despejado' && h > 10 && h < 16) tint('rgba(255,250,235,A)', 0.05, 'screen');
+    const rain = weather === 'lluvia' || weather === 'tormenta';
+    const grey = weather === 'nublado' || rain || weather === 'niebla' || weather === 'nieve' ? 1 : 0;
+    const clear = 1 - grey * 0.75;
+    const dawn = bump(6.2, 1.6);
+    const morning = bump(9, 2);
+    const noon = bump(12.8, 1.8);
+    const afternoon = bump(16.2, 2);
+    const dusk = bump(18.9, 1.9);
+    const mul = [1, 1, 1];
+    const scr = [0, 0, 0];
+    const M = (r: number, gg: number, b: number, a: number) => {
+      if (a <= 0) return;
+      mul[0] *= 1 - a * (1 - r / 255);
+      mul[1] *= 1 - a * (1 - gg / 255);
+      mul[2] *= 1 - a * (1 - b / 255);
+    };
+    const Sc = (r: number, gg: number, b: number, a: number) => {
+      if (a <= 0) return;
+      scr[0] = 1 - (1 - scr[0]) * (1 - (a * r) / 255);
+      scr[1] = 1 - (1 - scr[1]) * (1 - (a * gg) / 255);
+      scr[2] = 1 - (1 - scr[2]) * (1 - (a * b) / 255);
+    };
+    M(150, 150, 215, dawn * 0.4);
+    Sc(255, 200, 205, dawn * 0.1 * clear);
+    Sc(255, 244, 226, morning * 0.06 * clear);
+    M(236, 242, 255, morning * 0.12 * clear); // sombras de la mañana algo frías
+    Sc(255, 252, 240, noon * 0.06 * clear);
+    M(255, 214, 160, afternoon * 0.26 * clear); // tarde dorada
+    Sc(255, 196, 120, afternoon * 0.07 * clear);
+    M(255, 140, 80, dusk * 0.5 * clear);
+    M(170, 110, 160, dusk * 0.12);
+    // Lluvia y tormenta: menos luz y más fría.
+    // (gris azulado: apaga a la vez la luz y el color, sin una pasada aparte de saturación)
+    M(126, 138, 158, rain ? (weather === 'tormenta' ? 0.62 : 0.48) : grey * 0.28);
+    if (rain) Sc(70, 74, 80, 0.16); // y levanta los negros: aire húmedo
+    if (weather === 'nieve') Sc(200, 215, 235, 0.1);
+    // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
+    // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
+    overMultiply(g, mul[0], mul[1], mul[2], W, H);
+    overScreen(g, scr[0], scr[1], scr[2], W, H);
     g.globalCompositeOperation = 'source-over';
+    if (!VQ().grade) return;
+    // Resplandor del sol bajo (por la mañana desde el este; al atardecer, desde el oeste).
+    const low = Math.max(dawn * 0.6 + morning * 0.25, dusk + afternoon * 0.35) * clear;
+    if (low > 0.02) {
+      const fromWest = h > 12;
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = Math.min(1, low) * 0.7;
+      g.drawImage(lightSprite(fromWest ? 'sunW' : 'sunE'), 0, 0, W, H);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+    }
+    // Viñeta suave (textura cacheada): centra la mirada en el protagonista.
+    g.globalAlpha = 0.8 + grey * 0.25;
+    g.drawImage(lightSprite('vignette'), 0, 0, W, H);
+    g.globalAlpha = 1;
   }
 
   private litWindow(x: number, y: number, w: number, h: number, t: number): void {
@@ -1789,46 +2040,25 @@ export class WorldScene {
 
   private drawBirds(g: CanvasRenderingContext2D): void {
     if (!this.birds.length) return;
-    g.strokeStyle = 'rgba(40,36,34,0.8)';
-    g.lineWidth = 1.3;
+    g.strokeStyle = 'rgba(46,40,40,0.75)';
+    g.lineWidth = 0.55;
     g.beginPath();
     for (const b of this.birds) {
-      const k = Math.sin(b.ph) * 3;
-      g.moveTo(b.x - 5, b.y - k);
-      g.quadraticCurveTo(b.x - 2, b.y - 2, b.x, b.y);
-      g.quadraticCurveTo(b.x + 2, b.y - 2, b.x + 5, b.y - k);
+      const k = Math.sin(b.ph) * 1.4;
+      g.moveTo(b.x - 2.4, b.y - k);
+      g.quadraticCurveTo(b.x - 1, b.y - 1, b.x, b.y);
+      g.quadraticCurveTo(b.x + 1, b.y - 1, b.x + 2.4, b.y - k);
     }
     g.stroke();
   }
 
   private drawWeather(g: CanvasRenderingContext2D, weather: string, t: number): void {
-    if (weather === 'despejado' || weather === 'nublado') {
-      if (weather === 'nublado') (g.fillStyle = 'rgba(60,70,80,0.12)'), g.fillRect(0, 0, this.vw, this.vh);
-      return;
-    }
-    if (weather === 'niebla') {
-      const grad = g.createRadialGradient(this.vw / 2, this.vh / 2, 60, this.vw / 2, this.vh / 2, Math.max(this.vw, this.vh) * 0.7);
-      grad.addColorStop(0, 'rgba(220,225,230,0.05)');
-      grad.addColorStop(1, 'rgba(220,225,230,0.65)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, this.vw, this.vh);
-      return;
-    }
-    // Las gotas, copos y hojas se dibujan en el lienzo del mundo (pixel art);
-    // aquí solo queda el tono del cielo y el relámpago.
-    if (weather === 'lluvia' || weather === 'tormenta') {
-      g.fillStyle = weather === 'tormenta' ? 'rgba(20,26,44,0.22)' : 'rgba(40,50,70,0.12)';
-      g.fillRect(0, 0, this.vw, this.vh);
-      if (this.wfx.flash > 0) {
-        g.fillStyle = `rgba(235,240,255,${(this.wfx.flash * 0.55).toFixed(3)})`;
-        g.fillRect(0, 0, this.vw, this.vh);
-      }
-    } else if (weather === 'nieve') {
-      g.fillStyle = 'rgba(200,215,235,0.08)';
-      g.fillRect(0, 0, this.vw, this.vh);
-    }
+    // La lluvia, la nieve, la niebla y los relámpagos los pinta el sistema de clima; el tono del cielo va en la gradación.
+    void g;
+    void weather;
     void t;
   }
+
 
   // -------------------------------------------------------------------------
   // Aspecto y postura de las personas
@@ -1836,24 +2066,27 @@ export class WorldScene {
   /** Nivel de detalle por distancia al jugador (y por zoom). */
   private lodAt(x: number, y: number): 0 | 1 | 2 {
     const me = ensureLife(this.w).player;
-    const d = Math.hypot(x - me.x, y - me.y) * (this.cam.z < 0.85 ? 1.6 : 1) * (this.quality === 'baja' ? 1.8 : 1);
-    return d < 10 ? 0 : d < 22 ? 1 : 2;
+    const d = Math.hypot(x - me.x, y - me.y) * (this.cam.z < 0.85 ? 1.6 : 1);
+    const q = VQ();
+    return d < q.lodNear ? 0 : d < q.lodMid ? 1 : 2;
   }
 
   /**
    * Ropa según el tiempo: con nieve, capa de abrigo con piel; con lluvia,
    * capa encerada con capucha. Solo para quien no lleva ya una.
    */
-  private dressed = new WeakMap<Appearance, { key: string; ap: Appearance }>();
+  // Una variante por combinación de tiempo: volver de la lluvia al sol no obliga a repintar a nadie.
+  private dressed = new WeakMap<Appearance, Record<string, Appearance>>();
   private dress(ap: Appearance, wet: boolean, cold: boolean): Appearance {
     if ((!wet && !cold) || ap.age < 6) return ap;
     const key = `${wet}:${cold}`;
-    const c = this.dressed.get(ap);
-    if (c && c.key === key) return c.ap;
+    let c = this.dressed.get(ap);
+    if (!c) this.dressed.set(ap, (c = {}));
+    if (c[key]) return c[key];
     const o = ap.outfit;
     const cloak = o.cloak ? { ...o.cloak, fur: o.cloak.fur || cold, hood: true } : { color: cold ? S.shade(o.topColor, 0.72) : '#5d5446', fur: cold, hood: true, clasp: '#8a7a5a' };
     const out: Appearance = { ...ap, outfit: { ...o, cloak, hat: wet && o.hat === 'paja' ? undefined : o.hat } };
-    this.dressed.set(ap, { key, ap: out });
+    c[key] = out;
     return out;
   }
 
@@ -1871,7 +2104,14 @@ export class WorldScene {
     const key = `${regionId}:${role}`;
     const c = this.apCache.get(id);
     if (c && c.key === key) return c.ap;
-    if (this.apCache.size > 1600) this.apCache.clear();
+    if (this.apCache.size > 1600) {
+      // Se olvidan los más antiguos poco a poco (no todos de golpe: eso repintaría a todo el mundo).
+      let n = 200;
+      for (const k of this.apCache.keys()) {
+        if (k === '@player' || n-- <= 0) continue;
+        this.apCache.delete(k);
+      }
+    }
     const f: Folk = { id, name: id, regionId, role, age, born: 0, house: 0, alive: true, trust: 0.5, fear: 0, gratitude: 0, resentment: 0, honesty: 0.5, memories: [], lastMet: -1 };
     const ap = appearanceOf(this.w, f);
     mod?.(ap);
@@ -1881,7 +2121,8 @@ export class WorldScene {
 
   private playerAp(lantern: boolean): Appearance {
     const p = ensureLife(this.w).player;
-    const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${JSON.stringify(p.look ?? '')}`;
+    if (this.playerLook !== p.look) (this.playerLook = p.look), (this.playerLookKey = JSON.stringify(p.look ?? ''));
+    const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${this.playerLookKey}`;
     const c = this.apCache.get('@player');
     if (c && c.key === key) return c.ap;
     const ap = playerAppearance(p);
@@ -1913,7 +2154,9 @@ export class WorldScene {
     // Con lluvia, los que no pueden refugiarse se cubren con los brazos.
     if (wet && !e.moving && (action === 'idle' || action === 'look')) action = 'cross';
     const expr: Expr = react?.expr ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
-    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: wet, heavy: cold };
+    // Con lluvia: quien puede, saca un paraguas encerado; los demás, la capucha.
+    const umbrella = wet && (action === 'walk' || action === 'idle' || action === 'look' || action === 'talk' || action === 'listen') && (f?.role === 'comerciante' || f?.role === 'lider' || hash(id, 11) < 0.22);
+    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: wet && !umbrella, heavy: cold, umbrella, wet };
   }
 
   private playerPose(sec: number, wet: boolean, cold: boolean): Pose {
@@ -1925,15 +2168,85 @@ export class WorldScene {
     const side = Math.abs(fx) > 0.45 || Math.abs(fx) > Math.abs(fy) * 0.8;
     const facing: Facing = side ? 'side' : fy < 0 ? 'back' : 'front';
     const action: Action = this.playerMoving ? (this.playerRun ? 'run' : 'walk') : conv ? 'listen' : 'idle';
-    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet, heavy: cold };
+    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet, heavy: cold, wet };
   }
 
   /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
   private marchPose(dx: number, dy: number, phase: number, expr: Expr, px: number, py: number, slow: boolean): Pose {
     const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
-    const weather = weatherIn(this.w, playerRegion(this.w));
+    const weather = this.weatherHere();
     return { facing, flip: dx < 0, phase: slow ? phase * 0.8 : phase, action: 'walk', t: phase, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
   }
 }
 
 export { TW };
+
+/** Texturas de luz pintadas una vez (sin crear degradados en cada fotograma). */
+const lightCache = new Map<string, HTMLCanvasElement>();
+function lightSprite(kind: 'hole' | 'warm' | 'moon' | 'sunW' | 'sunE' | 'vignette'): HTMLCanvasElement {
+  const hit = lightCache.get(kind);
+  if (hit) return hit;
+  const c = document.createElement('canvas');
+  const S = kind === 'vignette' || kind === 'sunW' || kind === 'sunE' || kind === 'moon' ? 128 : 96;
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const h = S / 2;
+  const radial = (stops: [number, string][], cx = h, cy = h, r0 = 0, r1 = h) => {
+    const gr = g.createRadialGradient(cx, cy, r0, cx, cy, r1);
+    for (const [o, col] of stops) gr.addColorStop(o, col);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, S, S);
+  };
+  switch (kind) {
+    case 'hole': // caída suave tipo 1/(1+d²)
+      radial([[0, 'rgba(0,0,0,1)'], [0.2, 'rgba(0,0,0,0.92)'], [0.42, 'rgba(0,0,0,0.62)'], [0.65, 'rgba(0,0,0,0.3)'], [0.85, 'rgba(0,0,0,0.1)'], [1, 'rgba(0,0,0,0)']]);
+      break;
+    case 'warm':
+      radial([[0, 'rgba(255,190,110,0.9)'], [0.3, 'rgba(255,150,70,0.5)'], [0.7, 'rgba(220,100,40,0.14)'], [1, 'rgba(200,80,30,0)']]);
+      break;
+    case 'moon': {
+      const gr = g.createLinearGradient(0, 0, 0, S);
+      gr.addColorStop(0, 'rgba(90,120,190,0.55)');
+      gr.addColorStop(1, 'rgba(90,120,190,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, S, S);
+      break;
+    }
+    case 'sunW':
+    case 'sunE': {
+      const west = kind === 'sunW';
+      radial([[0, west ? 'rgba(255,170,90,0.3)' : 'rgba(255,200,150,0.3)'], [1, 'rgba(255,170,90,0)']], west ? S * 1.05 : -S * 0.05, S * 0.15, 0, S * 0.9);
+      break;
+    }
+    case 'vignette':
+      radial([[0, 'rgba(12,8,18,0)'], [0.45, 'rgba(12,8,18,0)'], [1, 'rgba(12,8,18,0.36)']], h, h * 0.96, 0, h * 1.42);
+      break;
+  }
+  lightCache.set(kind, c);
+  return c;
+}
+
+/**
+ * Aproxima «multiplicar por (r,g,b)» con una mezcla normal: un velo de color
+ * con la opacidad que oscurece igual un tono medio. Mucho más barato.
+ */
+function overMultiply(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
+  const mx = Math.max(r, gg, b);
+  if (mx > 0.995 && Math.min(r, gg, b) > 0.995) return;
+  const a = Math.min(0.95, 1 - (r + gg + b) / 3 + (mx - Math.min(r, gg, b)) * 0.35);
+  if (a <= 0.004) return;
+  // Color del velo para que un gris medio (0,5) quede en 0,5·c.
+  const k = (c: number) => Math.round(Math.max(0, Math.min(1, (0.5 * c - 0.5 * (1 - a)) / a)) * 255);
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = `rgba(${k(r)},${k(gg)},${k(b)},${a.toFixed(3)})`;
+  g.fillRect(0, 0, W, H);
+}
+
+/** «Aclarar» con un velo claro y transparente (exacto si los tres canales son iguales). */
+function overScreen(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
+  const a = Math.max(r, gg, b);
+  if (a <= 0.004) return;
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = `rgba(${Math.round((r / a) * 255)},${Math.round((gg / a) * 255)},${Math.round((b / a) * 255)},${a.toFixed(3)})`;
+  g.fillRect(0, 0, W, H);
+}

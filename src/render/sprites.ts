@@ -5,7 +5,8 @@
  * mide 48 px; una puerta, ~40 px; una casa, ~95 px de alto; un roble, ~95 px;
  * un caballo es más grande que una persona.
  */
-import { Painter, pixelize, tone } from './pixel';
+import { Painter, tone } from './pixel';
+import { VQ } from '../visual/quality';
 
 export interface Sprite {
   canvas: HTMLCanvasElement;
@@ -16,6 +17,10 @@ export interface Sprite {
 }
 
 const cache = new Map<string, Sprite>();
+/** Al cambiar de nivel gráfico se repinta todo a la nueva resolución. */
+export function clearSprites(): void {
+  cache.clear();
+}
 const M = 2; // margen para el contorno
 
 /**
@@ -24,19 +29,25 @@ const M = 2; // margen para el contorno
  * alfa todo o nada y contorno oscuro.
  */
 function make(key: string, w: number, h: number, ax: number, ay: number, draw: (g: CanvasRenderingContext2D) => void, outline = true): Sprite {
-  const hit = cache.get(key);
+  // Fase visual: se pinta a la resolución del nivel gráfico, con suavizado (sin pixelizar).
+  const res = VQ().spriteRes;
+  const k = `${key}@${res}`;
+  const hit = cache.get(k);
   if (hit) return hit;
+  void outline;
+  const W = Math.ceil(w) + M * 2;
+  const H = Math.ceil(h) + M * 2;
   const c = document.createElement('canvas');
-  c.width = Math.ceil(w) + M * 2;
-  c.height = Math.ceil(h) + M * 2;
-  const g = c.getContext('2d', { willReadFrequently: true })!;
+  c.width = Math.ceil(W * res);
+  c.height = Math.ceil(H * res);
+  const g = c.getContext('2d')!;
+  g.scale(res, res);
   g.translate(M, M);
   g.lineJoin = 'round';
   g.lineCap = 'round';
   draw(g);
-  pixelize(c, outline);
-  const s = { canvas: c, w: c.width, h: c.height, ax: Math.round(ax) + M, ay: Math.round(ay) + M };
-  cache.set(key, s);
+  const s = { canvas: c, w: W, h: H, ax: ax + M, ay: ay + M };
+  cache.set(k, s);
   return s;
 }
 
@@ -50,7 +61,7 @@ function makeK(key: string, w: number, h: number, ax: number, ay: number, k: num
 
 export function drawSprite(g: CanvasRenderingContext2D, s: Sprite, x: number, y: number, alpha = 1): void {
   if (alpha !== 1) g.globalAlpha = alpha;
-  g.drawImage(s.canvas, Math.round(x) - s.ax, Math.round(y) - s.ay);
+  g.drawImage(s.canvas, x - s.ax, y - s.ay, s.w, s.h);
   if (alpha !== 1) g.globalAlpha = 1;
 }
 

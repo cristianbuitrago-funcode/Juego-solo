@@ -1,5 +1,5 @@
 import { DEFAULT_PLAYER_LOOK, playerAppearance, SKINS, type PlayerLook } from '../../render/appearance';
-import { drawPortrait } from '../../render/human';
+import { drawPortrait } from '../../visual/figure/portrait';
 import { KNOWS, MAX_LEVEL, questions, SKILLS, STANDING, TALENTS, tryFragment, whoAmI, type KnowId, type SkillId } from '../../world/identity';
 import { ensureLife, heirs } from '../../world/life';
 import { ROLE_TITLE } from '../../world/folk';

@@ -163,7 +163,8 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   const child = f.role === 'nino' || f.age < 14;
   const old = f.age >= 60;
   const skin = SKINS[r() < 0.75 ? P.skins[Math.floor(r() * P.skins.length)] : Math.floor(r() * SKINS.length)];
-  const hairColor = old ? pick(r, ['#d8d4cc', '#bdb8b0', '#e8e4dc', '#9a948c']) : pick(r, HAIRS);
+  // Las canas llegan poco a poco: sal y pimienta desde los cuarenta y tantos.
+  const hairColor = old ? pick(r, ['#d8d4cc', '#bdb8b0', '#e8e4dc', '#9a948c']) : mixHex(pick(r, HAIRS), '#c4beb4', Math.max(0, Math.min(0.6, (f.age - 42) / 28)));
   const hairStyles: HairStyle[] = fem ? ['largo', 'coleta', 'trenza', 'mono', 'melena', 'rizado'] : ['corto', 'rapado', 'rizado', 'corto', 'melena', old ? 'calvo' : 'corto'];
   const beard: Beard = fem || child ? 'ninguna' : pick(r, old ? ['larga', 'corta', 'bigote', 'ninguna'] : ['ninguna', 'ninguna', 'sombra', 'corta', 'bigote', 'perilla', 'larga']);
 
@@ -307,8 +308,9 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   }
   const ap: Appearance = {
     seed: seedOf(f.id),
-    height: child ? 0.6 + Math.min(1, f.age / 14) * 0.18 : (fem ? 0.95 : 1) * (0.96 + r() * 0.08) * (old ? 0.97 : 1),
-    build: child ? 0.92 : 0.88 + r() * 0.28 + (f.role === 'artesano' || f.role === 'guardia' ? 0.06 : 0),
+    // Siluetas variadas: hay gente baja, alta, flaca y corpulenta; el adolescente aún no ha acabado de crecer.
+    height: child ? 0.6 + Math.min(1, f.age / 14) * 0.18 : (fem ? 0.95 : 1) * (0.89 + r() * 0.2) * (old ? 0.96 : 1) * (f.age < 18 ? 0.88 + (f.age - 14) * 0.03 : 1),
+    build: child ? 0.92 : f.age < 18 ? 0.86 : 0.82 + r() * r() * 0.55 + (f.role === 'artesano' || f.role === 'guardia' ? 0.1 : 0) + (f.age > 40 ? 0.04 : 0),
     fem,
     age: f.age,
     skin,
@@ -324,7 +326,7 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
     mouthW: 0.85 + r() * 0.3,
     ears: 0.9 + r() * 0.25,
     freckles: r() < 0.15,
-    wrinkles: old ? 0.5 + (f.age - 60) / 40 : f.age > 45 ? 0.25 : 0,
+    wrinkles: old ? 0.5 + (f.age - 60) / 40 : f.age > 40 ? 0.12 + (f.age - 40) / 80 : 0,
     stoop: old ? Math.min(1, (f.age - 58) / 25) : 0,
     outfit: o,
     important: !!f.charId,
