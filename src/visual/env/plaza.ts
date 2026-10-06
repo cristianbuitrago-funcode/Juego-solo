@@ -63,7 +63,7 @@ export function plazaLook(seed: number, regionId: number, cx: number, cy: number
     // Radios en plazas: el anillo de puestos y bancos ocupa casi todo el interior, así que
     // jardineras y estandartes rematan el borde (entre farolas) y el árbol queda fuera, al fondo.
     if (p === 'arbol') place('arbol', big ? 2 : 1, 1.2, 1.2, 1.45, true);
-    else if (p === 'jardinera') place('jardinera', big ? 5 : 4, 0.6, 1.08, 1.22);
+    else if (p === 'jardinera') (place('jardinera', 2, 0.5, 0.58, 0.84), place('jardinera', big ? 3 : 2, 0.6, 1.08, 1.22));
     else if (p === 'mesa') place('mesa', 2, 0.8, 0.42, 0.62);
     else if (p === 'estandarte') place('estandarte', big ? 4 : 3, 0.4, 1.02, 1.15);
     else {

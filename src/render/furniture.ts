@@ -37,9 +37,22 @@ export class Furniture {
     return look;
   }
 
-  /** Si aparece dentro de un mueble, se le aparta hacia abajo (hacia la cámara). */
+  /** Si aparece dentro de un mueble, se le lleva al sitio libre más cercano (preferiblemente delante). */
   unstick(me: { x: number; y: number }): void {
-    for (let i = 0; i < 16 && this.solidAt(me.x, me.y) && passable(this.w(), this.l(), me.x, me.y + 0.15); i++) me.y += 0.15;
+    if (!this.solidAt(me.x, me.y)) return;
+    const ok = (x: number, y: number) => !this.solidAt(x, y) && passable(this.w(), this.l(), x, y);
+    for (let r = 0.25; r <= 3; r += 0.25)
+      for (let k = 0; k < 12; k++) {
+        // Empieza por abajo (hacia la cámara) y gira a ambos lados.
+        const a = Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
+        const x = me.x + Math.cos(a) * r;
+        const y = me.y + Math.sin(a) * r;
+        if (ok(x, y)) {
+          me.x = x;
+          me.y = y;
+          return;
+        }
+      }
   }
 
   /**
@@ -54,8 +67,8 @@ export class Furniture {
       let list = this.solids.get(v);
       if (!list) {
         const F: Partial<Record<string, [number, number, number]>> = {
-          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [1.25, 0.66, 0.4],
-          cartel: [0.3, 0.2, 0.05], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
+          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [1.25, 0.95, 0.2],
+          cartel: [0.55, 0.38, 0.1], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
           carro: [1.7, 0.5, 0.3], abrevadero: [1.15, 0.32, 0.2], heno: [0.95, 0.42, 0.25], lenya: [0.9, 0.3, 0.15],
         };
         list = [];
@@ -63,7 +76,7 @@ export class Furniture {
           const f = F[p.kind];
           if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
         }
-        for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.45, rx: 1.25, ry: 0.55 });
+        for (const st of v.stalls) if (Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6) list.push({ x: st.x, y: st.y - 0.45, rx: 1.25, ry: 0.55 });
         const D = { arbol: [0.75, 0.4], jardinera: [0.85, 0.3], mesa: [1.15, 0.4], estandarte: [0.25, 0.15] } as const;
         for (const d of this.plazaOf(v.regionId).decor) list.push({ x: d.x, y: d.y - 0.1, rx: D[d.kind][0], ry: D[d.kind][1] });
         this.solids.set(v, list);

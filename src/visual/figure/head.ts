@@ -272,9 +272,10 @@ function frontFeatures(g: CanvasRenderingContext2D, ap: Appearance, B: Body, fac
   g.quadraticCurveTo(W * 0.16, ny - nw * 0.6, nw * 0.95, ny + nw * 0.05);
   g.stroke();
   // Aletas y orificios.
-  ell(g, 0, ny + nw * 0.25, nw * 1.1, nw * 0.5, alpha(shd(ap.skin, 0.3), 0.45));
-  ell(g, -nw * 0.45, ny + nw * 0.32, nw * 0.24, nw * 0.13, alpha(shd(ap.skin, 0.6), 0.75));
-  ell(g, nw * 0.45, ny + nw * 0.32, nw * 0.24, nw * 0.13, alpha(shd(ap.skin, 0.6), 0.75));
+  // (Suaves: una banda oscura bajo la nariz se leía como bigote, sobre todo en las caras femeninas.)
+  ell(g, 0, ny + nw * 0.22, nw * 0.85, nw * 0.36, alpha(shd(ap.skin, 0.25), 0.22));
+  ell(g, -nw * 0.4, ny + nw * 0.3, nw * 0.18, nw * 0.1, alpha(shd(ap.skin, 0.55), 0.5));
+  ell(g, nw * 0.4, ny + nw * 0.3, nw * 0.18, nw * 0.1, alpha(shd(ap.skin, 0.55), 0.5));
   ell(g, -nw * 0.2, ny - nw * 0.05, nw * 0.5, nw * 0.32, alpha(lit(ap.skin, 0.35), 0.6));
   // Sombra bajo el labio inferior y hoyuelo de la barbilla.
   ell(g, 0, H * (B.child ? 0.4 : 0.385), W * 0.2, H * 0.025, alpha(shd(ap.skin, 0.35), 0.35));
@@ -996,11 +997,14 @@ function hat(g: CanvasRenderingContext2D, ap: Appearance, B: Body, facing: Facin
       blob(g, [-W * 1.45, H * 0.0, -W * 1.05, top + H * 0.05, 0, top - H * 0.18, W * 1.05, top + H * 0.05, W * 1.45, H * 0.0, W * 1.6, H * 0.2, 0, -H * 0.05, -W * 1.6, H * 0.2], vg(top, H * 0.2, '#d9b44a'));
       break;
     case 'boina':
-      // Envuelve el cráneo: cúpula ladeada que cae sobre una sien.
-      // Cúpula ladeada sobre la coronilla: deja a la vista buena parte de la frente.
+      // Cúpula ladeada sobre la coronilla: deja a la vista buena parte de la frente
+      // (se sube un poco: en primer plano llegaba hasta las cejas).
+      g.save();
+      g.translate(0, -H * 0.07);
       blob(g, [-W * 1.02, top + H * 0.16, -W * 0.92, top - H * 0.08, -W * 0.2, top - H * 0.2, W * 0.85, top - H * 0.12, W * 1.22, top + H * 0.06, W * 1.0, top + H * 0.17], vg(top - H * 0.2, top + H * 0.17, c), 0.6);
       blob(g, [-W * 1.0, top + H * 0.13, W * 1.0, top + H * 0.13, W * 0.98, top + H * 0.19, -W * 0.98, top + H * 0.19], shd(c, 0.3), 0.3);
       ell(g, W * 0.05, top - H * 0.18, W * 0.09, H * 0.05, shd(c, 0.2));
+      g.restore();
       break;
     case 'capucha':
       hood(g, ap, B, facing);

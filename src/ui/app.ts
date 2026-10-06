@@ -520,9 +520,11 @@ export class App {
     if (!cine) return;
     this.scene?.cinematic({ seconds: 3.4 });
     this.stage.classList.add('cine');
+    // Al llegar a un sitio, lo que se susurraba antes (p. ej. «hay humo hacia allí») ya no vale.
+    if (/^(Llegas|Vuelves)/.test(top)) this.whisperBox?.replaceChildren();
     // Un solo temporizador: si llega otro cartel, el HUD no reaparece a mitad del plano.
     window.clearTimeout(this.cineTimer);
-    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3450);
+    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3650); // después de que el rótulo se vaya (3,6 s): no salta arriba al final
     window.setTimeout(() => b.remove(), 3600);
   }
 

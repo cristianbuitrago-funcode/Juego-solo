@@ -109,3 +109,34 @@ function benchmark(): number {
     return 0;
   }
 }
+
+/** Estado del nivel adaptativo entre ventanas de medida. */
+export interface AdaptState {
+  calm: number; // ventanas tranquilas seguidas
+  sinceChange: number; // ms desde el último cambio de nivel
+  gpuCapped: boolean; // bajó por la GPU: no vuelve a subir (evita ir y venir cada medio minuto)
+  bestGap: number; // mejor mediana de intervalo vista (ms)
+}
+
+/**
+ * Decide el nivel tras una ventana de medida (sin DOM: se puede probar).
+ * p95: tiempo de dibujo (CPU); gapMed: mediana del intervalo entre fotogramas (0 = sin dato).
+ */
+export function adaptTier(tier: Tier, cap: Tier, p95: number, gapMed: number, st: AdaptState): Tier {
+  const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
+  const i = order.indexOf(tier);
+  if (gapMed > 0) st.bestGap = Math.min(st.bestGap, gapMed);
+  // Limitado por la GPU: el ritmo empeoró mucho respecto al mejor visto, o el móvil no pasa de
+  // ~40 fps desde el arranque. Esto último solo baja hasta MEDIA (una pantalla fija a 30 Hz no
+  // debe acabar en BAJA).
+  const gpuBound = (gapMed > 22 && gapMed > st.bestGap * 1.4) || (gapMed > 24 && i >= 2);
+  let next = i;
+  if ((p95 > 16 || gpuBound) && i > 0 && st.sinceChange > 15000) {
+    next = i - 1;
+    if (gpuBound) st.gpuCapped = true;
+  }
+  st.calm = p95 < 7 && !gpuBound ? st.calm + 1 : 0;
+  if (next === i && !st.gpuCapped && st.calm >= 2 && i < order.indexOf(cap) && st.sinceChange > 30000) next = i + 1;
+  if (next !== i) st.calm = 0;
+  return order[next];
+}

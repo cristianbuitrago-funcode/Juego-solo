@@ -27,7 +27,7 @@ import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } f
 import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { marketOf } from '../world/economy';
-import { VQ, resolveTier, setTier, type QualitySetting, type Tier } from '../visual/quality';
+import { adaptTier, VQ, resolveTier, setTier, type AdaptState, type QualitySetting } from '../visual/quality';
 import { nextFrame, put, silhouette } from '../visual/paint';
 import { drawFire, drawFlame, drawPuff } from './fx';
 import { Weather } from '../visual/weather';
@@ -236,7 +236,7 @@ export class WorldScene {
   private frameMs: number[] = [];
   /** Intervalos entre fotogramas (ms) y el mejor ritmo visto: así se nota la carga de la GPU, que no sale en el tiempo de dibujo. */
   private gapMs: number[] = [];
-  private bestGap = 1e9;
+  private adapt: AdaptState = { calm: 0, sinceChange: 0, gpuCapped: false, bestGap: 1e9 };
   private lastFrameT = 0;
   private lastDowngrade = 0;
   setQuality(q: QualitySetting): void {
@@ -321,7 +321,6 @@ export class WorldScene {
   /** Tapado por una pantalla opaca (diario, mapa): no hace falta pintar el mundo. */
   covered = false;
   private frameNo = 0;
-  private calmWindows = 0;
   /**
    * En automático, el nivel se adapta al dispositivo midiendo cuánto tarda en
    * pintarse cada fotograma: si el 95 % pasa de 16 ms, baja un nivel; si dos
@@ -335,31 +334,16 @@ export class WorldScene {
     const sorted = this.frameMs.sort((a, b) => a - b);
     const p95 = sorted[Math.floor(sorted.length * 0.95)];
     this.frameMs.length = 0;
-    // Ritmo real de la pantalla: la mediana de los intervalos. Si antes se alcanzó un ritmo
-    // mucho mejor, la pantalla puede ir más rápido y algo (GPU incluida) la está frenando.
+    // Ritmo real de la pantalla: la mediana de los intervalos entre fotogramas.
     let gapMed = 0;
-    if (this.gapMs.length > 60) {
-      const gs = this.gapMs.sort((a, b) => a - b);
-      gapMed = gs[Math.floor(gs.length / 2)];
-      this.bestGap = Math.min(this.bestGap, gapMed);
-    }
+    if (this.gapMs.length > 60) gapMed = this.gapMs.sort((a, c) => a - c)[Math.floor(this.gapMs.length / 2)];
     this.gapMs.length = 0;
-    // Limitado por la GPU: el ritmo empeoró mucho respecto al mejor visto, o el móvil no pasa
-    // de ~40 fps desde el arranque (comparado con el refresco habitual de 60 Hz). Esto último solo
-    // baja hasta MEDIA: una pantalla fija a 30 Hz no debe acabar en BAJA.
-    const gpuBound = (gapMed > 22 && gapMed > this.bestGap * 1.4) || (gapMed > 24 && VQ().tier !== 'low' && VQ().tier !== 'medium');
     const now = performance.now();
-    const order: Tier[] = ['low', 'medium', 'high', 'ultra'];
-    const i = order.indexOf(VQ().tier);
-    const cap = order.indexOf(resolveTier('auto'));
-    let next = i;
-    if ((p95 > 16 || gpuBound) && i > 0 && now - this.lastDowngrade > 15000) next = i - 1;
-    this.calmWindows = p95 < 7 && !gpuBound ? this.calmWindows + 1 : 0;
-    if (this.calmWindows >= 2 && i < cap && now - this.lastDowngrade > 30000) next = i + 1;
-    if (next === i) return;
+    this.adapt.sinceChange = now - this.lastDowngrade;
+    const next = adaptTier(VQ().tier, resolveTier('auto'), p95, gapMed, this.adapt);
+    if (next === VQ().tier) return;
     this.lastDowngrade = now;
-    this.calmWindows = 0;
-    setTier(order[next]);
+    setTier(next);
     // Las texturas llevan la resolución en su clave: las nuevas se pintan según se
     // necesitan y las viejas salen solas del caché (vaciarlo de golpe daba un tirón).
     S.clearSprites();
@@ -958,7 +942,7 @@ export class WorldScene {
     // Varios oficios esperan en el mismo punto (la puerta de la forja, del salón…): cada
     // uno se coloca un poco a su aire para no fundirse en una sola figura con tres martillos.
     if (r.inside || f.role === 'anciano' || f.role === 'comerciante') return r;
-    return { ...r, x: r.x + (hash(f.id, 21) - 0.5) * 1.6, y: r.y + (hash(f.id, 22) - 0.5) * 0.7 };
+    return { ...r, x: r.x + (hash(f.id, 21) - 0.5) * 2.6, y: r.y + (hash(f.id, 22) - 0.5) * 0.9 };
   }
 
   private moveFolk(dt: number): void {
@@ -1688,6 +1672,8 @@ export class WorldScene {
     v.stalls.slice(0, Math.min(v.stalls.length, 6)).forEach((s, i) => {
       const stallGoods = look.stalls[i];
       if (stallGoods === undefined) return; // sin comerciante: no hay puesto
+      // Un puesto no se monta encima del poste de caminos.
+      if (Math.hypot(s.x - (v.sign.x + 1.2), s.y - (v.sign.y + 0.4)) < 2.6) return;
       const open = stallGoods.length > 0;
       const stx = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
       items.push({ y: s.y * TILE, draw: () => put(g, stx, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
@@ -1873,7 +1859,7 @@ export class WorldScene {
         // En guerra se miran unos a otros: cada bando hacia la barrera.
         flip: war ? i % 2 === 0 : i % 2 === 0,
         phase: 0,
-        action: war ? (row % 2 === 0 ? 'fight' : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : 'point') : close ? 'idle' : 'look',
+        action: war ? (row % 2 === 0 ? (Math.floor(sec / 2.2 + i * 0.7) % 3 === 0 ? 'argue' : 'fight') : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : Math.floor(sec / 1.6 + i) % 3 === 1 ? 'point' : 'look') : close ? 'idle' : 'look',
         t: sec + i,
         expr: war ? (row % 2 === 0 ? 'hostil' : 'enfadado') : mil > 0.55 ? 'desconfianza' : 'neutral',
         lod: this.lodAt(sx / TILE, sy / TILE),

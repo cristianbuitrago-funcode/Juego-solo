@@ -17,6 +17,8 @@ export interface Terrain {
   elev: Uint8Array;
   variant: Uint8Array;
   river: { x: number; y: number }[];
+  /** Teselas tal como salieron de la generación, antes de que el trazado de pueblos ponga plazas y caminos. */
+  natural?: Uint8Array;
 }
 
 const cache = new Map<number, Terrain>();

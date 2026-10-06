@@ -117,12 +117,14 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
       break;
   }
   // Gente: de pie o sentada, en tamaño de «retrato de grupo».
-  const scale = 2.1;
-  const sorted = [...o.people].sort((a, b) => a.x - b.x);
-  for (const p of sorted) {
+  // Dos filas de profundidad (los de atrás, algo más pequeños y más arriba): un grupo, no una fila de cola.
+  const byX = [...o.people].sort((a, b) => a.x - b.x).map((p, i) => ({ p, back: i % 2 === 1 && o.people.length > 2 }));
+  const sorted = [...byX.filter((q) => q.back), ...byX.filter((q) => !q.back)];
+  for (const { p, back } of sorted) {
+    const scale = back ? 1.8 : 2.1;
     g.save();
-    const px = 40 + p.x * (IW - 80);
-    const py = IH - 6;
+    const px = 40 + p.x * (IW - 80) + (back ? 10 : 0);
+    const py = IH - 6 - (back ? 16 : 0);
     g.translate(px, py);
     g.scale(scale, scale);
     // Sombra en el suelo.

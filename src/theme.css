@@ -156,3 +156,7 @@ body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .diar
 .diary-head .tabs button { padding: 0 13px; }
 /* El rótulo de llegada, alto: no tapa el hito de la plaza ni las caras. */
 .banner { top: 12%; }
+/* En el plano de cine, el rótulo va en la franja inferior, como un subtítulo: no tapa caras ni el hito. */
+.stage.cine .banner { top: auto; bottom: 1.8%; }
+.stage.cine .banner div { font-size: 1.65em; }
+.stage.cine .banner small { font-size: 0.78em; }

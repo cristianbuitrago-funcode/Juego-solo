@@ -98,6 +98,11 @@ const natural = (t: number) => t === T.Grass || t === T.Meadow || t === T.Forest
 
 function buildLayout(w: WorldState): Layout {
   const terrain = getTerrain(w);
+  // El trazado escribe plazas y caminos en las teselas del terreno (que está en caché). Si se
+  // vuelve a construir (otra partida abierta entre medias, otra instancia del módulo), debe partir
+  // del terreno original: si no, los pueblos se colocan en otro sitio y no casan con lo guardado.
+  if (terrain.natural) terrain.tiles.set(terrain.natural);
+  else terrain.natural = terrain.tiles.slice();
   const tiles = terrain.tiles;
   const blocked = new Uint8Array(TW * TH);
   const rng = new Rng(w.seed ^ 0x5bd1e995);
@@ -344,8 +349,20 @@ function furnish(v: Village, r: { isHome: boolean }, tiles: Uint8Array, blocked:
   // Cuatro bancos (los ancianos van a sentarse en ellos), girados a gusto de cada pueblo.
   const benches = 4;
   const turn = r.isHome ? Math.PI / 4 : Math.PI / 4 + Math.round(pr.next() * 3) * (Math.PI / 8);
+  // Los puestos giran con los bancos: cada plaza tiene su trazado y nunca se pisan.
+  const spin = turn - Math.PI / 4;
+  if (spin) for (const st of v.stalls) {
+    const dx = st.x - (v.cx + 0.5);
+    const dy = st.y - (v.cy + 0.5);
+    st.x = v.cx + 0.5 + dx * Math.cos(spin) - dy * Math.sin(spin);
+    st.y = v.cy + 0.5 + dx * Math.sin(spin) + dy * Math.cos(spin);
+  }
   for (let k = 0; k < benches; k++) {
-    const a = (k / benches) * Math.PI * 2 + turn;
+    let a = (k / benches) * Math.PI * 2 + turn;
+    // El banco que caería sobre el poste de caminos (al sur) se corre a un lado.
+    const bx = v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6);
+    const by = v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6);
+    if (Math.hypot(bx - (v.sign.x + 1.2), by - (v.sign.y + 0.4)) < 2.6) a -= Math.PI / 5;
     add('banco', v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6), v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6));
   }
   // Los faroles conservan su corona de seis (bloquean el paso: moverlos cambia por dónde camina la gente).
@@ -618,4 +635,9 @@ export function nearestWalkable(l: Layout, x: number, y: number, maxR = 12): { x
 /** Puerta de un edificio (tesela delante de su fachada, hacia abajo). */
 export function doorOf(b: Building): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h + 0.6 };
+}
+
+/** Solo para pruebas: construye el trazado de nuevo, sin caché (sobre el mismo terreno en caché). */
+export function rebuildLayout(w: WorldState): Layout {
+  return buildLayout(w);
 }
