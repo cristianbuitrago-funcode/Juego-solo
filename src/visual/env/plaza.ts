@@ -71,6 +71,19 @@ export function plazaLook(seed: number, regionId: number, cx: number, cy: number
       garlands.push([s, (s + 1) % 6], [(s + 3) % 6, (s + 4) % 6]);
     }
   }
+  // Un par a ambos lados del hito, delante: lo primero que se ve al llegar a la plaza.
+  const flankKind: DecorKind = (seed + regionId) % 3 === 0 ? 'estandarte' : 'jardinera';
+  for (const [dx, dy] of [[3.2, 1.9], [3.4, 1.2], [3.0, 2.6], [3.6, 0.6]]) {
+    const L = { x: ox - dx, y: oy + dy };
+    const Rr = { x: ox + dx, y: oy + dy };
+    const rr = flankKind === 'estandarte' ? 0.4 : 0.5;
+    if (!free(L.x, L.y, rr) || !free(Rr.x, Rr.y, rr) || !ground(L.x, L.y) || !ground(Rr.x, Rr.y)) continue;
+    for (const q of [L, Rr]) {
+      decor.push({ kind: flankKind, x: q.x, y: q.y, v: (seed + regionId * 7) % 1000 });
+      taken.push({ x: q.x, y: q.y, r: rr });
+    }
+    break;
+  }
   return { paving, decor, garlands };
 }
 

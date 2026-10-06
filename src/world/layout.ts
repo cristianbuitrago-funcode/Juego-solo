@@ -94,6 +94,13 @@ export function getLayout(w: WorldState): Layout {
   return l;
 }
 
+/** Poste de caminos en el borde de la plaza: al sur en el pueblo de origen, algo ladeado en los demás. */
+function signAt(seed: number, cx: number, cy: number, plazaR: number): { x: number; y: number } {
+  const a = Math.PI / 2 + [0, -0.55, 0.55][seed % 3];
+  const d = plazaR - 0.6;
+  return { x: cx + 0.5 + Math.cos(a) * d - 0.5 * (1 - Math.abs(Math.sin(a))) , y: cy + Math.sin(a) * d };
+}
+
 const natural = (t: number) => t === T.Grass || t === T.Meadow || t === T.Forest || t === T.Sand || t === T.Clay || t === T.Rock || t === T.Salt;
 
 function buildLayout(w: WorldState): Layout {
@@ -161,7 +168,7 @@ function buildLayout(w: WorldState): Layout {
         const edge = i * i + j * j > (clearR - 4) * (clearR - 4) && terrain.variant[k] < 110;
         if ((tiles[k] === T.Forest && !edge) || (tiles[k] === T.Marsh && i * i + j * j < 100)) tiles[k] = T.Grass;
       }
-    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0, props: [], sign: { x: cx + 0.5, y: cy + plazaR - 0.6 }, lamps: [] };
+    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0, props: [], sign: signAt(r.isHome ? 0 : r.id, cx, cy, plazaR), lamps: [] };
   });
 
   // 2) Edificios clave alrededor de la plaza y ranuras de casas.
@@ -367,7 +374,8 @@ function furnish(v: Village, r: { isHome: boolean }, tiles: Uint8Array, blocked:
   }
   // Los faroles conservan su corona de seis (bloquean el paso: moverlos cambia por dónde camina la gente).
   const lamps = 6;
-  const lturn = 0;
+  // La corona de farolas gira en cada pueblo (el de origen la conserva).
+  const lturn = r.isHome ? 0 : ((v.regionId * 37) % 6) * (Math.PI / 18);
   for (let k = 0; k < lamps; k++) {
     const a = (k / lamps) * Math.PI * 2 + lturn;
     const p = { x: v.cx + 0.5 + Math.cos(a) * (v.plazaR + 0.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR + 0.6) };

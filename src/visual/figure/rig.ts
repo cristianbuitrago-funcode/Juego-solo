@@ -134,15 +134,20 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       break;
     }
     case 'hammer': {
-      const c = (t * 1.6 + seed * 0.1) % 1;
-      const up = c < 0.6 ? c / 0.6 : 1 - (c - 0.6) / 0.4;
-      r.lean = 0.12;
-      r.arms[1] = { a: 0.6 + up * 2.0, b: 0.4 + up * 0.5, lift: 0.4, fist: true };
-      r.arms[0] = { a: 0.55, b: 0.9, lift: 0.3 };
-      r.legs[0] = { a: -0.12, b: 0.05, lift: 0 };
-      r.legs[1] = { a: 0.14, b: -0.1, lift: 0 };
-      r.head.nod = 0.12;
-      r.item = 0.2 - up * 0.3;
+      // Sube despacio (anticipación), baja de golpe y rebota un poco: el martillo pesa.
+      const c = (t * 1.3 + seed * 0.1) % 1;
+      const rise = c / 0.7;
+      const up = c < 0.7 ? rise * rise * (3 - 2 * rise) : Math.max(0, 1 - ((c - 0.7) / 0.12) ** 2) - (c > 0.82 ? Math.sin(((c - 0.82) / 0.18) * Math.PI) * 0.08 : 0);
+      r.lean = 0.1 + (1 - up) * 0.14;
+      r.y = (1 - up) * 0.4;
+      r.arms[1] = { a: 0.75 + up * 2.15, b: 0.25 + up * 0.55, lift: 0.4, fist: true };
+      // La otra mano sujeta la pieza sobre el yunque.
+      r.arms[0] = { a: 0.7, b: 0.75, lift: 0.3, fist: true };
+      r.legs[0] = { a: -0.16, b: 0.05, lift: 0 };
+      r.legs[1] = { a: 0.2, b: -0.15, lift: 0 };
+      r.head.nod = 0.16;
+      // Como la azada: abajo, la cabeza del martillo pega por delante; arriba, queda detrás.
+      r.item = 0.45 - up * 2.4;
       break;
     }
     case 'fish': {

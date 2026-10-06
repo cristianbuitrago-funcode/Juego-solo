@@ -1,3 +1,5 @@
+import { drawInkIcon, drawInkRow, onInkIconReady } from './inkicons';
+import { paintRelief } from './relief';
 import { RESOURCES } from '../../core/content/resources';
 import { regionAt, WORLD_H, WORLD_W } from '../../core/gen/mapgen';
 import { fbm } from '../../core/noise';
@@ -43,6 +45,8 @@ export class MapView {
   private g: CanvasRenderingContext2D;
   private base = document.createElement('canvas');
   private baseCtx: CanvasRenderingContext2D;
+  /** Montañas, bosques, juncos y olas a tinta (solo lo conocido). */
+  private relief = document.createElement('canvas');
   private regionMap = new Int16Array(BW * BH);
   private grain = new Uint8Array(BW * BH);
   private edge = new Uint8Array(BW * BH); // 1 frontera, 2 costa, 3 orilla
@@ -76,6 +80,7 @@ export class MapView {
     this.base.height = BH;
     this.baseCtx = this.base.getContext('2d')!;
     this.bindInput();
+    onInkIconReady(() => this.markDirty());
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(parent);
     this.resize();
@@ -90,6 +95,7 @@ export class MapView {
   destroy(): void {
     cancelAnimationFrame(this.raf);
     this.ro?.disconnect();
+    onInkIconReady(null);
     this.canvas.remove();
   }
 
@@ -235,6 +241,7 @@ export class MapView {
       d[o + 3] = 255;
     }
     this.baseCtx.putImageData(this.image, 0, 0);
+    paintRelief(w, (id) => w.regions[id]?.isHome || w.intel[id]?.level > 0, this.relief);
     this.dirty = true;
   }
 
@@ -433,6 +440,7 @@ export class MapView {
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'high';
     g.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
+    g.drawImage(this.relief, 0, 0, WORLD_W, WORLD_H);
     this.drawRiver(g);
     this.drawRoutes(g, t);
     this.drawLayer(g, t);
@@ -579,14 +587,14 @@ export class MapView {
           g.font = '16px system-ui, sans-serif';
           g.textAlign = 'center';
           g.textBaseline = 'middle';
-          g.fillText(tr.map((x) => ({ comercio: '⚖', fronteras: '⛳', defensa: '🛡', recursos: '📦', alianza: '🤝', paz: '🕊' })[x.kind]).join(''), (a.x + b.x) / 2, (a.y + b.y) / 2);
+          drawInkRow(g, tr.map((x) => ({ comercio: '⚖', fronteras: '⛳', defensa: '🛡', recursos: '📦', alianza: '🤝', paz: '🕊' })[x.kind]), (a.x + b.x) / 2, (a.y + b.y) / 2, 20);
         }
       }
       for (const c of pol.claims) if (known(c.a) && known(c.b)) {
         const a = w.regions[c.a].center;
         const b = w.regions[c.b].center;
         g.font = '14px system-ui, sans-serif';
-        g.fillText('⚑', a.x * 0.4 + b.x * 0.6, a.y * 0.4 + b.y * 0.6);
+        drawInkIcon(g, '⚑', a.x * 0.4 + b.x * 0.6, a.y * 0.4 + b.y * 0.6, 18);
       }
     }
     if (this.layer === 'comercio') {
@@ -640,7 +648,7 @@ export class MapView {
         else if (orgs.length) icons.push('✊');
         if ((pol.rebellions[r.id]?.stage ?? 0) >= 2 && (w.intel[r.id].level >= 2 || r.isHome)) icons.push('🗡');
         if (pol.secrets.some((s) => s.known && !s.public && s.regionId === r.id)) icons.push('🗝');
-        if (icons.length) g.fillText(icons.join(' '), r.center.x + 34, r.center.y - 30);
+        if (icons.length) drawInkRow(g, icons, r.center.x + 34, r.center.y - 30, 22);
       }
     }
   }
@@ -669,16 +677,14 @@ export class MapView {
     for (const [id] of Object.entries(a.ports)) if (known(Number(id))) {
       const c = w.regions[Number(id)].center;
       g.font = '16px system-ui, sans-serif';
-      g.fillText('⚓', c.x - 30, c.y + 26);
+      drawInkIcon(g, '⚓', c.x - 30, c.y + 26, 20);
     }
     for (const s of a.settlements) {
       if (!known(s.regionId)) continue;
       const x = s.x * 2;
       const y = s.y * 2;
       if (s.state !== 'vivo') {
-        g.font = '14px system-ui, sans-serif';
-        g.fillStyle = '#5a4a3a';
-        g.fillText('⌂', x, y);
+        drawInkIcon(g, '🏚', x, y, 16);
         continue;
       }
       const size = 3 + TIER_ORDER.indexOf(s.tier) * 2;
@@ -695,7 +701,7 @@ export class MapView {
     }
     for (const p of a.pois) if (p.found !== undefined) {
       g.font = '13px system-ui, sans-serif';
-      g.fillText({ ruinas: '🏚', monumento: '🗿', batalla: '⚔', cueva: '🕳', oasis: '🌴', pecio: '⛵', cantera: '⛏' }[p.kind], p.x * 2, p.y * 2);
+      drawInkIcon(g, { ruinas: '🏚', monumento: '🗿', batalla: '⚔', cueva: '🕳', oasis: '🌴', pecio: '⛵', cantera: '⛏' }[p.kind], p.x * 2, p.y * 2, 18);
     }
     // Nombres de los estados (capa «Estados»).
     if (this.layer === 'estados' && w.life?.society) for (const st of statesOf(w)) if (st.regions.length > 1 && known(st.capital)) {
@@ -818,7 +824,7 @@ export class MapView {
       g.font = '600 11px system-ui, sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(m.kind === 'observar' ? '👁' : m.kind === 'espiar' ? '👂' : m.kind === 'investigar' ? '🔎' : m.kind === 'sabotaje' ? '🔥' : '✉', p.x, p.y + 1);
+      drawInkIcon(g, m.kind === 'observar' ? '👁' : m.kind === 'espiar' ? '👂' : m.kind === 'investigar' ? '🔎' : m.kind === 'sabotaje' ? '🔥' : '✉', p.x, p.y, 14, false);
     }
   }
 
@@ -857,9 +863,28 @@ export class MapView {
         g.lineTo(p.x - 8, p.y + 9);
         g.lineTo(p.x - 11, p.y - 2);
         g.closePath();
-      } else g.arc(p.x, p.y, 6, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
+        g.fill();
+        g.stroke();
+      } else {
+        // Un pueblo: dos casitas con tejado (o una sombra de casa si aún no lo conoces).
+        for (const [dx, s0] of [[-4, 0.85], [4, 1]] as const) {
+          const hx = p.x + dx;
+          const sz = 6 * s0;
+          g.beginPath();
+          g.rect(hx - sz * 0.75, p.y - sz * 0.2, sz * 1.5, sz * 1.1);
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          g.moveTo(hx - sz, p.y - sz * 0.15);
+          g.lineTo(hx, p.y - sz * 1.15);
+          g.lineTo(hx + sz, p.y - sz * 0.15);
+          g.closePath();
+          g.fillStyle = intel.level === 0 ? '#7a746a' : '#b0583a';
+          g.fill();
+          g.stroke();
+          g.fillStyle = intel.level === 0 ? '#9a948a' : '#f3e6c4';
+        }
+      }
       // Nombre.
       const name = intel.level === 0 ? '¿?' : r.name;
       g.font = `${r.isHome ? 700 : 600} ${r.isHome ? 15 : 14}px Alegreya, Georgia, serif`;
@@ -890,11 +915,7 @@ export class MapView {
       if (r.flags.guerra && intel.level > 0) icons.includes('⚔') || icons.push('⚔');
       if (w.petitions.some((x) => x.regionId === r.id)) icons.push('❗');
       if (w.rumors.some((x) => x.known && x.about === r.id && !x.investigated && w.day - x.day < 6)) icons.push('💬');
-      if (icons.length) {
-        g.font = '14px system-ui, sans-serif';
-        g.textBaseline = 'middle';
-        g.fillText(icons.join(' '), p.x, p.y - 22);
-      }
+      if (icons.length) drawInkRow(g, icons, p.x, p.y - 24, 16);
     }
   }
 }

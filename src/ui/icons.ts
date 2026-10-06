@@ -210,3 +210,11 @@ export function watchIcons(root: HTMLElement): MutationObserver {
   mo.observe(root, { childList: true, subtree: true, characterData: true });
   return mo;
 }
+
+/** SVG autónomo (colores fijos) del icono que sustituye a un emoji, para pintarlo en un lienzo. */
+export function iconSvg(emoji: string, ink = '#2b1e15', accent = '#d9a441'): string | null {
+  const name = EMOJI[emoji.replace(/️/g, '')];
+  if (!name) return null;
+  const body = (ICONS[name] ?? ICONS.estrella).replace(/currentColor/g, ink).replace(/var\(--ico-accent\)/g, accent);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48">${body}</svg>`;
+}

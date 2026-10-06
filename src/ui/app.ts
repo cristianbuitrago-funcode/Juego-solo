@@ -446,7 +446,7 @@ export class App {
       life.visited[id] = w.day;
       return;
     }
-    if (prev >= 0 || first) this.banner(homey ? 'Vuelves a casa' : first ? 'Llegas a' : 'Has entrado en', r.name);
+    if (prev >= 0 || first) this.banner(homey ? 'De vuelta en' : first ? 'Llegas a' : 'Has entrado en', r.name);
     if (first) {
       life.visited[id] = w.day;
       if (prev >= 0 || ident?.mode !== 'forastero') this.notes(exploreLearning(w, true));
@@ -521,7 +521,7 @@ export class App {
     this.scene?.cinematic({ seconds: 3.4 });
     this.stage.classList.add('cine');
     // Al llegar a un sitio, lo que se susurraba antes (p. ej. «hay humo hacia allí») ya no vale.
-    if (/^(Llegas|Vuelves)/.test(top)) this.whisperBox?.replaceChildren();
+    if (/^(Llegas|De vuelta)/.test(top)) this.whisperBox?.replaceChildren();
     // Un solo temporizador: si llega otro cartel, el HUD no reaparece a mitad del plano.
     window.clearTimeout(this.cineTimer);
     this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3650); // después de que el rótulo se vaya (3,6 s): no salta arriba al final

@@ -89,10 +89,16 @@ export function showGallery(root: HTMLElement): void {
     fig(worker, pose({ action: a, facing: a === 'run' || a === 'work' || a === 'hammer' ? 'side' : i % 3 === 0 ? 'front' : 'side', t: 0.35 + i * 0.4, phase: 1.2 }), x, y, 6);
     label(a, x - 40, y + 40);
   });
+  // Tiras de fotogramas: el ciclo completo de la azada y del martillo (anticipación, golpe, recuperación).
+  label('Ciclo de trabajo: azada y martillo', 20, 1900);
+  for (let i = 0; i < 8; i++) {
+    fig(worker, pose({ action: 'work', facing: 'side', t: i * 0.139 }), 70 + i * 95, 2140, 4.6);
+    fig(worker, pose({ action: 'hammer', facing: 'side', t: i * 0.078 }), 860 + i * 95, 2140, 4.6);
+  }
   // Fila 6: multitud (identidad: nadie es un clon).
-  label('Veinte vecinos al azar', 20, 2200);
+  label('Veinte vecinos al azar', 20, 2230);
   for (let i = 0; i < 20; i++) {
     const r = (['campesino', 'comerciante', 'artesano', 'pescador', 'pastor', 'posadero', 'nino', 'anciano'] as FolkRole[])[i % 8];
-    fig(appearanceOf(w, folk(`multi${i}`, r, r === 'nino' ? 8 : r === 'anciano' ? 70 : 18 + i * 2, i % w.regions.length)), pose({ facing: i % 4 === 1 ? 'side' : 'front', t: i }), 50 + i * 78, 2500, 4.6);
+    fig(appearanceOf(w, folk(`multi${i}`, r, r === 'nino' ? 8 : r === 'anciano' ? 70 : 18 + i * 2, i % w.regions.length)), pose({ facing: i % 4 === 1 ? 'side' : 'front', t: i }), 50 + i * 78, 2520, 4.6);
   }
 }

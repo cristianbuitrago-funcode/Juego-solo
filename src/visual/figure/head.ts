@@ -528,10 +528,19 @@ function mouth(g: CanvasRenderingContext2D, ap: Appearance, x: number, y: number
     if (!teeth || round) ell(g, x, y + hgt * 0.75, w * 0.4, hgt * 0.25, 'rgb(170,70,70)');
   };
   switch (kind) {
-    case 'flat':
-      curve(H * 0.01);
-      ell(g, x, y + H * 0.035, w * 0.55, H * 0.018, alpha(lip, 0.6));
+    case 'flat': {
+      // Boca en reposo: más corta y del color del labio, con el labio inferior visible.
+      // (Una raya ancha y oscura justo bajo la nariz se leía como un bigote.)
+      const ww = w * 0.74;
+      ell(g, x, y + H * 0.03, ww * 0.62, H * 0.022, alpha(lip, 0.75));
+      g.strokeStyle = shd(lip, 0.18);
+      g.lineWidth = lw * 0.9;
+      g.beginPath();
+      g.moveTo(x - ww, y + H * 0.004);
+      g.quadraticCurveTo(x, y + H * 0.014, x + ww, y + H * 0.004);
+      g.stroke();
       break;
+    }
     case 'smile':
       curve(H * 0.09, shd(lip, 0.3), lw * 1.15);
       ell(g, x, y + H * 0.06, w * 0.5, H * 0.016, alpha(lit(lip, 0.1), 0.5));

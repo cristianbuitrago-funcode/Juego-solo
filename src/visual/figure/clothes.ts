@@ -78,7 +78,7 @@ export function paintTorso(g: CanvasRenderingContext2D, ap: Appearance, B: Body,
   const skin = ap.skin;
   const side = facing === 'side';
   const back = facing === 'back';
-  const k = side ? 0.58 : 1;
+  const k = side ? 0.7 : 1; // de perfil, algo de pecho y espalda: no una lámina
   // Cuello.
   const nw = B.headW * (B.child ? 0.5 : ap.fem ? 0.4 : 0.47);
   ell(g, side ? S * 0.05 : 0, -T - B.neck * 0.6, nw * (side ? 0.85 : 1), B.neck * 1.3, cyl(g, -nw, nw, skin));
