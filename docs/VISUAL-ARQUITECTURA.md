@@ -55,7 +55,12 @@ COMPOSICIÓN (render/scene.ts, render/chunks.ts)
    │                       núcleos) y gradación por franjas; recibe luces, cámara y tamaño
    ├─ render/furniture.ts  colisión fina del jugador con el mobiliario y carácter de cada plaza
    ├─ render/traffic.ts    puestos fronterizos (guardias, bandos en guerra) y tráfico de caminos
-   └─ render/overlay.ts    marcas de destino y foco, nombres, bocadillos, flechas de borde
+   ├─ render/overlay.ts    marcas de destino y foco, nombres, bocadillos, flechas de borde
+   ├─ render/village.ts    casas por estado, edificios, mobiliario, plaza, faroles, puestos, empalizada, hoguera
+   ├─ render/animals.ts    rebaños, caballos, perros y patos de los pueblos cercanos (aparición y paseo)
+   ├─ render/birds.ts      bandadas de pájaros con su sombra en el suelo
+   ├─ render/poses.ts      LOD por distancia, ropa según el tiempo, aspecto en caché y postura de cada persona
+   └─ render/wet.ts        suelo mojado: tierra oscurecida, charcos con reflejo y ondas de lluvia
 ```
 
 | Módulo | Qué hace |
@@ -72,6 +77,7 @@ COMPOSICIÓN (render/scene.ts, render/chunks.ts)
 | `visual/env/plaza.ts` | Lo que distingue cada plaza (solo aspecto, determinista por semilla y región): pavimento con dibujo recortado al empedrado, árbol en alcorque, jardineras de temporada, terrazas, estandartes, guirnaldas entre faroles. |
 | `render/lighting.ts` | `Lighting.night()` y `drawGrade()`: la oscuridad de luna se normaliza (la simulación da 0–0,62), los huecos de luz nunca borran la noche del todo, los halos se suman en una capa a media resolución y la viñeta nocturna va dentro de la capa oscura. |
 | `render/traffic.ts`, `render/overlay.ts` | Funciones que reciben de la escena solo lo que necesitan (`TrafficHost`, `OverlayHost`): lo de fuera de los pueblos y lo que se pinta encima del mundo. `scene.ts` baja de 2.702 a ~2.000 líneas. |
+| `render/village.ts`, `render/animals.ts`, `render/birds.ts`, `render/poses.ts`, `render/wet.ts` | Mismo patrón (`VillageHost`, `AnimalsHost`, `BirdsHost`, `PoseHost`, `WetHost`): el dibujo de cada pueblo, los animales, los pájaros, aspecto y postura de las personas y el suelo mojado. `scene.ts` baja de ~2.090 a ~1.450 líneas. |
 | `ui/map/relief.ts`, `ui/map/inkicons.ts` | Mapa a tinta: relieve sacado del terreno real (montañas, bosques, juncos, olas) solo en lo conocido; iconos propios en medallón en lugar de emojis. |
 | `render/furniture.ts` | Elipses de colisión (fuente, pozo, estatua, bancos, puestos, adornos) que frenan solo al jugador; al aparecer dentro de un mueble, se le aparta. |
 | `visual/weather.ts` | Lluvia en tres capas de profundidad, salpicaduras, tormenta, nieve, niebla en bancos, viento con hojas. |
