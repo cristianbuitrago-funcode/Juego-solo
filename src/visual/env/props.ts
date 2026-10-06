@@ -1,4 +1,4 @@
-import { alpha, blob, ell, lit, rng, shd, tex, vgrad, type Tex } from '../paint';
+import { alpha, ell, lit, rng, shd, tex, vgrad, type Tex } from '../paint';
 
 /**
  * Mobiliario, mercado y animales pintados con el mismo lenguaje que los
@@ -487,7 +487,8 @@ export function animalTex(kind: AnimalKind, frame: number, v = 0): Tex {
     if (kind === 'oveja') {
       for (let i = 0; i < 14; i++) ell(g, (R() - 0.5) * L * 0.95, by + (R() - 0.5) * Hb * 0.9, Hb * 0.32, Hb * 0.28, i % 2 ? lit(coat.body, 0.1) : coat.body);
     } else ell(g, 0, by, L * 0.52, Hb * 0.55, bodyFill);
-    if (coat.spot) for (let i = 0; i < 4; i++) blob(g, [(R() - 0.5) * L * 0.6, by + (R() - 0.6) * Hb * 0.5, (R() - 0.3) * L * 0.6, by - Hb * 0.3, (R() - 0.2) * L * 0.6, by + Hb * 0.25], coat.spot, 0.6);
+    // Manchas redondeadas e irregulares (tres puntas superpuestas formaban una estrella).
+    if (coat.spot) for (let i = 0; i < 3; i++) ell(g, (R() - 0.5) * L * 0.55, by + (R() - 0.5) * Hb * 0.35, L * (0.1 + R() * 0.08), Hb * (0.22 + R() * 0.12), coat.spot, (R() - 0.5) * 1.2);
     // Cuello y cabeza.
     const hx = L * 0.5;
     const hy = by - Hb * (kind === 'caballo' || kind === 'ciervo' ? 0.95 : kind === 'perro' ? 0.5 : kind === 'gallina' || kind === 'pato' ? 0.6 : 0.2);
@@ -589,4 +590,31 @@ export function drawFountainWater(g: CanvasRenderingContext2D, x: number, y: num
     g.fillStyle = `rgba(255,255,255,${(0.35 * Math.sin(u * Math.PI)).toFixed(3)})`;
     g.fillRect(ox + 14 + ((i * 37) % 30), oy + 35.5 + (i % 3) * 1.6, 3 + u * 2, 0.5);
   }
+}
+
+/** Yunque sobre su tocón: delante de quien martillea, para que el golpe caiga en algo. */
+export function anvilTex(): Tex {
+  return tex('yunque', 22, 20, 11, 18, (g) => {
+    // Tocón.
+    g.fillStyle = vgrad(g, 8, 18, [[0, '#7a5a3a'], [1, '#4a3424']]);
+    g.fillRect(6, 9, 10, 9);
+    ell(g, 11, 9, 5, 1.6, '#9a7a52');
+    // Yunque: cuerpo, cintura y pico.
+    g.fillStyle = vgrad(g, 1, 9, [[0, '#8a9098'], [1, '#3a3e44']]);
+    g.beginPath();
+    g.moveTo(3, 2);
+    g.lineTo(17, 2);
+    g.quadraticCurveTo(21, 2.5, 21, 4);
+    g.lineTo(16, 4.5);
+    g.lineTo(14, 7);
+    g.lineTo(15.5, 9);
+    g.lineTo(6.5, 9);
+    g.lineTo(8, 7);
+    g.lineTo(6, 4.5);
+    g.lineTo(3, 4.5);
+    g.closePath();
+    g.fill();
+    g.fillStyle = 'rgba(220,226,232,0.7)';
+    g.fillRect(4, 2, 12, 0.8);
+  });
 }

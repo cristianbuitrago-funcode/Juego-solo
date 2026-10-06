@@ -38,9 +38,11 @@ export class Furniture {
   }
 
   /** Si aparece dentro de un mueble, se le lleva al sitio libre más cercano (preferiblemente delante). */
-  unstick(me: { x: number; y: number }): void {
-    if (!this.solidAt(me.x, me.y)) return;
-    const ok = (x: number, y: number) => !this.solidAt(x, y) && passable(this.w(), this.l(), x, y);
+  unstick(me: { x: number; y: number }, wide = false): void {
+    // El cuerpo ocupa algo más que un punto: se mira un poco a cada lado.
+    const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3)));
+    if (clear(me.x, me.y)) return;
+    const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
     for (let r = 0.25; r <= 3; r += 0.25)
       for (let k = 0; k < 12; k++) {
         // Empieza por abajo (hacia la cámara) y gira a ambos lados.
@@ -68,7 +70,7 @@ export class Furniture {
       if (!list) {
         const F: Partial<Record<string, [number, number, number]>> = {
           fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [1.25, 0.95, 0.2],
-          cartel: [0.55, 0.38, 0.1], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
+          cartel: [0.55, 0.38, 0.1], farol: [0.45, 0.32, 0.08], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
           carro: [1.7, 0.5, 0.3], abrevadero: [1.15, 0.32, 0.2], heno: [0.95, 0.42, 0.25], lenya: [0.9, 0.3, 0.15],
         };
         list = [];

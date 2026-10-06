@@ -265,8 +265,9 @@ function frontFeatures(g: CanvasRenderingContext2D, ap: Appearance, B: Body, fac
   const nw = W * (0.13 + ap.nose * 0.04) * (B.child ? 0.8 : 1);
   // Lado en sombra del tabique.
   blob(g, [W * 0.06, eyeY + eh * 0.4, W * 0.16, ny - nw * 0.5, nw * 1.1, ny + nw * 0.15, W * 0.05, ny + nw * 0.1], alpha(shd(ap.skin, 0.35), 0.4), 0.5);
-  g.strokeStyle = alpha(shd(ap.skin, 0.45), 0.6);
-  g.lineWidth = H * 0.024;
+  // (Trazo suave: más marcado parecía una cicatriz.)
+  g.strokeStyle = alpha(shd(ap.skin, 0.4), 0.3);
+  g.lineWidth = H * 0.018;
   g.beginPath();
   g.moveTo(W * 0.1, eyeY + eh * 0.7);
   g.quadraticCurveTo(W * 0.16, ny - nw * 0.6, nw * 0.95, ny + nw * 0.05);
@@ -281,7 +282,7 @@ function frontFeatures(g: CanvasRenderingContext2D, ap: Appearance, B: Body, fac
   ell(g, 0, H * (B.child ? 0.4 : 0.385), W * 0.2, H * 0.025, alpha(shd(ap.skin, 0.35), 0.35));
   // Boca.
   const my = H * (B.child ? 0.33 : 0.315);
-  const mw = W * 0.44 * ap.mouthW * (B.child ? 0.82 : 1) * (o.lod > 0 ? 1.15 : 1);
+  const mw = W * 0.37 * ap.mouthW * (B.child ? 0.82 : 1) * (o.lod > 0 ? 1.15 : 1);
   mouth(g, ap, 0, my, mw, H * (o.lod > 0 ? 1.35 : 1), o.talk ? openOf(face.mouth) : face.mouth);
   if (face.tear) {
     ell(g, -ex + ew * 0.2, eyeY + eh * 1.6, H * 0.03, H * 0.05, 'rgba(190,225,255,0.85)');
@@ -566,7 +567,8 @@ function mouth(g: CanvasRenderingContext2D, ap: Appearance, x: number, y: number
       }
       break;
     case 'frown':
-      curve(-H * 0.06);
+      ell(g, x, y + H * 0.012, w * 0.5, H * 0.02, alpha(lip, 0.6));
+      curve(-H * 0.06, shd(lip, 0.22));
       break;
     case 'pout':
       curve(-H * 0.03);
@@ -615,9 +617,8 @@ function mouth(g: CanvasRenderingContext2D, ap: Appearance, x: number, y: number
       g.stroke();
       break;
     case 'tired':
-      g.fillStyle = alpha(dark, 0.8);
-      ell(g, x, y + H * 0.01, w * 0.45, H * 0.018, alpha(dark, 0.7));
-      curve(H * 0.0, shd(lip, 0.3), lw * 0.8);
+      ell(g, x, y + H * 0.012, w * 0.36, H * 0.014, alpha(dark, 0.55));
+      curve(H * 0.0, shd(lip, 0.2), lw * 0.75);
       break;
   }
 }

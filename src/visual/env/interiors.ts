@@ -19,6 +19,8 @@ export interface InteriorPerson {
   expr: Expr;
   x: number; // 0..1 en el ancho de la sala
   flip?: boolean;
+  /** Sitio fijo (no se reparte en filas de profundidad): alguien sentado a una mesa. */
+  fixed?: boolean;
 }
 
 export interface InteriorOpts {
@@ -118,7 +120,7 @@ export function paintInterior(canvas: HTMLCanvasElement, kind: InteriorKind, o: 
   }
   // Gente: de pie o sentada, en tamaño de «retrato de grupo».
   // Dos filas de profundidad (los de atrás, algo más pequeños y más arriba): un grupo, no una fila de cola.
-  const byX = [...o.people].sort((a, b) => a.x - b.x).map((p, i) => ({ p, back: i % 2 === 1 && o.people.length > 2 }));
+  const byX = [...o.people].sort((a, b) => a.x - b.x).map((p, i) => ({ p, back: !p.fixed && i % 2 === 1 && o.people.length > 2 }));
   const sorted = [...byX.filter((q) => q.back), ...byX.filter((q) => !q.back)];
   for (const { p, back } of sorted) {
     const scale = back ? 1.8 : 2.1;

@@ -157,6 +157,6 @@ body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .diar
 /* El rótulo de llegada, alto: no tapa el hito de la plaza ni las caras. */
 .banner { top: 12%; }
 /* En el plano de cine, el rótulo va en la franja inferior, como un subtítulo: no tapa caras ni el hito. */
-.stage.cine .banner { top: auto; bottom: 1.8%; }
+.stage.cine .banner { top: auto; bottom: 1.8%; animation: bannerin 2.8s ease 0.5s both; } /* entra con la franja ya abierta y se va antes de que se cierre */
 .stage.cine .banner div { font-size: 1.65em; }
 .stage.cine .banner small { font-size: 0.78em; }

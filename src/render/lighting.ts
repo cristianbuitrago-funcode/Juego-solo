@@ -136,7 +136,33 @@ export class Lighting {
  * saturado. Los tintes de cada franja se combinan en un solo color de
  * multiplicar y otro de aclarar: dos pasadas de pantalla, no nueve.
  */
+/**
+ * La gradación cambia despacio (con la hora y el tiempo): se pinta en una capa a media
+ * resolución solo cuando cambia, y cada fotograma la compone con un único dibujo (antes:
+ * dos velos, el sol bajo y la viñeta, cuatro pasadas a pantalla completa por fotograma).
+ */
+const gradeLayer = { c: null as HTMLCanvasElement | null, key: '', empty: true };
 export function drawGrade(g: CanvasRenderingContext2D, h: number, weather: string, W: number, H: number, night: boolean): void {
+  const lw = Math.max(1, Math.ceil(W / 2));
+  const lh = Math.max(1, Math.ceil(H / 2));
+  const key = `${Math.round(h * 30)}|${weather}|${night}|${lw}x${lh}|${VQ().grade}`;
+  if (!gradeLayer.c) gradeLayer.c = document.createElement('canvas');
+  const c = gradeLayer.c;
+  if (gradeLayer.key !== key) {
+    if (c.width !== lw || c.height !== lh) (c.width = lw), (c.height = lh);
+    const lg = c.getContext('2d')!;
+    lg.globalCompositeOperation = 'source-over';
+    lg.clearRect(0, 0, lw, lh);
+    lg.imageSmoothingQuality = 'low';
+    gradeLayer.empty = !paintGrade(lg, Math.round(h * 30) / 30, weather, lw, lh, night);
+    gradeLayer.key = key;
+  }
+  if (gradeLayer.empty) return;
+  g.imageSmoothingQuality = 'low';
+  g.drawImage(c, 0, 0, W, H);
+}
+
+function paintGrade(g: CanvasRenderingContext2D, h: number, weather: string, W: number, H: number, night: boolean): boolean {
   const bump = (c: number, wdt: number) => Math.max(0, 1 - Math.abs(h - c) / wdt);
   const rain = weather === 'lluvia' || weather === 'tormenta';
   const grey = weather === 'nublado' || rain || weather === 'niebla' || weather === 'nieve' ? 1 : 0;
@@ -175,10 +201,10 @@ export function drawGrade(g: CanvasRenderingContext2D, h: number, weather: strin
   if (weather === 'nieve') Sc(200, 215, 235, 0.04);
   // Mezclas estándar (source-over): multiplicar o aclarar a pantalla completa obliga a
   // la GPU a copiar el fondo en cada pasada, y en muchos móviles es carísimo.
-  overMultiply(g, mul[0], mul[1], mul[2], W, H);
-  overScreen(g, scr[0], scr[1], scr[2], W, H);
+  let drew = overMultiply(g, mul[0], mul[1], mul[2], W, H);
+  drew = overScreen(g, scr[0], scr[1], scr[2], W, H) || drew;
   g.globalCompositeOperation = 'source-over';
-  if (!VQ().grade) return;
+  if (!VQ().grade) return drew;
   // Resplandor del sol bajo (por la mañana desde el este; al atardecer, desde el oeste).
   const low = Math.max(dawn * 0.6 + morning * 0.25, dusk + afternoon * 0.35) * clear;
   if (low > 0.02) {
@@ -188,13 +214,15 @@ export function drawGrade(g: CanvasRenderingContext2D, h: number, weather: strin
     g.drawImage(lightSprite(fromWest ? 'sunW' : 'sunE'), 0, 0, W, H);
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
+    drew = true;
   }
   // Viñeta suave (textura cacheada): centra la mirada en el protagonista. De noche
   // la pinta la capa de oscuridad (un relleno a pantalla completa menos).
-  if (night) return;
+  if (night) return drew;
   g.globalAlpha = 0.8 + grey * 0.25;
   g.drawImage(lightSprite('vignette'), 0, 0, W, H);
   g.globalAlpha = 1;
+  return true;
 }
 
 /** Texturas de luz pintadas una vez (sin crear degradados en cada fotograma). */
@@ -263,25 +291,27 @@ export function lightSprite(kind: 'hole' | 'warm' | 'core' | 'reflect' | 'moon' 
  * Aproxima «multiplicar por (r,g,b)» con una mezcla normal: un velo de color
  * con la opacidad que oscurece igual un tono medio. Mucho más barato.
  */
-export function overMultiply(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
+export function overMultiply(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): boolean {
   const mx = Math.max(r, gg, b);
-  if (mx > 0.995 && Math.min(r, gg, b) > 0.995) return;
+  if (mx > 0.995 && Math.min(r, gg, b) > 0.995) return false;
   const a = Math.min(0.95, 1 - (r + gg + b) / 3 + (mx - Math.min(r, gg, b)) * 0.35);
-  if (a <= 0.004) return;
+  if (a <= 0.004) return false;
   // Color del velo para que un gris medio (0,5) quede en 0,5·c.
   const k = (c: number) => Math.round(Math.max(0, Math.min(1, (0.5 * c - 0.5 * (1 - a)) / a)) * 255);
   g.globalCompositeOperation = 'source-over';
   g.fillStyle = `rgba(${k(r)},${k(gg)},${k(b)},${a.toFixed(3)})`;
   g.fillRect(0, 0, W, H);
+  return true;
 }
 
 /** «Aclarar» con un velo claro y transparente (exacto si los tres canales son iguales). */
-export function overScreen(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): void {
+export function overScreen(g: CanvasRenderingContext2D, r: number, gg: number, b: number, W: number, H: number): boolean {
   const a = Math.max(r, gg, b);
-  if (a <= 0.004) return;
+  if (a <= 0.004) return false;
   g.globalCompositeOperation = 'source-over';
   g.fillStyle = `rgba(${Math.round((r / a) * 255)},${Math.round((gg / a) * 255)},${Math.round((b / a) * 255)},${a.toFixed(3)})`;
   g.fillRect(0, 0, W, H);
+  return true;
 }
 
 /** Zancada (teselas por paso) de un cuerpo andando o corriendo: así el ciclo de piernas sigue al avance. */

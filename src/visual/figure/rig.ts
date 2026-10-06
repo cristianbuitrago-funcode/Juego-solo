@@ -138,16 +138,16 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       const c = (t * 1.3 + seed * 0.1) % 1;
       const rise = c / 0.7;
       const up = c < 0.7 ? rise * rise * (3 - 2 * rise) : Math.max(0, 1 - ((c - 0.7) / 0.12) ** 2) - (c > 0.82 ? Math.sin(((c - 0.82) / 0.18) * Math.PI) * 0.08 : 0);
-      r.lean = 0.1 + (1 - up) * 0.14;
-      r.y = (1 - up) * 0.4;
-      r.arms[1] = { a: 0.75 + up * 2.15, b: 0.25 + up * 0.55, lift: 0.4, fist: true };
+      r.lean = 0.1 + (1 - up) * 0.26;
+      r.y = (1 - up) * 0.7;
+      r.arms[1] = { a: 0.42 + up * 2.45, b: 0.25 + up * 0.55, lift: 0.4, fist: true };
       // La otra mano sujeta la pieza sobre el yunque.
       r.arms[0] = { a: 0.7, b: 0.75, lift: 0.3, fist: true };
       r.legs[0] = { a: -0.16, b: 0.05, lift: 0 };
       r.legs[1] = { a: 0.2, b: -0.15, lift: 0 };
       r.head.nod = 0.16;
       // Como la azada: abajo, la cabeza del martillo pega por delante; arriba, queda detrás.
-      r.item = 0.45 - up * 2.4;
+      r.item = 0.75 - up * 2.7;
       break;
     }
     case 'fish': {

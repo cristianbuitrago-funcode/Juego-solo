@@ -93,6 +93,18 @@ function interiorCanvas(app: App, kind: InteriorKind, regionId: number): HTMLCan
   const people: InteriorPerson[] = [];
   for (const [roles, n, action, expr] of cast) for (const f of pick(roles, n)) people.push({ ap: appearanceOf(w, f), action, expr: expr === 'neutral' ? moodOf(w, f) : expr, x: 0, flip: people.length % 2 === 1 });
   people.forEach((p, i) => (p.x = people.length === 1 ? 0.62 : 0.3 + (i / Math.max(1, people.length - 1)) * 0.6));
+  if (kind === 'posada') {
+    // En la posada se sienta uno a beber: el posadero tras la barra, dos parroquianos a
+    // ambos lados de la mesa, de cara el uno al otro, y alguien de pie junto a los barriles.
+    const seats = [{ x: 0.3, action: 'talk' as Action, flip: false }, { x: 0.5, action: 'sit' as Action, flip: false }, { x: 0.71, action: 'sit' as Action, flip: true }, { x: 0.86, action: 'listen' as Action, flip: true }];
+    people.forEach((p, i) => {
+      const s0 = seats[Math.min(i, seats.length - 1)];
+      p.x = s0.x;
+      p.action = s0.action;
+      p.flip = s0.flip;
+      p.fixed = true;
+    });
+  }
   const weather = app.scene?.debugWeather ?? weatherIn(w, regionId);
   const opts = { night: darkness(life.clock) > 0.3, weather, wealth: Math.max(0, Math.min(1, marketOf(w, regionId).prosperity)), people, t: 0 };
   const t0 = performance.now();

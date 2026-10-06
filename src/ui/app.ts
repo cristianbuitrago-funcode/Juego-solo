@@ -284,7 +284,7 @@ export class App {
       h('p', null, 'Abres los ojos. El cielo empieza a clarear. No sabes dónde estás.'),
       h('p', null, 'Intentas recordar cómo llegaste aquí. Tu nombre. Cualquier cosa.'),
       h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
-      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.'); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.', false, true); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
     );
     this.stage.append(el);
   }
@@ -346,6 +346,9 @@ export class App {
     const l = getLayout(w);
     const me = life.player;
     const region = l.terrain.region[Math.floor(me.y) * 500 + Math.floor(me.x)];
+    // Lo que se dice «desde lejos» (hay humo, quizá un pueblo) deja de valer en cuanto llegas a uno.
+    if (this.whisperBox?.querySelector('[data-far]') && l.villages.some((v) => Math.hypot(v.cx - me.x, v.cy - me.y) < v.plazaR + 9))
+      this.whisperBox.querySelectorAll('[data-far]').forEach((el) => el.remove());
     // El paisaje sonoro: el bosque, la costa, el viento del monte, la lluvia, los tambores de guerra.
     if (region >= 0) audio.setAmbience({ biome: geoOf(w, region).biome, weather: weatherIn(w, region), war: !!warOf(w, region), night: darkness(life.clock) > 0.5 });
     // Observación directa cada hora de juego.
@@ -499,9 +502,10 @@ export class App {
     this.prompt.append(h('div', { class: 'prompt-label' }, t.label), h('div', { class: 'prompt-actions' }, ...focusButtons(this, t)));
   }
 
-  whisper(text: string, sound = false): void {
+  whisper(text: string, sound = false, far = false): void {
     if (!this.whisperBox) return;
     const el = h('div', { class: 'whisper' }, text);
+    if (far) el.dataset.far = '1';
     this.whisperBox.append(el);
     if (sound) audio.sfx('peticion');
     while (this.whisperBox.children.length > 3) this.whisperBox.firstChild?.remove();

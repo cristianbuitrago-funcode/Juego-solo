@@ -21,7 +21,7 @@ import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
 import { drawFigure, drawFigureShadow } from '../visual/figure/figure';
 import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
 import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } from '../visual/env/buildings';
-import { animalTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
+import { animalTex, anvilTex, drawFountainWater, propTex, stallTex, tentTex } from '../visual/env/props';
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { marketOf } from '../world/economy';
 import { adaptTier, VQ, resolveTier, setTier, type AdaptState, type QualitySetting } from '../visual/quality';
@@ -379,7 +379,7 @@ export class WorldScene {
     const p = ensureLife(this.w).player;
     p.x = x;
     p.y = y;
-    this.furniture.unstick(p);
+    this.furniture.unstick(p, true);
     this.cam.x = x * TILE;
     this.cam.y = y * TILE;
     this.path = [];
@@ -572,6 +572,7 @@ export class WorldScene {
     }
     this.moveFolk(dt);
     this.moveExtras(dt);
+    this.separate(dt);
     this.moveAnimals(dt);
     this.moveBirds(dt);
     this.socialAcc += dt;
@@ -934,6 +935,37 @@ export class WorldScene {
     return { ...r, x: r.x + (hash(f.id, 21) - 0.5) * 2.6, y: r.y + (hash(f.id, 22) - 0.5) * 0.9 };
   }
 
+  /**
+   * Nadie se queda encima de nadie: los que están quietos (en su puesto, a la puerta de
+   * la forja, charlando) se apartan poco a poco hasta dejar un hueco mínimo entre sí,
+   * sin meterse en muebles ni en sitios por donde no se pasa.
+   */
+  private separate(dt: number): void {
+    const still: Ent[] = [];
+    for (const e of this.ents.values()) if (!e.inside && !e.moving) still.push(e);
+    for (const e of this.extras.values()) if (!e.moving) still.push(e);
+    // Las figuras son estrechas y altas: dos personas «se funden» si están a menos de un
+    // cuerpo de ancho en horizontal y no muy separadas en profundidad. Se apartan de lado.
+    const WIDE = 1.05;
+    const DEEP = 1.8;
+    const k = Math.min(1, dt * 4);
+    for (let i = 0; i < still.length; i++)
+      for (let j = i + 1; j < still.length; j++) {
+        const a = still[i];
+        const b = still[j];
+        const dx = b.x - a.x;
+        if (Math.abs(dx) >= WIDE || Math.abs(b.y - a.y) >= DEEP) continue;
+        const sgn = dx > 0.001 ? 1 : dx < -0.001 ? -1 : i % 2 ? 1 : -1;
+        const push = ((WIDE - Math.abs(dx)) / 2) * k;
+        const move = (e: Ent, dir: number) => {
+          const nx = e.x + dir * push;
+          if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y)) e.x = nx;
+        };
+        move(a, -sgn);
+        move(b, sgn);
+      }
+  }
+
   private moveFolk(dt: number): void {
     for (const [, e] of this.ents) {
       const wantInside = (e as Ent & { wantInside?: boolean }).wantInside;
@@ -986,7 +1018,7 @@ export class WorldScene {
             a.tx = a.hx + (Math.random() - 0.5) * R;
             a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
             const tt = this.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
-            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty);
+            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty) && !this.furniture.solidAt(a.tx, a.ty);
             if (!ok) (a.tx = a.x), (a.ty = a.y);
           }
           continue;
@@ -995,7 +1027,7 @@ export class WorldScene {
         const nx = a.x + ((a.tx - a.x) / d) * sp;
         const ny = a.y + ((a.ty - a.y) / d) * sp;
         // Los animales no atraviesan vallas, fuentes ni casas: si el paso está cortado, se paran.
-        if (!a.water && !passable(this.w, this.l, nx, ny)) {
+        if (!a.water && (!passable(this.w, this.l, nx, ny) || this.furniture.solidAt(nx, ny))) {
           a.tx = a.x;
           a.ty = a.y;
           continue;
@@ -1020,7 +1052,7 @@ export class WorldScene {
       for (let i = 0; i < Math.round(n * plenty); i++) {
         const x = cx + (hash(`${regionId}${kind}`, i) - 0.5) * 6;
         const y = cy + (hash(`${regionId}${kind}`, i + 50) - 0.5) * 5;
-        if (!passable(w, this.l, x, y)) continue;
+        if (!passable(w, this.l, x, y) || this.furniture.solidAt(x, y)) continue;
         out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: hash(`${regionId}${kind}`, i + 9) < 0.5, anim: i, v: i });
       }
     };
@@ -1037,7 +1069,7 @@ export class WorldScene {
     for (let i = 0; i < (r.population > 700 ? 2 : 1); i++) {
       const x = v.cx + 0.5 + (hash(`${regionId}perro`, i) - 0.5) * 8;
       const y = v.cy + v.plazaR + 1.5;
-      if (passable(w, this.l, x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
+      if (passable(w, this.l, x, y) && !this.furniture.solidAt(x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
     }
     // Patos donde hay agua cerca.
     for (let k = 0; k < 40; k++) {
@@ -1269,6 +1301,14 @@ export class WorldScene {
       e.stride = strideOf(ap, false);
       const pose = this.entPose(id, e, f, sec, wet, cold);
       this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
+      if (pose.action === 'hammer') {
+        // El yunque delante, donde cae el martillo.
+        const ax = e.x * TILE + (pose.flip ? -12 : 12);
+        const ay = e.y * TILE + 1;
+        const an = anvilTex();
+        this.shadowQ.push(() => contactShadow(g, ax, ay, 9, 2.5, 0.4));
+        items.push({ y: ay, draw: () => put(g, an, ax, ay) });
+      }
     }
     // Gentío de las ciudades grandes.
     for (const [id, e] of this.extras) {
@@ -1591,7 +1631,10 @@ export class WorldScene {
       if (!inView(px, py)) continue;
       const frozen = pr.kind === 'fuente' && snowRoofs && (seasonOf(w.day) === 'invierno' || this.wxFrame === 'nieve');
       const lampOn = night || ['lluvia', 'tormenta', 'niebla'].includes(this.wxFrame);
-      const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.kind === 'farol' ? (lampOn ? 1 : 0) : pr.v);
+      const pt0 = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.kind === 'farol' ? (lampOn ? 1 : 0) : pr.v);
+      // Con nieve, lo que tiene una cara de arriba (bancos, carteles, cajas, heno, carros) se cubre.
+      const capped = snowRoofs && (pr.kind === 'banco' || pr.kind === 'cartel' || pr.kind === 'cajas' || pr.kind === 'barril' || pr.kind === 'heno' || pr.kind === 'carro' || pr.kind === 'abrevadero' || pr.kind === 'lenya');
+      const pt = capped ? snowCapped(pt0, -pt0.ay + Math.max(3, pt0.h * 0.2)) : pt0;
       // El poste del cruce, a escala humana (algo más alto que una persona, no el doble).
       const ps = pr.kind === 'cartel' ? 0.72 : 1;
       // Lo alto proyecta sombra; lo bajo (bancos, vallas, barriles, heno…) solo se asienta con una sombra de contacto.
@@ -1664,7 +1707,8 @@ export class WorldScene {
       // Un puesto no se monta encima del poste de caminos.
       if (Math.hypot(s.x - (v.sign.x + 1.2), s.y - (v.sign.y + 0.4)) < 2.6) return;
       const open = stallGoods.length > 0;
-      const stx = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
+      const stx0 = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
+      const stx = snowRoofs ? snowCapped(stx0, -stx0.ay + stx0.h * 0.16) : stx0;
       items.push({ y: s.y * TILE, draw: () => put(g, stx, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
       // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
       const hh = hourOf(life.clock);
@@ -1857,15 +1901,28 @@ export class WorldScene {
     g.fillStyle = 'rgba(40,34,36,0.9)';
     g.lineWidth = 0.7;
     for (const b of this.birds) {
-      const k = Math.sin(b.ph) * 1.8;
+      // Silueta de ave, no una «m»: cuerpo fusiforme con cola y alas rellenas que baten.
+      const k = Math.sin(b.ph);
+      const tip = -k * 2.2;
       g.beginPath();
-      g.moveTo(b.x - 3, b.y - k);
-      g.quadraticCurveTo(b.x - 1.4, b.y - 1.6 - k * 0.3, b.x, b.y);
-      g.quadraticCurveTo(b.x + 1.4, b.y - 1.6 - k * 0.3, b.x + 3, b.y - k);
-      g.stroke();
-      g.beginPath();
-      g.ellipse(b.x, b.y + 0.2, 0.9, 0.55, 0, 0, Math.PI * 2);
+      g.ellipse(b.x, b.y + 0.2, 1.5, 0.6, 0, 0, Math.PI * 2);
       g.fill();
+      g.beginPath();
+      g.moveTo(b.x - 1.3, b.y + 0.2);
+      g.lineTo(b.x - 2.6, b.y - 0.2);
+      g.lineTo(b.x - 2.6, b.y + 0.8);
+      g.closePath();
+      g.fill();
+      // Vistas desde arriba, las alas se abren a ambos lados del cuerpo y se acortan al batir.
+      const span = 1.2 + Math.abs(Math.cos(b.ph)) * 2.4;
+      for (const sgn of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(b.x - 0.5, b.y + 0.2);
+        g.quadraticCurveTo(b.x - 0.2, b.y + 0.2 + sgn * span * 0.7, b.x + 0.9 + tip * 0.1, b.y + 0.2 + sgn * span);
+        g.quadraticCurveTo(b.x + 0.9, b.y + 0.2 + sgn * span * 0.4, b.x + 0.7, b.y + 0.2);
+        g.closePath();
+        g.fill();
+      }
     }
   }
 
