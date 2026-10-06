@@ -115,6 +115,8 @@ export interface AdaptState {
   calm: number; // ventanas tranquilas seguidas
   sinceChange: number; // ms desde el último cambio de nivel
   gpuCapped: boolean; // bajó por la GPU: no vuelve a subir (evita ir y venir cada medio minuto)
+  /** Nivel en el que ya se falló por CPU: no se vuelve a probar en esta sesión (sin vaivén). */
+  failed?: number;
   bestGap: number; // mejor mediana de intervalo vista (ms)
 }
 
@@ -134,9 +136,10 @@ export function adaptTier(tier: Tier, cap: Tier, p95: number, gapMed: number, st
   if ((p95 > 16 || gpuBound) && i > 0 && st.sinceChange > 15000) {
     next = i - 1;
     if (gpuBound) st.gpuCapped = true;
+    st.failed = Math.min(st.failed ?? 99, i);
   }
   st.calm = p95 < 7 && !gpuBound ? st.calm + 1 : 0;
-  if (next === i && !st.gpuCapped && st.calm >= 2 && i < order.indexOf(cap) && st.sinceChange > 30000) next = i + 1;
+  if (next === i && !st.gpuCapped && st.calm >= 2 && i < order.indexOf(cap) && i + 1 < (st.failed ?? 99) && st.sinceChange > 30000) next = i + 1;
   if (next !== i) st.calm = 0;
   return order[next];
 }

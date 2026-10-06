@@ -29,6 +29,16 @@ describe('nivel gráfico adaptativo', () => {
     expect(adaptTier('medium', 'high', 4, 16.7, st)).toBe('medium');
     expect(adaptTier('medium', 'high', 4, 16.7, st)).toBe('high');
   });
+  it('tras bajar por CPU no vuelve a probar el nivel que falló', () => {
+    const st = fresh();
+    let tier = adaptTier('high', 'ultra', 20, 16.7, st);
+    expect(tier).toBe('medium');
+    for (let i = 0; i < 6; i++) {
+      st.sinceChange = 60000;
+      tier = adaptTier(tier, 'ultra', 4, 16.7, st);
+    }
+    expect(tier).toBe('medium');
+  });
   it('no sube por encima del nivel detectado', () => {
     const st = fresh();
     adaptTier('high', 'high', 4, 16.7, st);

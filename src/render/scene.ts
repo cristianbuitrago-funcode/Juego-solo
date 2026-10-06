@@ -333,8 +333,9 @@ export class WorldScene {
     if (next === VQ().tier) return;
     this.lastDowngrade = now;
     setTier(next);
-    // Las texturas llevan la resolución en su clave: las nuevas se pintan según se
-    // necesitan y las viejas salen solas del caché (vaciarlo de golpe daba un tirón).
+    // Las texturas pintadas llevan la resolución en su clave: las nuevas se pintan según se
+    // necesitan y las viejas salen solas del caché (vaciarlo de golpe daba un tirón). Solo se
+    // vacía el pequeño caché de sprites antiguos (estructuras), que no la lleva.
     S.clearSprites();
     this.resize();
   }
