@@ -18,15 +18,13 @@ export interface Light {
 export class Lighting {
   /** Oscuridad a media resolución con huecos de luz. */
   private dark = document.createElement('canvas');
-  /** Halos cálidos de la noche, a media resolución: muchos halos grandes cuestan un solo relleno a pantalla completa. */
-  private glowL = document.createElement('canvas');
   private skyGrad: CanvasGradient | null = null;
   private skyH = 0;
   private visPool: { x: number; y: number; r: number; k: number; flat: number }[] = [];
 
   resize(w: number, h: number): void {
-    this.dark.width = this.glowL.width = Math.max(1, Math.ceil(w / 2));
-    this.dark.height = this.glowL.height = Math.max(1, Math.ceil(h / 2));
+    this.dark.width = Math.max(1, Math.ceil(w / 2));
+    this.dark.height = Math.max(1, Math.ceil(h / 2));
   }
 
   night(g: CanvasRenderingContext2D, weather: string, d: number, lights: readonly Light[], cam: { x: number; y: number; z: number }, vw: number, vh: number): void {
@@ -56,16 +54,18 @@ export class Lighting {
     }
     pool.length = Math.max(n, 0);
     const vis = pool;
+    // Todo en UNA capa a media resolución que se compone con un solo dibujo a pantalla
+    // completa: la oscuridad de luna (azul frío) con huecos de caída suave donde hay luz,
+    // los halos cálidos y los núcleos de lo que emite luz. (Antes eran tres pasadas a
+    // pantalla completa: la noche costaba la mitad del fotograma.)
+    const dc = this.dark.getContext('2d')!;
+    const W = this.dark.width;
+    const H = this.dark.height;
+    const sx = W / vw;
+    dc.globalCompositeOperation = 'source-over';
+    dc.clearRect(0, 0, W, H);
+    dc.imageSmoothingQuality = 'low';
     if (d > 0.01) {
-      // Oscuridad de luna (azul frío, a media resolución) con huecos de caída
-      // suave donde hay luz: lo iluminado conserva sus colores de verdad y lo
-      // demás queda en penumbra azulada. Una sola pasada de pantalla.
-      const dc = this.dark.getContext('2d')!;
-      const W = this.dark.width;
-      const H = this.dark.height;
-      const sx = W / vw;
-      dc.globalCompositeOperation = 'source-over';
-      dc.clearRect(0, 0, W, H);
       const a = 0.84 * d;
       // Degradado del cielo nocturno, a opacidad plena y cacheado; la intensidad va en globalAlpha.
       if (!this.skyGrad || this.skyH !== H) {
@@ -82,46 +82,39 @@ export class Lighting {
         dc.globalAlpha = 0.85;
         dc.drawImage(lightSprite('vignette'), 0, 0, W, H);
       }
-      dc.globalAlpha = 1;
       dc.globalCompositeOperation = 'destination-out';
-      dc.imageSmoothingQuality = 'low';
       const hole = lightSprite('hole');
       for (const l of vis) {
-        // Ni la luz más fuerte borra del todo la noche: el charco se lee como charco.
-        dc.globalAlpha = l.flat < 1 ? Math.min(0.62, l.k * 0.65) : Math.min(0.88, l.k * 0.85); // los charcos del suelo dejan algo de noche: así la hierba no se ve de día (verde neón)
+        // Ni la luz más fuerte borra del todo la noche: el charco se lee como charco
+        // (y la hierba bajo un farol no se ve como de día, verde neón).
+        dc.globalAlpha = l.flat < 1 ? Math.min(0.62, l.k * 0.65) : Math.min(0.88, l.k * 0.85);
         dc.drawImage(hole, (l.x - l.r) * sx, (l.y - l.r * l.flat) * sx, l.r * 2 * sx, l.r * 2 * l.flat * sx);
       }
-      dc.globalAlpha = 1;
-      dc.globalCompositeOperation = 'source-over';
-      g.imageSmoothingQuality = 'low';
-      g.drawImage(this.dark, 0, 0, vw, vh);
     }
-    // 4) El fuego tiñe de ámbar lo que toca (aditivo).
-    g.globalCompositeOperation = 'lighter';
-    // Texturas suaves ampliadas: el filtrado bilineal basta (el bicúbico de «high» es muy caro al ampliar).
-    g.imageSmoothingQuality = 'low';
+    // El fuego tiñe de ámbar lo que toca: solo las luces que iluminan alrededor (faroles,
+    // hogueras, puertas); las ventanas ya brillan por sí mismas.
+    dc.globalCompositeOperation = 'lighter';
     const warm = lightSprite('warm');
-    // Solo las luces que de verdad iluminan alrededor (faroles, hogueras, puertas):
-    // las ventanas ya brillan por sí mismas. Cada halo es mucha superficie que pintar.
-    {
-      const gc = this.glowL.getContext('2d')!;
-      const sx = this.glowL.width / vw;
-      gc.globalCompositeOperation = 'source-over';
-      gc.clearRect(0, 0, this.glowL.width, this.glowL.height);
-      gc.globalCompositeOperation = 'lighter';
-      gc.imageSmoothingQuality = 'low';
-      let any = false;
-      for (const l of vis) {
-        if (l.r < 26 * cam.z) continue;
-        gc.globalAlpha = Math.min(1, (l.flat < 1 ? 0.42 : 0.3) * glow * l.k);
-        gc.drawImage(warm, (l.x - l.r * 0.8) * sx, (l.y - l.r * 0.8 * l.flat) * sx, l.r * 1.6 * sx, l.r * 1.6 * l.flat * sx);
-        any = true;
-      }
-      gc.globalAlpha = 1;
-      if (any) g.drawImage(this.glowL, 0, 0, vw, vh);
+    for (const l of vis) {
+      if (l.r < 26 * cam.z) continue;
+      dc.globalAlpha = Math.min(1, (l.flat < 1 ? 0.48 : 0.34) * glow * l.k);
+      dc.drawImage(warm, (l.x - l.r * 0.8) * sx, (l.y - l.r * 0.8 * l.flat) * sx, l.r * 1.6 * sx, l.r * 1.6 * l.flat * sx);
     }
+    // Lo que emite luz (cristal de las farolas, ventanas, llamas) brilla por encima de la oscuridad.
+    const core = lightSprite('core');
+    for (const l of vis) {
+      if (l.flat !== 1 || l.r > 60 * cam.z) continue;
+      const rr = Math.min(l.r * 0.42, 16 * cam.z);
+      dc.globalAlpha = Math.min(1, 0.9 * glow * l.k);
+      dc.drawImage(core, (l.x - rr) * sx, (l.y - rr) * sx, rr * 2 * sx, rr * 2 * sx);
+    }
+    dc.globalAlpha = 1;
+    dc.globalCompositeOperation = 'source-over';
+    g.imageSmoothingQuality = 'low';
+    g.drawImage(this.dark, 0, 0, vw, vh);
     // Suelo mojado: cada charco de luz se refleja alargado hacia abajo, como en el adoquín empapado.
     if (weather === 'lluvia' || weather === 'tormenta') {
+      g.globalCompositeOperation = 'lighter';
       const refl = lightSprite('reflect');
       for (const l of vis) {
         if (l.flat === 1) continue;
@@ -130,15 +123,6 @@ export class Lighting {
         if (g.globalAlpha < 0.02) continue;
         g.drawImage(refl, l.x - ww, l.y - l.r * 0.15, ww * 2, l.r * 0.8);
       }
-      g.globalAlpha = 1;
-    }
-    // Lo que emite luz (cristal de las farolas, ventanas, llamas) brilla por encima de la oscuridad.
-    const core = lightSprite('core');
-    for (const l of vis) {
-      if (l.flat !== 1 || l.r > 60 * cam.z) continue;
-      const rr = Math.min(l.r * 0.42, 16 * cam.z);
-      g.globalAlpha = Math.min(1, 0.9 * glow * l.k);
-      g.drawImage(core, l.x - rr, l.y - rr, rr * 2, rr * 2);
     }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
