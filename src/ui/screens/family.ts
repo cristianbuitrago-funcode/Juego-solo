@@ -108,7 +108,7 @@ function lookEditor(app: App): HTMLElement {
     p.look = { ...look, ...k };
     app.refresh();
   };
-  const canvas = h('canvas', { class: 'portrait big', width: 200, height: 200 }) as HTMLCanvasElement;
+  const canvas = h('canvas', { class: 'portrait big', width: Math.round(100 * Math.min(3, Math.max(2, window.devicePixelRatio || 1))), height: Math.round(100 * Math.min(3, Math.max(2, window.devicePixelRatio || 1))) }) as HTMLCanvasElement;
   drawPortrait(canvas, playerAppearance({ ...p, look }), 'neutral', 1.3);
   const swatches = (list: string[], cur: string, key: 'cloak' | 'tunic' | 'hairColor') =>
     h('div', { class: 'swatches' }, ...list.map((c) => h('button', { class: `swatch ${c === cur ? 'on' : ''}`, style: `background:${c}`, 'aria-label': c, onclick: () => set({ [key]: c }) })));

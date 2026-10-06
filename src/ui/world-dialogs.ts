@@ -202,8 +202,8 @@ function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefine
   if (!f) return undefined;
   const c = document.createElement('canvas');
   c.className = 'portrait';
-  c.width = 176;
-  c.height = 176;
+  // A la densidad real de la pantalla (88 px CSS): a 3× un lienzo fijo se veía borroso.
+  c.width = c.height = Math.round(88 * Math.min(3, Math.max(2, window.devicePixelRatio || 1)));
   const ap = appearanceOf(w, f);
   const expr = moodOf(w, f);
   const t0 = performance.now();

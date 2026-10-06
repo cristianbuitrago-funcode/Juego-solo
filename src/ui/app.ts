@@ -682,6 +682,8 @@ export class App {
     });
     box.append(h('button', { class: 'icon-btn close-x', 'aria-label': 'Cerrar', onclick: close }, '✕'), ...(build(close).filter(Boolean) as Node[]));
     (this.stage ?? this.root).append(overlay);
+    // El rótulo de llegada no debe quedar asomando detrás del panel.
+    this.stage?.querySelectorAll('.banner').forEach((b) => b.remove());
     this.modals.push(overlay);
     this.pause(true);
     return close;

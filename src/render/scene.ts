@@ -191,6 +191,8 @@ export class WorldScene {
   /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
   private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
   private playerHidden = false;
+  /** Huellas sólidas del mobiliario (elipses en teselas): solo frenan al jugador. */
+  private solids = new Map<object, { x: number; y: number; rx: number; ry: number }[]>();
   private snowCheck = -1e9;
   private snowWeather = '';
   private realDt = 0;
@@ -374,6 +376,7 @@ export class WorldScene {
     const p = ensureLife(this.w).player;
     p.x = x;
     p.y = y;
+    this.unstick(p);
     this.cam.x = x * TILE;
     this.cam.y = y * TILE;
     this.path = [];
@@ -637,6 +640,7 @@ export class WorldScene {
   private movePlayer(dt: number): void {
     const life = ensureLife(this.w);
     const me = life.player;
+    this.unstick(me);
     let dx = 0;
     let dy = 0;
     let run = this.running;
@@ -707,7 +711,9 @@ export class WorldScene {
     const ny = me.y + this.vel.y * dt;
     const ox = me.x;
     const oy = me.y;
-    const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
+    // Si ya está dentro de un mueble (al aparecer o cargar), puede salir libremente.
+    const stuck = this.solidAt(me.x, me.y);
+    const ok = (x: number, y: number) => passable(this.w, this.l, x, y) && (stuck || !this.solidAt(x, y));
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
     else if (ok(me.x, ny)) me.y = ny;
@@ -730,6 +736,44 @@ export class WorldScene {
     const pap = this.apCache.get('@player')?.ap;
     this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
     if (moved < 0.002 && !want) this.playerMoving = false;
+  }
+
+  /** Si aparece dentro de un mueble, se le aparta hacia abajo (hacia la cámara). */
+  private unstick(me: { x: number; y: number }): void {
+    for (let i = 0; i < 16 && this.solidAt(me.x, me.y) && passable(this.w, this.l, me.x, me.y + 0.15); i++) me.y += 0.15;
+  }
+
+  /**
+   * ¿Pisa (x, y) la base de una fuente, un banco, un puesto…? Las teselas bloqueadas
+   * son demasiado gruesas para el mobiliario de la plaza: sin esto el jugador se metía
+   * dentro de la fuente o atravesaba los bancos.
+   */
+  private solidAt(x: number, y: number): boolean {
+    for (const v of this.l.villages) {
+      const reach = v.plazaR + 3;
+      if (Math.abs(x - v.cx) > reach || Math.abs(y - v.cy) > reach) continue;
+      let list = this.solids.get(v);
+      if (!list) {
+        const F: Partial<Record<string, [number, number, number]>> = {
+          fuente: [1.85, 1.25, 0.2], pozo: [1.3, 0.7, 0.2], estatua: [1.2, 0.65, 0.15], banco: [0.95, 0.32, 0.3],
+          cartel: [0.3, 0.2, 0.05], farol: [0.25, 0.18, 0.05], barril: [0.5, 0.28, 0.15], cajas: [0.85, 0.36, 0.2],
+          carro: [1.7, 0.5, 0.3], abrevadero: [1.15, 0.32, 0.2], heno: [0.95, 0.42, 0.25], lenya: [0.9, 0.3, 0.15],
+        };
+        list = [];
+        for (const p of v.props) {
+          const f = F[p.kind];
+          if (f) list.push({ x: p.x, y: p.y - f[2], rx: f[0], ry: f[1] });
+        }
+        for (const st of v.stalls) list.push({ x: st.x, y: st.y - 0.3, rx: 1.15, ry: 0.4 });
+        this.solids.set(v, list);
+      }
+      for (const c of list) {
+        const ex = (x - c.x) / c.rx;
+        const ey = (y - c.y) / c.ry;
+        if (ex * ex + ey * ey < 1) return true;
+      }
+    }
+    return false;
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -1557,7 +1601,7 @@ export class WorldScene {
       const px = pr.x * TILE;
       const py = pr.y * TILE;
       if (!inView(px, py)) continue;
-      const frozen = pr.kind === 'fuente' && snowRoofs && seasonOf(w.day) === 'invierno';
+      const frozen = pr.kind === 'fuente' && snowRoofs && (seasonOf(w.day) === 'invierno' || this.wxFrame === 'nieve');
       const lampOn = night || ['lluvia', 'tormenta', 'niebla'].includes(this.wxFrame);
       const pt = propTex(pr.kind, pr.kind === 'fuente' ? (frozen ? 1 : 0) : pr.kind === 'farol' ? (lampOn ? 1 : 0) : pr.v);
       // El poste del cruce, a escala humana (algo más alto que una persona, no el doble).
@@ -2138,9 +2182,10 @@ export class WorldScene {
       const refl = lightSprite('reflect');
       for (const l of vis) {
         if (l.flat === 1) continue;
-        const ww = l.r * 0.22;
-        g.globalAlpha = Math.min(1, 0.55 * l.k);
-        g.drawImage(refl, l.x - ww, l.y - l.r * 0.1, ww * 2, l.r * 0.9);
+        const ww = l.r * 0.26;
+        g.globalAlpha = Math.min(1, 0.45 * glow * l.k);
+        if (g.globalAlpha < 0.02) continue;
+        g.drawImage(refl, l.x - ww, l.y - l.r * 0.15, ww * 2, l.r * 0.8);
       }
       g.globalAlpha = 1;
     }
@@ -2413,15 +2458,17 @@ function lightSprite(kind: 'hole' | 'warm' | 'core' | 'reflect' | 'moon' | 'sunW
       radial([[0, 'rgba(0,0,0,1)'], [0.2, 'rgba(0,0,0,0.92)'], [0.42, 'rgba(0,0,0,0.62)'], [0.65, 'rgba(0,0,0,0.3)'], [0.85, 'rgba(0,0,0,0.1)'], [1, 'rgba(0,0,0,0)']]);
       break;
     case 'reflect': {
-      // Reflejo vertical en el suelo mojado: estrecho, más fuerte arriba, con rizos horizontales.
-      const gr = g.createLinearGradient(0, 0, 0, S);
-      gr.addColorStop(0, 'rgba(255,200,120,0.75)');
-      gr.addColorStop(1, 'rgba(255,170,90,0)');
-      g.fillStyle = gr;
-      for (let y = 0; y < S; y += 3) {
-        const w = h * (0.35 + Math.sin(y * 0.9) * 0.25 + (1 - y / S) * 0.3);
-        g.fillRect(h - w, y, w * 2, 2);
-      }
+      // Reflejo vertical en el suelo mojado: un huso continuo y suave, más fuerte arriba
+      // (sin rayas: a pantalla completa en modo «lighter» se leían como un fallo gráfico).
+      radial([[0, 'rgba(255,196,120,0.7)'], [0.45, 'rgba(255,176,96,0.32)'], [1, 'rgba(255,160,80,0)']]);
+      const fade = g.createLinearGradient(0, 0, 0, S);
+      fade.addColorStop(0, 'rgba(0,0,0,1)');
+      fade.addColorStop(0.5, 'rgba(0,0,0,0.85)');
+      fade.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalCompositeOperation = 'destination-in';
+      g.fillStyle = fade;
+      g.fillRect(0, 0, S, S);
+      g.globalCompositeOperation = 'source-over';
       break;
     }
     case 'core': // núcleo de una luz: casi blanco cálido en el centro
