@@ -62,6 +62,10 @@ export interface Appearance {
   mouthW: number;
   ears: number;
   freckles: boolean;
+  /** Ojos caídos (−1) o rasgados hacia arriba (1); apertura (0,5 entornados … 0,74 redondos); rubor propio. */
+  eyeTilt?: number;
+  eyeOpen?: number;
+  cheeks?: number;
   wrinkles: number; // 0..1
   stoop: number; // encorvamiento de la vejez
   outfit: Outfit;
@@ -331,6 +335,10 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
     stoop: old ? Math.min(1, (f.age - 58) / 25) : 0,
     outfit: o,
     important: !!f.charId,
+    // (al final: así no cambia el resto de rasgos ya repartidos a cada vecino)
+    eyeTilt: (r() - 0.5) * 2,
+    eyeOpen: 0.5 + r() * 0.24,
+    cheeks: r() * r() * 0.3,
   };
   return ap;
 }

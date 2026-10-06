@@ -349,6 +349,8 @@ export function drawTree(g: CanvasRenderingContext2D, kind: TreeKind, season: Se
   g.translate(x, y);
   g.transform(1, 0, sp.lean + sway, 1, 0, 0);
   g.scale(v & 1 ? -s : s, s);
+  // La copa que tapa al protagonista se aclara: en el bosque se le sigue viendo entre las hojas.
+  if (hides) g.globalAlpha *= 0.62;
   g.drawImage(t0.canvas, -t0.ax, -t0.ay, t0.w, t0.h);
   g.restore();
   return hides;

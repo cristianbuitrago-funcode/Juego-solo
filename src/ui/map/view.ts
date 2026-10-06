@@ -454,27 +454,43 @@ export class MapView {
     if (this.player) {
       const p = this.toScreen(this.player.x, this.player.y);
       const pulse = animate ? (Math.sin(t / 300) + 1) / 2 : 0.5;
-      g.strokeStyle = `rgba(233,180,76,${0.4 + pulse * 0.5})`;
-      g.lineWidth = 3;
+      // El aro que late en el suelo es el sitio exacto; encima, una chincheta con su
+      // rótulo «Estás aquí» al lado (no encima del nombre del pueblo ni del hito).
+      g.strokeStyle = `rgba(233,180,76,${0.35 + pulse * 0.45})`;
+      g.lineWidth = 2;
       g.beginPath();
-      g.arc(p.x, p.y, 10 + pulse * 6, 0, Math.PI * 2);
+      g.ellipse(p.x, p.y, 7 + pulse * 5, (7 + pulse * 5) * 0.45, 0, 0, Math.PI * 2);
       g.stroke();
+      const hy = p.y - 26;
       g.fillStyle = '#e9b44c';
       g.strokeStyle = '#2b1e15';
       g.lineWidth = 2;
       g.beginPath();
-      g.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      g.moveTo(p.x, p.y - 1);
+      g.quadraticCurveTo(p.x - 7, hy + 9, p.x - 7, hy);
+      g.arc(p.x, hy, 7, Math.PI, 0);
+      g.quadraticCurveTo(p.x + 7, hy + 9, p.x, p.y - 1);
+      g.closePath();
       g.fill();
       g.stroke();
-      g.font = '700 13px Alegreya, Georgia, serif';
-      g.textAlign = 'center';
-      // Encima del marcador: debajo va el nombre del pueblo.
-      g.textBaseline = 'bottom';
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(244,233,206,0.9)';
-      g.strokeText('Estás aquí', p.x, p.y - 18);
       g.fillStyle = '#2b1e15';
-      g.fillText('Estás aquí', p.x, p.y - 18);
+      g.beginPath();
+      g.arc(p.x, hy, 2.4, 0, Math.PI * 2);
+      g.fill();
+      g.font = '700 12px Alegreya, Georgia, serif';
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      const tw = g.measureText('Estás aquí').width;
+      const lx = p.x + 12;
+      g.fillStyle = 'rgba(244,233,206,0.94)';
+      g.strokeStyle = 'rgba(43,30,21,0.55)';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.roundRect(lx - 4, hy - 9, tw + 8, 18, 9);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#2b1e15';
+      g.fillText('Estás aquí', lx, hy + 0.5);
     }
     // Marco de pergamino: los bordes del mapa se oscurecen y amarillean.
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);

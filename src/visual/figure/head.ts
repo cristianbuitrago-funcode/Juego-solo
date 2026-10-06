@@ -158,7 +158,7 @@ export function paintHead(g: CanvasRenderingContext2D, ap: Appearance, B: Body, 
   g.fillStyle = sideShade;
   g.fillRect(-W * 1.2, -H, W * 2.4, H * 2);
   ell(g, 0, H * 0.5, W * 0.95, H * 0.16, alpha(shd(skinS, 0.3), 0.4));
-  const blush = 0.12 + (face.blush ?? 0);
+  const blush = 0.12 + (ap.cheeks ?? 0) + (face.blush ?? 0);
   ell(g, -W * 0.55, H * 0.14, W * 0.26, H * 0.09, alpha(mix(skinS, '#d85a4a', 0.5), blush * 0.45));
   ell(g, W * 0.55, H * 0.14, W * 0.26, H * 0.09, alpha(mix(skinS, '#d85a4a', 0.5), blush * 0.4));
   if (o.lod === 0) ageLines(g, ap, B, 'front');
@@ -252,7 +252,7 @@ function frontFeatures(g: CanvasRenderingContext2D, ap: Appearance, B: Body, fac
   const eyeY = H * (B.child ? 0.11 : 0.07);
   const ex = W * 0.44 * ap.eye.spacing;
   const ew = W * 0.31 * ap.eye.size * (B.child ? 1.15 : 1);
-  const eh = ew * 0.6;
+  const eh = ew * (B.child ? 0.66 : ap.eyeOpen ?? 0.6);
   // Cuencas: un poco de sombra sobre los ojos da profundidad a la mirada.
   // (solo por encima: una sombra que rodea el ojo entero parecería unas gafas).
   for (const sx of [-1, 1]) ell(g, sx * ex, eyeY - eh * 0.85, ew * 1.25, eh * 0.75, alpha(shd(ap.skin, 0.3), 0.16));
@@ -325,13 +325,14 @@ function eye(g: CanvasRenderingContext2D, ap: Appearance, x: number, y: number, 
   }
   const wide = kind === 'wide';
   const hh = wide ? h * 1.25 : h;
-  // Forma de almendra: la esquina exterior un poco más alta.
+  // Forma de almendra: la esquina exterior más alta o más caída según la persona.
   const outer = sx;
+  const up = 0.08 + (ap.eyeTilt ?? 0) * 0.12;
   const shape = () => {
     g.beginPath();
-    g.moveTo(x - w, y + (outer < 0 ? -hh * 0.08 : hh * 0.05));
-    g.bezierCurveTo(x - w * 0.5, y - hh * 1.05, x + w * 0.5, y - hh * 1.05, x + w, y + (outer > 0 ? -hh * 0.08 : hh * 0.05));
-    g.bezierCurveTo(x + w * 0.5, y + hh * 0.85, x - w * 0.5, y + hh * 0.85, x - w, y + (outer < 0 ? -hh * 0.08 : hh * 0.05));
+    g.moveTo(x - w, y + (outer < 0 ? -hh * up : hh * 0.05));
+    g.bezierCurveTo(x - w * 0.5, y - hh * 1.05, x + w * 0.5, y - hh * 1.05, x + w, y + (outer > 0 ? -hh * up : hh * 0.05));
+    g.bezierCurveTo(x + w * 0.5, y + hh * 0.85, x - w * 0.5, y + hh * 0.85, x - w, y + (outer < 0 ? -hh * up : hh * 0.05));
     g.closePath();
   };
   g.save();
