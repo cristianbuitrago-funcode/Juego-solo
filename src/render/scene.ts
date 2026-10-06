@@ -19,7 +19,7 @@ import type { Good } from '../world/economy';
 import { idx, speedOf, walkable } from '../world/terrain';
 import { T, TILE, TW, type Folk, type FolkRole } from '../world/types';
 import { appearanceOf, playerAppearance, type Appearance } from './appearance';
-import { CHUNK, ChunkCache, type StaticObject } from './chunks';
+import { CHUNK, ChunkCache, PAD, type StaticObject } from './chunks';
 import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
 import { drawFigure, drawFigureShadow, figureTop } from '../visual/figure/figure';
 import { castShadow, contactShadow, sunAt, type SunState } from '../visual/light';
@@ -1170,7 +1170,7 @@ export class WorldScene {
     const cy1 = Math.floor(y1 / CPX);
     // Caben los fragmentos visibles y un anillo alrededor (nunca se desaloja uno que se ve).
     this.chunks.capacity = (cx1 - cx0 + 3) * (cy1 - cy0 + 3) + 1;
-    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX, cy * CPX, CPX + 0.5, CPX + 0.5);
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX - PAD, cy * CPX - PAD, CPX + PAD * 2, CPX + PAD * 2);
     // Si este fotograma no ha tenido que pintar suelo, se adelanta un vecino (hacia donde se camina).
     if (this.chunks.paints === this.paintsSeen) this.chunks.prewarm(Math.floor(this.cam.x / CPX), Math.floor(this.cam.y / CPX), Math.sign(this.vel.x), Math.sign(this.vel.y), season, stateKey);
     this.paintsSeen = this.chunks.paints;

@@ -43,6 +43,9 @@ function vnoise(x: number, y: number): number {
 export const CHUNK = 24;
 
 const CPX = CHUNK * TILE;
+/** Margen de cada lienzo de suelo (px de mundo), igual a una muestra de la capa base. */
+export const PAD = 2;
+const phase = (x: number, res: number, off: number) => (((x * res) % off) + off) % off;
 
 export interface StaticObject {
   x: number; // píxeles de mundo (pies)
@@ -364,13 +367,15 @@ export class ChunkCache {
         }
       }
     bg.putImageData(img, 0, 0);
-    const W = Math.round(CPX * res);
+    // El lienzo cubre el fragmento más PAD píxeles de mundo por cada lado (contenido
+    // real del vecino): se dibuja a escala exacta y solapado, sin estirar, sin costuras.
+    const W = Math.round((CPX + PAD * 2) * res);
     canvas.width = W;
     canvas.height = W;
     const fg = canvas.getContext('2d')!;
     fg.imageSmoothingEnabled = true;
     fg.imageSmoothingQuality = 'high';
-    fg.drawImage(base, 1, 1, BN, BN, 0, 0, W, W);
+    fg.drawImage(base, 0, 0, BP, BP, 0, 0, W, W);
     // Detalle de cada material, recortado a donde está.
     const present = new Set<number>();
     for (let i = 0; i < mats.length; i += 3) if (mats[i]) present.add(mats[i]);
@@ -393,11 +398,11 @@ export class ChunkCache {
       tg.clearRect(0, 0, W, W);
       const pat = tg.createPattern(texc, 'repeat')!;
       const off = MT * res;
-      pat.setTransform(new DOMMatrix().translate(-((wx0 * res) % off), -((wy0 * res) % off)));
+      pat.setTransform(new DOMMatrix().translate(-phase(wx0 - PAD, res, off), -phase(wy0 - PAD, res, off)));
       tg.fillStyle = pat;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
-      tg.drawImage(mask, 1, 1, BN, BN, 0, 0, W, W);
+      tg.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
       fg.globalAlpha = 1;
       fg.drawImage(tmp, 0, 0);
       fg.globalAlpha = 1;
@@ -414,11 +419,11 @@ export class ChunkCache {
       tg.fillStyle = 'rgba(234,240,248,0.9)';
       tg.fillRect(0, 0, W, W);
       const sp = tg.createPattern(materialTexture('nieve', res, season), 'repeat')!;
-      sp.setTransform(new DOMMatrix().translate(-((wx0 * res) % off), -((wy0 * res) % off)));
+      sp.setTransform(new DOMMatrix().translate(-phase(wx0 - PAD, res, off), -phase(wy0 - PAD, res, off)));
       tg.fillStyle = sp;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
-      tg.drawImage(mask, 1, 1, BN, BN, 0, 0, W, W);
+      tg.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
       fg.drawImage(tmp, 0, 0);
     }
   }
