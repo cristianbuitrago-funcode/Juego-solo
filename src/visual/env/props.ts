@@ -309,25 +309,34 @@ export function propTex(kind: PropKind, v = 0): Tex {
 // ---------------------------------------------------------------------------
 // Mercado y campamentos
 // ---------------------------------------------------------------------------
-export function stallTex(full: boolean, color: string, v = 0, goods?: string[]): Tex {
-  return tex(`stall2:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 38, 38, 19, 35, (g) => {
+/**
+ * Puesto del mercado. `part` lo parte en dos capas para que quien atiende quede entre ellas:
+ * 'back' (postes y toldo, detrás de la persona) y 'front' (mostrador y género, delante).
+ */
+export function stallTex(full: boolean, color: string, v = 0, goods?: string[], part: 'all' | 'back' | 'front' = 'all'): Tex {
+  // El toldo va alto (postes largos): quien atiende detrás se ve de cara bajo los flecos.
+  return tex(`stall3:${part}:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 38, 48, 19, 45, (g) => {
     g.translate(-19, -35);
     g.scale(0.8, 0.8);
-    post(g, 4, 14, 3, 29);
-    post(g, 39, 14, 3, 29);
-    plank(g, 2, 28, 42, 12, '#9a7048');
+    const A = -12.5; // cuánto sube el toldo (en unidades de antes de escalar)
+    const back = part !== 'front';
+    const front = part !== 'back';
+    if (back) post(g, 4, 14 + A, 3, 29 - A);
+    if (back) post(g, 39, 14 + A, 3, 29 - A);
+    if (front) plank(g, 2, 28, 42, 12, '#9a7048');
     // Toldo a rayas con caída y volumen.
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; back && i < 6; i++) {
       const c = i % 2 ? color : '#efe6d4';
-      g.fillStyle = vgrad(g, 4, 16, [[0, lit(c, 0.15)], [1, shd(c, 0.2)]]);
+      g.fillStyle = vgrad(g, 4 + A, 16 + A, [[0, lit(c, 0.15)], [1, shd(c, 0.2)]]);
       g.beginPath();
-      g.moveTo(i * 7.7, 16);
-      g.lineTo(i * 7.7 + 7.7, 16);
-      g.lineTo(i * 7.7 + 6.5, 4);
-      g.lineTo(i * 7.7 + 1.2, 4);
+      g.moveTo(i * 7.7, 16 + A);
+      g.lineTo(i * 7.7 + 7.7, 16 + A);
+      g.lineTo(i * 7.7 + 6.5, 4 + A);
+      g.lineTo(i * 7.7 + 1.2, 4 + A);
       g.fill();
-      ell(g, i * 7.7 + 3.85, 16, 3.85, 2.2, shd(c, 0.12));
+      ell(g, i * 7.7 + 3.85, 16 + A, 3.85, 2.2, shd(c, 0.12));
     }
+    if (!front) return;
     if (full) {
       const shown = goods?.length ? goods : [['#d9a441', '#c06a2a', '#e0c070'], ['#a8c25a', '#6a9a3a', '#d9473a'], ['#c0503a', '#8a4a8a', '#e8d8a0']][v % 3];
       const n = goods ? Math.min(7, goods.length * 2 + 1) : 7;
@@ -338,7 +347,23 @@ export function stallTex(full: boolean, color: string, v = 0, goods?: string[]):
       }
       plank(g, 0, 21, 8, 7, '#a07a3e'); // una caja apoyada en el extremo del mostrador (no flotando delante de quien atiende)
     } else {
+      // Cerrado: el género tapado con una lona atada sobre el mostrador.
       plank(g, 8, 22, 10, 6, '#6a4a2a');
+      g.fillStyle = vgrad(g, 20, 30, [[0, '#9a8f7c'], [1, '#6e6556']]);
+      g.beginPath();
+      g.moveTo(3, 29);
+      g.quadraticCurveTo(22, 19, 43, 29);
+      g.lineTo(43, 33);
+      g.lineTo(3, 33);
+      g.fill();
+      g.strokeStyle = 'rgba(60,45,30,0.7)';
+      g.lineWidth = 0.6;
+      g.beginPath();
+      g.moveTo(14, 23.5);
+      g.lineTo(14, 33);
+      g.moveTo(32, 23.5);
+      g.lineTo(32, 33);
+      g.stroke();
     }
   });
 }

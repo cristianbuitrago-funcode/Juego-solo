@@ -140,21 +140,22 @@ export function settlePeople(
   passable: (x: number, y: number) => boolean,
   /** Figuras que no se mueven de su sitio (quien atiende un puesto): se cuentan, pero no se apartan. */
   fixed: { x: number; y: number }[] = [],
+  dt = 1 / 60,
 ): void {
   // En pantalla una figura mide unas 2 casillas de alto: quien está detrás (más arriba) asoma
   // por encima de la cabeza de quien tiene delante aunque en el suelo estén a una casilla.
   const overlaps = (ax: number, ay: number, bx: number, by: number, w: number) => Math.abs(ax - bx) < w && (by < ay ? ay - by < 1.8 : by - ay < 0.9);
-  const still = (e: object) => [...fixed, ...people.filter((o) => o !== e && !o.moving)];
+  // Una sola lista por fotograma (sin crear arrays por persona): fijos y quietos; cada cual se salta a sí mismo.
+  const others: { x: number; y: number }[] = fixed.concat(people.filter((o) => !o.moving));
   for (const e of people) {
-    const others = still(e);
-    const free = (x: number, y: number) => !overlaps(me.x, me.y, x, y, 0.8) && passable(x, y) && !furniture.blocksPerson(x, y) && !others.some((o) => overlaps(o.x, o.y, x, y, 0.65));
+    const free = (x: number, y: number) => !overlaps(me.x, me.y, x, y, 0.8) && passable(x, y) && !furniture.blocksPerson(x, y) && !others.some((o) => o !== e && overlaps(o.x, o.y, x, y, 0.65));
     const inside = furniture.solidAt(e.x, e.y);
     if (e.moving && !inside) {
       // Quien pasa de largo no salta de sitio: se abre un poco de lado mientras cruza por
       // detrás de alguien (o de un farol), para no quedar «sentado» en su cabeza.
-      const hit = others.find((o) => overlaps(o.x, o.y, e.x, e.y, 0.65)) ?? (furniture.blocksPerson(e.x, e.y) ? { x: e.x - 0.01, y: e.y } : null);
+      const hit = others.find((o) => o !== e && overlaps(o.x, o.y, e.x, e.y, 0.65)) ?? (furniture.blocksPerson(e.x, e.y) ? { x: e.x - 0.01, y: e.y } : null);
       if (hit) {
-        const nx = e.x + (e.x >= hit.x ? 0.09 : -0.09);
+        const nx = e.x + (e.x >= hit.x ? 1 : -1) * 1.6 * dt; // 1,6 casillas por segundo
         if (passable(nx, e.y) && !furniture.solidAt(nx, e.y)) e.x = nx;
       }
       continue;

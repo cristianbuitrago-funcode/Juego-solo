@@ -90,6 +90,11 @@ export function stallShown(v: Pick<Village, 'sign'>, st: { x: number; y: number 
   return Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6;
 }
 
+/** Dónde está de pie quien atiende un puesto (detrás del mostrador). Una sola fuente para dibujo y colocación. */
+export function vendorSpot(st: { x: number; y: number }): { x: number; y: number } {
+  return { x: st.x + 3 / 16, y: st.y - 0.55 };
+}
+
 export function getLayout(w: WorldState): Layout {
   const hit = cache.get(w.seed);
   if (hit) return hit;

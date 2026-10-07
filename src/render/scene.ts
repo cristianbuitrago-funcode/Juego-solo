@@ -5,7 +5,7 @@ import { weatherIn } from '../world/geography';
 import { clearMaterials } from '../visual/env/materials';
 import { drawSmall, drawTree, drawTreeShadow, type SmallKind, type TreeKind } from '../visual/env/flora';
 import { playerRegion } from '../world/society';
-import { getLayout, doorOf, stallShown, type BuildingKind, type Layout } from '../world/layout';
+import { getLayout, doorOf, stallShown, vendorSpot, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, explore } from '../world/life';
 import { findPath, passable } from '../world/path';
 import { routineOf } from '../world/routines';
@@ -556,7 +556,7 @@ export class WorldScene {
     this.moveFolk(dt);
     this.moveExtras(dt);
     this.separate(dt);
-    this.settle();
+    this.settle(dt);
     moveAnimals(this, dt);
     moveBirds(this, dt);
     this.socialAcc += dt;
@@ -804,7 +804,7 @@ export class WorldScene {
     for (let k = 1; k < 8; k++) {
       const crowded = [...this.extras.values()].some((o) => { const q = o.path[0] ?? o; return Math.hypot(q.x - p.x, q.y - p.y) < 1.4; });
       // (tampoco detrás de un puesto: asomaría por encima de la cabeza de quien atiende)
-      const byStall = this.l.villages[regionId].stalls.some((st) => Math.abs(st.x - p.x) < 1.6 && p.y - st.y > -2.4 && p.y - st.y < 0.6);
+      const byStall = this.l.villages[regionId].stalls.some((st) => Math.abs(st.x - p.x) < 1.3 && st.y - p.y > 0 && st.y - p.y < 1.8);
       if (!this.furniture.solidAt(p.x, p.y) && !this.furniture.blocksPerson(p.x, p.y) && !crowded && !byStall) break;
       p = this.plazaPoint(regionId, rnd(k * 2), rnd(k * 2 + 1));
     }
@@ -936,15 +936,15 @@ export class WorldScene {
    * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
    * pasa, se le lleva al sitio libre más cercano.
    */
-  private settle(): void {
+  private settle(dt: number): void {
     const people: Ent[] = [];
     for (const e of this.ents.values()) if (!e.inside) people.push(e);
     for (const e of this.extras.values()) people.push(e);
     // Quien atiende cada puesto montado (se dibuja detrás del mostrador, ver village.ts).
     const me = ensureLife(this.w).player;
     const vendors: { x: number; y: number }[] = [];
-    for (const v of this.l.villages) if (Math.abs(v.cx - me.x) < 40 && Math.abs(v.cy - me.y) < 40) for (const st of v.stalls.slice(0, 6)) if (stallShown(v, st)) vendors.push({ x: st.x + 3 / TILE, y: st.y + 0.3 });
-    settlePeople(people, me, this.furniture, (x, y) => passable(this.w, this.l, x, y), vendors);
+    for (const v of this.l.villages) if (Math.abs(v.cx - me.x) < 40 && Math.abs(v.cy - me.y) < 40) for (const st of v.stalls.slice(0, 6)) if (stallShown(v, st)) vendors.push(vendorSpot(st));
+    settlePeople(people, me, this.furniture, (x, y) => passable(this.w, this.l, x, y), vendors, dt);
   }
 
   private separate(dt: number): void {

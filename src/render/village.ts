@@ -1,7 +1,7 @@
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, type Season } from '../world/clock';
 import { marketOf } from '../world/economy';
-import { stallShown, type BuildingKind, type Layout } from '../world/layout';
+import { stallShown, vendorSpot, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, housesFor } from '../world/life';
 import { marketLook } from '../world/marketview';
 import { idx } from '../world/terrain';
@@ -20,7 +20,6 @@ import { drawTree, drawTreeShadow, type TreeKind } from '../visual/env/flora';
 import { drawFountainWater, propTex, stallTex } from '../visual/env/props';
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { alphaAt, put, silhouette } from '../visual/paint';
-import { drawFigure } from '../visual/figure/figure';
 
 /**
  * Lo que se ve de un pueblo: casas según su estado, edificios clave, mobiliario,
@@ -214,7 +213,14 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const goods = snowRoofs && open ? stallGoods.map((_, j) => WINTER[(j + i) % WINTER.length]) : stallGoods;
     const stx0 = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? goods : undefined);
     const stx = snowRoofs ? snowCapped(stx0, -stx0.ay + stx0.h * 0.16) : stx0;
-    items.push({ y: s.y * TILE, draw: () => put(g, stx, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
+    // En dos capas: postes y toldo detrás de quien atiende; mostrador y género delante (si no,
+    // el toldo le tapaba la cabeza). La sombra y la oclusión siguen usando el puesto entero.
+    const tint = `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`;
+    const cap = (t: typeof stx0) => (snowRoofs ? snowCapped(t, -t.ay + t.h * 0.16) : t);
+    const stBack = cap(stallTex(open, tint, i, open ? goods : undefined, 'back'));
+    const stFront = cap(stallTex(open, tint, i, open ? goods : undefined, 'front'));
+    items.push({ y: s.y * TILE - 12, draw: () => put(g, stBack, s.x * TILE, s.y * TILE) });
+    items.push({ y: s.y * TILE, draw: () => put(g, stFront, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay * 0.6, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
     // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
     const hh = hourOf(life.clock);
     if (open && hh >= 7 && hh < 19.5 && inView(s.x * TILE, s.y * TILE)) {
@@ -225,11 +231,8 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       const beat = Math.floor(vsec + hash(id) * 7);
       const action: Action = near ? (beat % 3 === 0 ? 'wave' : 'talk') /* a quien se acerca se le saluda, no se le señala */ : beat % 7 === 0 ? 'point' : beat % 5 === 0 ? 'talk' : 'idle';
       const pose: Pose = { facing: 'front', flip: me.x < s.x, phase: 0, action, t: vsec + i * 3.1, expr: near ? 'feliz' : 'neutral', lod: sc.lodAt(s.x, s.y), hood: cold && hash(id, 9) < 0.5, heavy: cold, wet };
-      // Detrás del mostrador (se ordena antes que el puesto) pero dibujado más abajo: los pies
-      // quedan ocultos por el mostrador y la cara asoma bajo el toldo (antes lo tapaba el toldo).
-      const vx = s.x * TILE + 3;
-      const vy = (s.y + 0.3) * TILE;
-      items.push({ y: s.y * TILE - 1, draw: () => drawFigure(g, ap, pose, vx, vy) });
+      const vs = vendorSpot(s);
+      sc.pushPerson(items, ap, pose, vs.x * TILE, vs.y * TILE);
     }
   });
   void food;
