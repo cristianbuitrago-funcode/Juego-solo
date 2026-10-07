@@ -2,7 +2,8 @@
  * Huellas del mobiliario de los pueblos, en teselas: una sola tabla para el choque del
  * jugador y de los animales (elipse `rx`×`ry`, desplazada `dy` hacia arriba desde el pie
  * del sprite), para reservar sitio al decorar la plaza (`keep`) y para no dejar al jugador
- * oculto detrás al llegar (`tall`: cuánto sube el objeto; `wide`: media anchura de lo que tapa).
+ * oculto detrás al llegar (`tall`: cuánto sube el objeto; `wide`: media anchura de lo que tapa; `front`: franja
+ * delante en la que el jugador taparía a quien está detrás).
  */
 export interface Footprint {
   rx: number;
@@ -11,6 +12,8 @@ export interface Footprint {
   keep?: number;
   tall?: number;
   wide?: number;
+  /** Detrás hay alguien (el vendedor del puesto): quien se para justo delante lo tapa. */
+  front?: number;
 }
 
 export const FOOT: Readonly<Record<string, Footprint>> = {
@@ -27,7 +30,7 @@ export const FOOT: Readonly<Record<string, Footprint>> = {
   heno: { rx: 0.95, ry: 0.42, dy: 0.25 },
   lenya: { rx: 0.9, ry: 0.3, dy: 0.15 },
   // Puestos del mercado y adornos de la plaza.
-  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05 },
+  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05, front: 1.7 },
   arbol: { rx: 0.75, ry: 0.4, dy: 0.1, tall: 3.2, wide: 1.5 },
   jardinera: { rx: 0.85, ry: 0.3, dy: 0.1 },
   mesa: { rx: 1.15, ry: 0.4, dy: 0.1 },

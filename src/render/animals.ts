@@ -54,7 +54,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
           a.tx = a.hx + (Math.random() - 0.5) * R;
           a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
           const tt = s.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
-          const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(s.w, s.l, a.tx, a.ty) && !animalBlocked(s, a.kind, a.tx, a.ty);
+          const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(s.w, s.l, a.tx, a.ty) && !animalBlocked(s, a.kind, a.tx, a.ty) && !crowded(list, a, a.tx, a.ty, me);
           if (!ok) (a.tx = a.x), (a.ty = a.y);
         }
         continue;
@@ -77,10 +77,24 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
   }
 }
 
-/** El cuerpo de un animal es más ancho que un punto: no se planta con un farol o un poste atravesándolo. */
-function animalBlocked(s: AnimalsHost, kind: Animal['kind'], x: number, y: number): boolean {
-  const half = kind === 'caballo' || kind === 'vaca' ? 0.8 : kind === 'gallina' || kind === 'pato' ? 0.25 : 0.55;
-  return s.furniture.solidAt(x, y) || s.furniture.solidAt(x - half, y) || s.furniture.solidAt(x + half, y);
+const halfOf = (kind: Animal['kind']) => (kind === 'caballo' || kind === 'vaca' ? 0.8 : kind === 'gallina' || kind === 'pato' ? 0.25 : 0.55);
+
+/**
+ * El cuerpo de un animal es más ancho que un punto: no se planta con un farol o un poste
+ * atravesándolo (ni justo delante ni justo detrás de algo alto: el poste le saldría del lomo).
+ */
+export function animalBlocked(s: Pick<AnimalsHost, 'furniture' | 'w' | 'l'>, kind: Animal['kind'], x: number, y: number): boolean {
+  const half = halfOf(kind);
+  if (s.furniture.solidAt(x, y) || s.furniture.solidAt(x - half, y) || s.furniture.solidAt(x + half, y) || s.furniture.tallNear(x, y, half)) return true;
+  // Justo detrás de una casa o una valla, el tejado le taparía las patas y parecería subido encima.
+  return kind !== 'gallina' && !passable(s.w, s.l, x, y + 1.1);
+}
+
+/** Cada animal se para con su sitio: ni encima de otro ni pegado al jugador. */
+function crowded(list: Animal[], a: Animal, x: number, y: number, me: { x: number; y: number }): boolean {
+  if (Math.abs(me.x - x) < 1.2 && Math.abs(me.y - y) < 0.9) return true;
+  for (const b of list) if (b !== a && Math.abs(b.tx - x) < halfOf(a.kind) + halfOf(b.kind) + 0.1 && Math.abs(b.ty - y) < 0.6) return true;
+  return false;
 }
 
 /** Los rebaños crecen o menguan con la comida y la salud de la tierra. */
@@ -96,6 +110,7 @@ function spawnAnimals(s: AnimalsHost, regionId: number): Animal[] {
       const x = cx + (hash(`${regionId}${kind}`, i) - 0.5) * 6;
       const y = cy + (hash(`${regionId}${kind}`, i + 50) - 0.5) * 5;
       if (!passable(w, s.l, x, y) || animalBlocked(s, kind, x, y)) continue;
+      if (out.some((b) => Math.abs(b.x - x) < halfOf(kind) + halfOf(b.kind) && Math.abs(b.y - y) < 0.6)) continue;
       out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: hash(`${regionId}${kind}`, i + 9) < 0.5, anim: i, v: i });
     }
   };

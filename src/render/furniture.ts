@@ -1,5 +1,5 @@
 import type { WorldState } from '../core/types';
-import type { Layout } from '../world/layout';
+import { stallShown, type Layout } from '../world/layout';
 import { passable } from '../world/path';
 import { plazaLook, type PlazaLook } from '../visual/env/plaza';
 import { FOOT, keepOf, type Footprint } from './footprints';
@@ -76,7 +76,20 @@ export class Furniture {
   /** ¿Taparía al jugador en (x, y) algo alto que está justo delante (más abajo en pantalla)? */
   hiddenAt(x: number, y: number): boolean {
     // `tall`: cuánto sube el objeto en teselas; `wide`: media anchura de lo que tapa (la copa de un árbol, el farol).
-    for (const c of this.near(x, y)) if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6)) return true;
+    for (const c of this.near(x, y)) {
+      if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6)) return true;
+      // Y al revés: plantado justo delante de un puesto, taparía a quien atiende detrás.
+      if (c.front && c.y < y && y - c.y < c.front && Math.abs(c.x - x) < c.rx + 0.4) return true;
+    }
+    return false;
+  }
+
+  /**
+   * ¿Hay algo alto (farol, cartel, árbol…) pegado a (x, y) por delante o por detrás? Un
+   * cuerpo ancho (un animal) ahí queda con el poste saliéndole del lomo.
+   */
+  tallNear(x: number, y: number, half: number, reach = 0.9): boolean {
+    for (const c of this.near(x, y)) if (c.tall && Math.abs(c.y - y) < reach && Math.abs(c.x - x) < half + Math.min(0.35, c.rx)) return true;
     return false;
   }
 
@@ -86,10 +99,10 @@ export class Furniture {
       if (Math.abs(x - v.cx) > reach || Math.abs(y - v.cy) > reach) continue;
       let list = this.solids.get(v);
       if (!list) {
-        const at = (x: number, y: number, f: Footprint): Solid => ({ x, y: y - f.dy, rx: f.rx, ry: f.ry, tall: f.tall, wide: f.wide });
+        const at = (x: number, y: number, f: Footprint): Solid => ({ x, y: y - f.dy, rx: f.rx, ry: f.ry, tall: f.tall, wide: f.wide, front: f.front });
         list = [];
         for (const p of v.props) if (FOOT[p.kind]) list.push(at(p.x, p.y, FOOT[p.kind]));
-        for (const st of v.stalls) if (Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6) list.push(at(st.x, st.y, FOOT.puesto));
+        for (const st of v.stalls) if (stallShown(v, st)) list.push(at(st.x, st.y, FOOT.puesto));
         for (const d of this.plazaOf(v.regionId).decor) list.push(at(d.x, d.y, FOOT[d.kind]));
         this.solids.set(v, list);
       }
@@ -98,4 +111,4 @@ export class Furniture {
   }
 }
 
-type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide?: number };
+type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide?: number; front?: number };

@@ -82,7 +82,9 @@ export function postDrawables(s: TrafficHost, p: { routeId: number; a: number; b
       // En guerra se miran unos a otros: cada bando hacia la barrera.
       flip: war ? i % 2 === 0 : i % 2 === 0,
       phase: 0,
-      action: war ? (row % 2 === 0 ? (Math.floor(sec / 2.2 + i * 0.7) % 3 === 0 ? 'argue' : 'fight') : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : Math.floor(sec / 1.6 + i) % 3 === 1 ? 'point' : 'look') : close ? 'idle' : 'look',
+      // Solo la primera fila baja la lanza hacia la barrera; la de atrás la lleva en alto y
+      // grita (bajarla o señalar ahí apuntaría a la espalda de los suyos).
+      action: war ? (row % 2 === 0 ? (Math.floor(sec / 2.2 + i * 0.7) % 3 === 0 ? 'argue' : 'fight') : Math.floor(sec / 1.6 + i) % 3 === 0 ? 'argue' : 'look') : close ? 'idle' : 'look',
       t: sec + i,
       expr: war ? (row % 2 === 0 ? 'hostil' : 'enfadado') : mil > 0.55 ? 'desconfianza' : 'neutral',
       lod: s.lodAt(sx / TILE, sy / TILE),

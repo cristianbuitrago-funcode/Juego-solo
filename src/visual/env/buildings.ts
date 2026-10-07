@@ -877,7 +877,7 @@ export function snowCapped(t: Tex, cutY: number): Tex {
     g.beginPath();
     g.rect(-t.ax, -t.ay, t.w, cutY + t.ay);
     g.clip();
-    g.globalAlpha = 0.24;
+    g.globalAlpha = 0.15; // (más: las tejas asomaban y el manto se veía malva, no blanco)
     g.drawImage(t.canvas, -t.ax, -t.ay, t.w, t.h);
     g.restore();
     // Carámbanos bajo el alero.

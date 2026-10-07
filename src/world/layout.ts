@@ -85,6 +85,11 @@ export interface Layout {
 
 const cache = new Map<number, Layout>();
 
+/** ¿Se monta este puesto? Junto al poste de caminos no hay sitio: ni se dibuja ni se atiende. */
+export function stallShown(v: Pick<Village, 'sign'>, st: { x: number; y: number }): boolean {
+  return Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6;
+}
+
 export function getLayout(w: WorldState): Layout {
   const hit = cache.get(w.seed);
   if (hit) return hit;

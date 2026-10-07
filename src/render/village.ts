@@ -1,7 +1,7 @@
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, type Season } from '../world/clock';
 import { marketOf } from '../world/economy';
-import type { BuildingKind, Layout } from '../world/layout';
+import { stallShown, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, housesFor } from '../world/life';
 import { marketLook } from '../world/marketview';
 import { idx } from '../world/terrain';
@@ -183,7 +183,9 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       const x1 = lb.x * TILE;
       const y1 = lb.y * TILE + 4;
       if (!inView((x0 + x1) / 2, (y0 + y1) / 2, 80)) continue;
-      items.push({ y: Math.max(y0, y1) + 3 * TILE + 1, draw: () => drawGarland(g, x0, y0, x1, y1, hue, sc.reduceMotion ? 0 : t, windK) });
+      // Se ordena por la línea de los faroles: quien está delante (más abajo) se dibuja encima;
+      // antes se sumaban 3 casillas y la guirnalda cruzaba las piernas de quien pasaba delante.
+      items.push({ y: Math.max(y0, y1) + 1, draw: () => drawGarland(g, x0, y0, x1, y1, hue, sc.reduceMotion ? 0 : t, windK) });
     }
   }
   const gloomy = ['lluvia', 'tormenta', 'niebla'].includes(sc.weatherHere());
@@ -202,7 +204,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const stallGoods = look.stalls[i];
     if (stallGoods === undefined) return; // sin comerciante: no hay puesto
     // Un puesto no se monta encima del poste de caminos.
-    if (Math.hypot(s.x - (v.sign.x + 1.2), s.y - (v.sign.y + 0.4)) < 2.6) return;
+    if (!stallShown(v, s)) return;
     const open = stallGoods.length > 0;
     const stx0 = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
     const stx = snowRoofs ? snowCapped(stx0, -stx0.ay + stx0.h * 0.16) : stx0;
@@ -215,7 +217,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       const me = life.player;
       const near = Math.hypot(me.x - s.x, me.y - s.y) < 4;
       const beat = Math.floor(vsec + hash(id) * 7);
-      const action: Action = near ? (beat % 3 === 0 ? 'point' : 'talk') : beat % 7 === 0 ? 'point' : beat % 5 === 0 ? 'talk' : 'idle';
+      const action: Action = near ? (beat % 3 === 0 ? 'wave' : 'talk') /* a quien se acerca se le saluda, no se le señala */ : beat % 7 === 0 ? 'point' : beat % 5 === 0 ? 'talk' : 'idle';
       const pose: Pose = { facing: 'front', flip: me.x < s.x, phase: 0, action, t: vsec + i * 3.1, expr: near ? 'feliz' : 'neutral', lod: sc.lodAt(s.x, s.y), hood: cold && hash(id, 9) < 0.5, heavy: cold, wet };
       sc.pushPerson(items, ap, pose, s.x * TILE + 3, (s.y - 0.55) * TILE);
     }

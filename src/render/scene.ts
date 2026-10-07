@@ -947,6 +947,24 @@ export class WorldScene {
         move(a, -sgn);
         move(b, sgn);
       }
+    // Nadie se queda encima del protagonista (al llegar, o si se le para delante): el
+    // vecino se aparta del todo hacia su lado; el jugador no se mueve.
+    const me = ensureLife(this.w).player;
+    // (también quien va andando: si su camino pasa por el sitio del jugador, lo rodea)
+    const all: Ent[] = [...still];
+    for (const e of this.ents.values()) if (!e.inside && e.moving) all.push(e);
+    for (const e of this.extras.values()) if (e.moving) all.push(e);
+    for (const e of all) {
+      const dx = e.x - me.x;
+      if (Math.abs(dx) >= WIDE || Math.abs(e.y - me.y) >= DEEP) continue;
+      const dir = dx > 0.001 ? 1 : dx < -0.001 ? -1 : e.x * 7 % 2 > 1 ? 1 : -1;
+      const ok = (x: number) => passable(this.w, this.l, x, e.y) && !this.furniture.solidAt(x, e.y);
+      const nx = e.x + dir * (WIDE - Math.abs(dx)) * k;
+      // (si por ese lado hay un mueble, se va por el otro)
+      const ox = e.x - dir * (WIDE + Math.abs(dx)) * k;
+      if (ok(nx)) e.x = nx;
+      else if (ok(ox)) e.x = ox;
+    }
   }
 
   private moveFolk(dt: number): void {

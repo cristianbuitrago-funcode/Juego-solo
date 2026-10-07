@@ -452,7 +452,13 @@ export class MapView {
     this.drawMissions(g, t);
     this.drawLabels(g, t, animate);
     if (this.player) {
-      const p = this.toScreen(this.player.x, this.player.y);
+      const p0 = this.toScreen(this.player.x, this.player.y);
+      // Encima del hito de un pueblo, la chincheta se aparta a un lado (si no, lo tapa).
+      const onMark = this.w!.regions.some((r) => {
+        const c = this.toScreen(r.center.x, r.center.y);
+        return Math.hypot(c.x - p0.x, c.y - p0.y) < 16;
+      });
+      const p = onMark ? { x: p0.x + 18, y: p0.y + 2 } : p0;
       const pulse = animate ? (Math.sin(t / 300) + 1) / 2 : 0.5;
       // El aro que late en el suelo es el sitio exacto; encima, una chincheta con su
       // rótulo «Estás aquí» al lado (no encima del nombre del pueblo ni del hito).

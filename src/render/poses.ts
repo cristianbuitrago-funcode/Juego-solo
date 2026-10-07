@@ -118,7 +118,8 @@ export function entPose(s: PoseHost, id: string, e: Ent, f: Folk | undefined, se
     if (e.partner) {
       // Dos que charlan: uno habla y gesticula, el otro escucha y asiente.
       const turn = Math.floor(sec / 2.8 + (id < e.partner ? 0 : 1)) % 2 === 0;
-      action = turn ? (Math.floor(sec / 2.8) % 4 === 1 ? 'point' : 'talk') : Math.floor(sec / 0.9) % 5 === 0 ? 'nod' : 'listen';
+      // (cruzarse de brazos, no señalar: el brazo estirado le apuntaba a la cara al otro)
+      action = turn ? (Math.floor(sec / 2.8) % 4 === 1 ? 'cross' : 'talk') : Math.floor(sec / 0.9) % 5 === 0 ? 'nod' : 'listen';
     } else if (action === 'talk') action = 'idle';
     else if (action === 'idle' && Math.floor(sec / 4 + hash(id) * 9) % 6 === 0) action = 'look';
   }
