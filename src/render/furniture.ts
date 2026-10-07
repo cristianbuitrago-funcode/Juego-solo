@@ -74,12 +74,12 @@ export class Furniture {
   }
 
   /** ¿Taparía al jugador en (x, y) algo alto que está justo delante (más abajo en pantalla)? */
-  hiddenAt(x: number, y: number): boolean {
+  hiddenAt(x: number, y: number, front = true): boolean {
     // `tall`: cuánto sube el objeto en teselas; `wide`: media anchura de lo que tapa (la copa de un árbol, el farol).
     for (const c of this.near(x, y)) {
       if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6)) return true;
       // Y al revés: plantado justo delante de un puesto, taparía a quien atiende detrás.
-      if (c.front && c.y < y && y - c.y < c.front && Math.abs(c.x - x) < c.rx + 0.4) return true;
+      if (front && c.front && c.y < y && y - c.y < c.front && Math.abs(c.x - x) < c.rx + 0.4) return true;
     }
     return false;
   }

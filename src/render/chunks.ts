@@ -344,10 +344,15 @@ export class ChunkCache {
           const rg = region[k];
           if (snowA && rg >= 0 && snowReg[rg]) {
             // Más fina en caminos y plazas (pisada), con claros donde el viento la barre.
-            const trod = t === T.Road || t === T.Plaza || t === T.Bridge ? 0.92 : 1;
+            const trod = t === T.Road || t === T.Plaza || t === T.Bridge;
             const patch = vnoise(wx / 21 + 13, wy / 21 + 7);
             const fine = vnoise(wx / 5 + 3, wy / 5 + 9);
-            snowA[py * BP + px] = Math.round(255 * Math.max(0, Math.min(1, (0.8 + patch * 0.4 - (trod < 1 ? fine * 0.3 : 0)) * trod)));
+            // Manto con bordes definidos, no un velo: en el campo, nieve casi entera; en calles y
+            // plazas, zonas pisadas (se ve el adoquín) y montones limpios, con un borde corto entre ambos.
+            const v = patch * 0.65 + fine * 0.35;
+            const e = Math.max(0, Math.min(1, (v - 0.43) / 0.16));
+            const a = trod ? 0.28 + e * e * (3 - 2 * e) * 0.68 : 0.9 + patch * 0.08;
+            snowA[py * BP + px] = Math.round(255 * a);
           }
         }
         d[q] = r;

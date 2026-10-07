@@ -347,6 +347,8 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
         const upright = item === 'cayado' || item === 'paraguas' || item === 'baston' || item === 'jarra' || (item === 'lanza' && pose.action !== 'fight');
         const hangs = pose.action === 'idle' || pose.action === 'walk' || pose.action === 'look';
         g.rotate(upright ? l.a + l.b - R.lean + R.item * 0.3 : hangs ? l.a + l.b - R.lean - 0.15 + R.item : l.b + l.a - Math.PI / 2 + R.item);
+        // La lanza en ristre: la punta (dibujada hacia arriba) va hacia donde mira, no hacia atrás.
+        if (item === 'lanza' && pose.action === 'fight') g.rotate(Math.PI);
         put(g, tItem, 0, 0);
         g.restore();
       }

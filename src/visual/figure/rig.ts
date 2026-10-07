@@ -196,7 +196,9 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       const g1 = S(t * (angry ? 3.6 : 2.3) + seed);
       const g2 = S(t * (angry ? 2.9 : 1.7) + seed * 2);
       // Discutiendo, los brazos se abren y se separan del cuerpo (se leen también de frente).
-      r.arms[1] = { a: (angry ? 0.95 : 0.55) + g1 * (angry ? 0.4 : 0.3), b: 0.9 + g2 * 0.3, lift: angry ? 0.15 : 0.4, fist: angry && g1 > 0.3 };
+      // Charlando, la mano gesticula a la altura del pecho, no tendida hacia el otro (le
+      // apuntaba a la cara, y si llevaba un cayado lo sostenía a brazo estirado).
+      r.arms[1] = angry ? { a: 0.95 + g1 * 0.4, b: 0.9 + g2 * 0.3, lift: 0.15, fist: g1 > 0.3 } : { a: 0.3 + pos(g1) * 0.22, b: 1.35 + g2 * 0.3, lift: 0.4 };
       r.arms[0] = { a: angry ? 0.9 + g2 * 0.3 : 0.12 + pos(g2) * 0.3, b: angry ? 0.8 : 0.3 + pos(g2) * 0.5, lift: angry ? 0.15 : 0.2 };
       r.mouthOpen = S(t * 9 + seed) > -0.1;
       r.head.nod = S(t * 2.1) * 0.05;

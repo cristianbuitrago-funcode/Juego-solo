@@ -1,6 +1,7 @@
 import type { WorldState } from '../core/types';
 import { hourOf } from '../world/clock';
 import { ensureLife } from '../world/life';
+import type { Layout } from '../world/layout';
 
 /** Bandadas de pájaros que cruzan la vista de día y con buen tiempo, con su sombra en el suelo. */
 export interface Bird {
@@ -12,6 +13,7 @@ export interface Bird {
 
 export interface BirdsHost {
   w: WorldState;
+  l: Layout;
   birds: Bird[];
   cam: { x: number; y: number; z: number };
   vw: number;
@@ -24,7 +26,10 @@ export interface BirdsHost {
 export function moveBirds(s: BirdsHost, dt: number): void {
   const h = hourOf(ensureLife(s.w).clock);
   const weather = s.weatherHere();
-  const want = s.reduceMotion || s.low || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
+  // Sobre los pueblos no: a la escala de la plaza se leían como peces o moscas sobre la gente.
+  const me = ensureLife(s.w).player;
+  const inTown = s.l.villages.some((v) => Math.hypot(v.cx - me.x, v.cy - me.y) < v.plazaR + 14);
+  const want = inTown || s.reduceMotion || s.low || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
   const vw = s.vw / s.cam.z;
   const vh = s.vh / s.cam.z;
   s.birds = s.birds.filter((b) => Math.abs(b.x - s.cam.x) < vw && Math.abs(b.y - s.cam.y) < vh);

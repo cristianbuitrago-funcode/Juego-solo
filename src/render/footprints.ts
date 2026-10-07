@@ -21,7 +21,7 @@ export const FOOT: Readonly<Record<string, Footprint>> = {
   pozo: { rx: 1.3, ry: 0.7, dy: 0.2 },
   estatua: { rx: 1.2, ry: 0.65, dy: 0.15, tall: 2, wide: 0.7 },
   banco: { rx: 1.25, ry: 0.95, dy: 0.2, keep: 1.15 },
-  cartel: { rx: 0.55, ry: 0.38, dy: 0.1, tall: 1.6, wide: 0.7 },
+  cartel: { rx: 0.55, ry: 0.38, dy: 0.1, tall: 1.8, wide: 1.35 }, // las tablas sobresalen ~1 casilla a cada lado
   farol: { rx: 0.45, ry: 0.32, dy: 0.08, tall: 2.4, wide: 0.7 },
   barril: { rx: 0.5, ry: 0.28, dy: 0.15 },
   cajas: { rx: 0.85, ry: 0.36, dy: 0.2 },

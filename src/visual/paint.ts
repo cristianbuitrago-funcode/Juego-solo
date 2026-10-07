@@ -148,6 +148,29 @@ export function clearTextures(): void {
  * escalado: se dibuja en unidades de mundo con el ancla en (0,0) desplazada
  * a (ax, ay). `res` por defecto: la de los sprites del nivel gráfico.
  */
+/**
+ * Opacidad (0..1) de un sprite en un punto, en unidades de mundo relativas al ancla.
+ * Lee los píxeles una sola vez por lienzo (para saber si una casa tapa de verdad al jugador
+ * o solo su rectángulo, que incluye aire alrededor del tejado).
+ */
+const alphaMaps = new WeakMap<HTMLCanvasElement, Uint8ClampedArray | null>();
+export function alphaAt(t: Tex, dx: number, dy: number): number {
+  let a = alphaMaps.get(t.canvas);
+  if (a === undefined) {
+    try {
+      a = t.canvas.getContext('2d')!.getImageData(0, 0, t.canvas.width, t.canvas.height).data;
+    } catch {
+      a = null;
+    }
+    alphaMaps.set(t.canvas, a);
+  }
+  if (!a) return 1;
+  const x = Math.floor((dx + t.ax) * (t.canvas.width / t.w));
+  const y = Math.floor((dy + t.ay) * (t.canvas.height / t.h));
+  if (x < 0 || y < 0 || x >= t.canvas.width || y >= t.canvas.height) return 0;
+  return a[(y * t.canvas.width + x) * 4 + 3] / 255;
+}
+
 export function tex(key: string, w: number, h: number, ax: number, ay: number, draw: (g: CanvasRenderingContext2D) => void, res = VQ().spriteRes): Tex {
   const k = `${key}@${res}`;
   const hit = texCache.get(k);

@@ -801,7 +801,7 @@ export class WorldScene {
     let p = this.plazaPoint(regionId, rnd(0), rnd(1));
     for (let k = 1; k < 8; k++) {
       const crowded = [...this.extras.values()].some((o) => { const q = o.path[0] ?? o; return Math.hypot(q.x - p.x, q.y - p.y) < 1.4; });
-      if (!this.furniture.solidAt(p.x, p.y) && !crowded) break;
+      if (!this.furniture.solidAt(p.x, p.y) && !this.furniture.hiddenAt(p.x, p.y, false) && !crowded) break;
       p = this.plazaPoint(regionId, rnd(k * 2), rnd(k * 2 + 1));
     }
     return p;
@@ -951,6 +951,18 @@ export class WorldScene {
         move(a, -sgn);
         move(b, sgn);
       }
+    // Nadie se queda quieto justo detrás de algo alto (las tablas del poste de caminos, un
+    // farol): se corre de lado hasta quedar a la vista.
+    for (const e of still) {
+      if (!this.furniture.hiddenAt(e.x, e.y, false)) continue;
+      for (const d of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.5, -2.5]) {
+        const nx = e.x + d;
+        if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y) && !this.furniture.hiddenAt(nx, e.y, false)) {
+          e.x += (nx - e.x) * k;
+          break;
+        }
+      }
+    }
     // Nadie se queda encima del protagonista (al llegar, o si se le para delante): el
     // vecino se aparta del todo hacia su lado; el jugador no se mueve.
     const me = ensureLife(this.w).player;
@@ -1270,7 +1282,11 @@ export class WorldScene {
     const pap = this.dress(playerAp(this, darkness(life.clock) > 0.3), wet, cold);
     const ppose = playerPose(this, sec, wet, cold);
     this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
-    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 54, k: 0.8 });
+    if (darkness(life.clock) > 0.3) {
+      // Junto a una farola, el farol de mano casi no se nota (dos focos pegados se leían como un error).
+      const byLamp = this.l.villages.some((v) => Math.abs(v.cx - me.x) < v.plazaR + 4 && Math.abs(v.cy - me.y) < v.plazaR + 4 && v.lamps.some((lp) => Math.hypot(lp.x - me.x, lp.y - me.y) < 2.6));
+      this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
+    }
 
     // Las sombras van antes que todo lo que se alza sobre el suelo.
     for (const gq of this.groundQ) gq();
@@ -1280,12 +1296,14 @@ export class WorldScene {
     this.hiddenBy = '';
     for (const it of items) it.draw();
     if (this.playerHidden) this.hiddenBy = 'árbol';
-    // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)?
+    // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)? Primero el
+    // rectángulo y, si el sprite lo sabe, sus píxeles: el aire junto al tejado no tapa.
+    const covers = (at: (x: number, y: number) => number, px: number, py: number) => [[0, -10], [0, -18], [-3, -14], [3, -14], [0, -24]].some(([dx, dy]) => at(px + dx, py + dy) > 0.5);
     {
       const px = me.x * TILE;
       const py = me.y * TILE;
       for (const it of items)
-        if (it.box && it.y > py && it.box.x0 < px + 6 && it.box.x1 > px - 6 && it.box.y0 < py - 8 && it.box.y1 > py - 28) {
+        if (it.box && it.y > py && it.box.x0 < px + 6 && it.box.x1 > px - 6 && it.box.y0 < py - 8 && it.box.y1 > py - 28 && (!it.solidAt || covers(it.solidAt, px, py))) {
           this.playerHidden = true;
           this.hiddenBy = `box ${Math.round(it.box.x0)},${Math.round(it.box.y0)}-${Math.round(it.box.x1)},${Math.round(it.box.y1)} y=${Math.round(it.y)}`;
           break;

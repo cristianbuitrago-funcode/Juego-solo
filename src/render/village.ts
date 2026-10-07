@@ -19,7 +19,7 @@ import { houseTex, houseWindows, keyTex, snowCapped, WALL_H, type BuildState } f
 import { drawTree, drawTreeShadow, type TreeKind } from '../visual/env/flora';
 import { drawFountainWater, propTex, stallTex } from '../visual/env/props';
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
-import { put, silhouette } from '../visual/paint';
+import { alphaAt, put, silhouette } from '../visual/paint';
 
 /**
  * Lo que se ve de un pueblo: casas según su estado, edificios clave, mobiliario,
@@ -88,6 +88,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     items.push({
       y: by,
       box: { x0: bx - ht.ax, y0: by - ht.ay, x1: bx - ht.ax + ht.w, y1: by - 4 },
+      solidAt: (x, y) => alphaAt(ht, x - bx, y - by),
       draw: () => {
         put(g, ht, bx, by);
         if (lit) for (const wn of wins) litWindow(sc, bx + wn.x, by + wn.y, wn.w, wn.h, t + i * 300);
@@ -107,7 +108,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const kt = snowRoofs ? snowCapped(kt0, -kt0.h * 0.42) : kt0;
     const sun = sc.sun;
     sc.shadowQ.push(() => castShadow(g, silhouette(kt), kt.w, kt.h, kt.ax, kt.ay, bx, by, sun, 0.62));
-    items.push({ y: by, draw: () => put(g, kt, bx, by), box: { x0: bx - kt.ax, y0: by - kt.ay, x1: bx - kt.ax + kt.w, y1: by - 4 } });
+    items.push({ y: by, draw: () => put(g, kt, bx, by), box: { x0: bx - kt.ax, y0: by - kt.ay, x1: bx - kt.ax + kt.w, y1: by - 4 }, solidAt: (x, y) => alphaAt(kt, x - bx, y - by) });
     if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) {
       // La puerta abierta deja salir la luz de dentro: brilla y dibuja un charco cálido delante.
       sc.lights.push({ x: bx, y: by - 16, r: 24, k: 1 });

@@ -487,16 +487,32 @@ export class MapView {
       g.textAlign = 'left';
       g.textBaseline = 'middle';
       const tw = g.measureText('Estás aquí').width;
-      const lx = p.x + 12;
+      // El rótulo va donde no choque con nada: a la derecha, a la izquierda o encima de la
+      // chincheta. Se mira contra el hito, el nombre y la fila de iconos de cada pueblo.
+      const boxes: [number, number, number, number][] = [];
+      for (const r of this.w!.regions) {
+        const c = this.toScreen(r.center.x, r.center.y);
+        boxes.push([c.x - 52, c.y - 62, c.x + 52, c.y + 36]);
+      }
+      const hits = (x0: number, y0: number) => boxes.filter(([a, b, c2, d]) => x0 < c2 && x0 + tw + 8 > a && y0 < d && y0 + 18 > b).length;
+      const spots: [number, number][] = [[p.x + 12, hy], [p.x - 12 - tw, hy], [p.x - tw / 2, hy - 24]];
+      let best = spots[0];
+      let bestN = Infinity;
+      for (const sp of spots) {
+        const n = hits(sp[0] - 4, sp[1] - 9);
+        if (n < bestN) (best = sp), (bestN = n);
+      }
+      const lx = best[0];
+      const ly = best[1];
       g.fillStyle = 'rgba(244,233,206,0.94)';
       g.strokeStyle = 'rgba(43,30,21,0.55)';
       g.lineWidth = 1;
       g.beginPath();
-      g.roundRect(lx - 4, hy - 9, tw + 8, 18, 9);
+      g.roundRect(lx - 4, ly - 9, tw + 8, 18, 9);
       g.fill();
       g.stroke();
       g.fillStyle = '#2b1e15';
-      g.fillText('Estás aquí', lx, hy + 0.5);
+      g.fillText('Estás aquí', lx, ly + 0.5);
     }
     // Marco de pergamino: los bordes del mapa se oscurecen y amarillean.
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
