@@ -20,6 +20,30 @@ function hash2(x: number, y: number): number {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+/**
+ * Amplía la máscara de nieve (suave, a media resolución) al tamaño final y allí la vuelve casi
+ * binaria: montón opaco o suelo pisado con un polvillo, con un borde corto y limpio.
+ */
+let edgeCanvas: HTMLCanvasElement | null = null;
+function snowEdge(mask: HTMLCanvasElement, BP: number, W: number): HTMLCanvasElement {
+  const c = edgeCanvas && edgeCanvas.width === W ? edgeCanvas : (edgeCanvas = Object.assign(document.createElement('canvas'), { width: W, height: W }));
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.clearRect(0, 0, W, W);
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+  const im = g.getImageData(0, 0, W, W);
+  const d = im.data;
+  for (let i = 3; i < d.length; i += 4) {
+    const a = d[i] / 255;
+    if (a < 0.08) continue; // fuera de la región nevada (o su borde): se queda como está
+    const t = Math.max(0, Math.min(1, ((a - 0.08) / 0.92 - 0.44) / 0.12));
+    d[i] = Math.round(255 * (0.1 + t * t * (3 - 2 * t) * 0.87));
+  }
+  g.putImageData(im, 0, 0);
+  return c;
+}
+
 function vnoise(x: number, y: number): number {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
@@ -356,8 +380,10 @@ export class ChunkCache {
             const v = vnoise(rx / 23 + 13, ry / 23 + 7) * 0.55 + vnoise(ry / 9 + 3, rx / 9 + 9) * 0.3 + vnoise(rx / 3.5 + 1, ry / 3.5 + 5) * 0.15 + (trod ? 0 : 0.22);
             // Casi binaria: o montón de nieve opaco o adoquín pisado limpio; a medias, el adoquín
             // asomaba borroso bajo un velo y se leía como baja resolución.
-            const e = Math.max(0, Math.min(1, (v - 0.47) / 0.07));
-            const a = 0.1 + e * e * (3 - 2 * e) * 0.87;
+            // Aquí se guarda suave (0..1 en una franja ancha); el umbral que la deja casi binaria
+            // se aplica después de ampliarla, a resolución final (si no, el borde salía en escalera).
+            const e = Math.max(0, Math.min(1, (v - 0.37) / 0.2));
+            const a = 0.08 + e * 0.92; // (0 queda para «fuera de la región nevada»)
             snowA[py * BP + px] = Math.round(255 * a);
           }
         }
@@ -438,7 +464,7 @@ export class ChunkCache {
       tg.fillStyle = sp;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
-      tg.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+      tg.drawImage(snowEdge(mask, BP, W), 0, 0);
       fg.drawImage(tmp, 0, 0);
     }
   }

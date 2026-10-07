@@ -45,7 +45,7 @@ export class Furniture {
     const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y))) && (!extra || extra(x, y));
     if (clear(me.x, me.y)) return;
     const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
-    for (let r = 0.25; r <= 3; r += 0.25)
+    for (let r = 0.25; r <= (wide ? 5 : 3); r += 0.25)
       for (let k = 0; k < 12; k++) {
         // Empieza por abajo (hacia la cámara) y gira a ambos lados.
         const a = Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
@@ -117,7 +117,7 @@ export class Furniture {
           const lb = v.lamps[b];
           if (!la || !lb) continue;
           const n = Math.max(1, Math.ceil(Math.hypot(lb.x - la.x, lb.y - la.y) / 0.6));
-          for (let i = 1; i < n; i++) list.push({ x: la.x + ((lb.x - la.x) * i) / n, y: la.y + ((lb.y - la.y) * i) / n, rx: 1e-6, ry: 1e-6, tall: 1.6, wide: 0.45 });
+          for (let i = 1; i < n; i++) list.push({ x: la.x + ((lb.x - la.x) * i) / n, y: la.y + ((lb.y - la.y) * i) / n, rx: 1e-6, ry: 1e-6, tall: 2.4, wide: 0.45, front: 2.4 }); // (por delante, la cuerda queda justo detrás de la cabeza)
         }
         this.solids.set(v, list);
       }
@@ -136,15 +136,21 @@ type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide
 export function settlePeople(
   people: { x: number; y: number; moving: boolean }[],
   me: { x: number; y: number },
-  furniture: Pick<Furniture, 'solidAt' | 'unstick'>,
+  furniture: Pick<Furniture, 'solidAt' | 'unstick' | 'blocksPerson'>,
   passable: (x: number, y: number) => boolean,
 ): void {
-  const nearMe = (x: number, y: number) => Math.abs(x - me.x) < 0.8 && Math.abs(y - me.y) < 0.9;
+  // En pantalla una figura mide unas 2 casillas de alto: quien está detrás (más arriba) asoma
+  // por encima de la cabeza de quien tiene delante aunque en el suelo estén a una casilla.
+  const overlaps = (ax: number, ay: number, bx: number, by: number, w: number) => Math.abs(ax - bx) < w && (by < ay ? ay - by < 1.8 : by - ay < 0.9);
   for (const e of people) {
-    const free = (x: number, y: number) => !nearMe(x, y) && passable(x, y) && !people.some((o) => o !== e && !o.moving && Math.abs(o.x - x) < 0.7 && Math.abs(o.y - y) < 0.7);
+    const free = (x: number, y: number) =>
+      !overlaps(me.x, me.y, x, y, 0.8) && passable(x, y) && !furniture.blocksPerson(x, y) && !people.some((o) => o !== e && !o.moving && overlaps(o.x, o.y, x, y, 0.65));
     const inside = furniture.solidAt(e.x, e.y);
-    const onMe = !e.moving && nearMe(e.x, e.y);
-    const onOther = !e.moving && people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.55 && Math.abs(o.y - e.y) < 0.55 && o.x + o.y * 1e-3 < e.x + e.y * 1e-3);
-    if (inside || onMe || onOther) furniture.unstick(e, false, free);
+    if (e.moving && !inside) continue;
+    const onMe = overlaps(me.x, me.y, e.x, e.y, 0.8);
+    // De dos que se tapan, se aparta el de atrás (el de arriba en pantalla).
+    const onOther = people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.6 && e.y <= o.y && o.y - e.y < 1.8 && (e.y < o.y || e.x < o.x));
+    const hidden = furniture.blocksPerson(e.x, e.y);
+    if (inside || onMe || onOther || hidden) furniture.unstick(e, false, free);
   }
 }

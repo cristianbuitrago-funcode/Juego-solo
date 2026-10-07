@@ -117,23 +117,22 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       break;
     }
     case 'work': {
-      // Azada o siembra: el cuerpo se dobla, los brazos suben y bajan con ritmo.
-      const c = (t * 0.9 + seed * 0.1) % 1;
-      const swing = c < 0.55 ? c / 0.55 : 1 - (c - 0.55) / 0.45;
-      // Doble suavizado: se queda arriba y abajo y pasa rápido por la horizontal (si no, en
-      // cualquier instante podía verse la azada tendida hacia delante como una lanza).
-      const e0 = swing * swing * (3 - 2 * swing);
-      const e = e0 * e0 * (3 - 2 * e0);
-      r.lean = 0.18 + (1 - e) * 0.22;
+      // Azada: casi todo el tiempo abajo, con la hoja en la tierra y tirando de ella (se lee
+      // como cavar); luego sube, se queda un instante arriba y cae de golpe. El torso va
+      // inclinado durante todo el ciclo (erguido, con la azada a media altura, parecía una lanza).
+      const c = (t * 0.8 + seed * 0.37) % 1;
+      const ease = (v: number) => v * v * (3 - 2 * v);
+      const e = c < 0.5 ? 0 : c < 0.75 ? ease((c - 0.5) / 0.25) : c < 0.85 ? 1 : 1 - ease((c - 0.85) / 0.15);
+      const pull = c < 0.5 ? Math.sin((c / 0.5) * Math.PI) * 0.12 : 0;
+      r.lean = 0.3 + (1 - e) * 0.16;
       r.y = (1 - e) * 0.6;
-      r.legs[0] = { a: -0.18, b: 0.1, lift: 0 };
-      r.legs[1] = { a: 0.22, b: -0.25, lift: 0 };
-      r.arms[0] = { a: 0.4 + e * 1.95, b: 0.3 - e * 0.15, lift: 0.3 };
-      r.arms[1] = { a: 0.55 + e * 1.85, b: 0.2 - e * 0.1, lift: 0.3 };
-      // La azada describe un arco: abajo, la hoja muerde la tierra por delante;
-      // arriba, el mango pasa por encima de la cabeza hacia atrás.
-      r.item = 0.67 - e * 2.5;
-      r.head.nod = 0.1;
+      r.legs[0] = { a: -0.2, b: 0.12, lift: 0 };
+      r.legs[1] = { a: 0.24, b: -0.28, lift: 0 };
+      r.arms[0] = { a: 0.4 + e * 1.95 - pull, b: 0.3 - e * 0.15, lift: 0.3 };
+      r.arms[1] = { a: 0.55 + e * 1.85 - pull, b: 0.2 - e * 0.1, lift: 0.3 };
+      // Abajo, la hoja muerde la tierra por delante; arriba, el mango pasa por encima de la cabeza.
+      r.item = 0.67 - e * 2.5 + pull;
+      r.head.nod = 0.14;
       break;
     }
     case 'hammer': {

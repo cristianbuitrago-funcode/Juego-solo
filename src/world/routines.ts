@@ -165,7 +165,11 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       return at(keyDoor(v, 'posada'), 'cuenta historias en la posada');
     case 'artesano':
     default:
-      if (h >= 8 && h < 18) return at(keyDoor(v, v.keys.some((k) => k.kind === 'forja') ? 'forja' : 'almacen'), r.militancy > 0.55 ? 'forja armas sin descanso' : 'trabaja en el taller');
+      if (h >= 8 && h < 18) {
+        // Delante de la puerta, no en ella: en el umbral parecía estar metido en la boca del fuego.
+        const door = keyDoor(v, v.keys.some((k) => k.kind === 'forja') ? 'forja' : 'almacen');
+        return at({ x: door.x, y: door.y + 1.2 }, r.militancy > 0.55 ? 'forja armas sin descanso' : 'trabaja en el taller');
+      }
       if (h >= 18 && h < 20.5) return at(keyDoor(v, 'posada'), 'descansa en la posada');
       return atHome();
   }

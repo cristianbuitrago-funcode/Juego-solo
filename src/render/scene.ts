@@ -777,8 +777,9 @@ export class WorldScene {
     const out = h < 7 || h > 21 || weather === 'lluvia' || weather === 'tormenta';
     for (const v of this.l.villages) {
       const r = w.regions[v.regionId];
-      if (out || this.low || r.abandoned || r.population < 800 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
-      const n = Math.min(VQ().crowd, Math.floor((r.population - 600) / 110) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
+      if (out || this.low || r.abandoned || r.population < 250 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
+      // Hasta en una aldea hay alguien de paso por la plaza (antes, por debajo de 800 vecinos, nadie).
+      const n = Math.min(VQ().crowd, Math.max(r.population < 500 ? 2 : 3, Math.floor((r.population - 600) / 110)) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
       for (let i = 0; i < n; i++) {
         const id = `x:${v.regionId}:${i}`;
         keep.add(id);
