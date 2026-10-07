@@ -593,10 +593,14 @@ export class WorldScene {
       const cy = (this.cine.y ?? me.y) * TILE - 14;
       return { x: cx, y: cy, z: Math.min(4.6, ZOOM.explore * this.userZ * (1 + (this.cine.z - 1) * cine)) };
     }
+    const z = Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ));
+    // Con la botonera de acciones abajo, el encuadre sube un poco: lo que hay delante del
+    // jugador (una forja, un puesto) no queda debajo de los botones.
+    const ui = this.focus ? (this.vh * 0.09) / z : 0;
     return {
       x: (me.x + this.lookAhead.x * look) * TILE,
-      y: (me.y + this.lookAhead.y * look * 0.8) * TILE - 10,
-      z: Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ)),
+      y: (me.y + this.lookAhead.y * look * 0.8) * TILE - 10 + ui,
+      z,
     };
   }
 
@@ -1208,7 +1212,35 @@ export class WorldScene {
         const ay = e.y * TILE + 1;
         const an = anvilTex();
         this.shadowQ.push(() => contactShadow(g, ax, ay, 9, 2.5, 0.4));
-        items.push({ y: ay, draw: () => put(g, an, ax, ay) });
+        // La pieza al rojo sobre el yunque y, en cada golpe, un abanico de chispas.
+        const c = (pose.t * 1.3 + ap.seed * 0.1) % 1;
+        const strike = Math.floor(pose.t * 1.3 + ap.seed * 0.1);
+        items.push({ y: ay, draw: () => {
+          put(g, an, ax, ay);
+          if (this.low) return;
+          const hx = ax + (pose.flip ? 2 : -2);
+          const hy = ay - 14;
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.fillStyle = 'rgba(255,120,40,0.85)';
+          g.fillRect(hx - 3, hy - 1, 6, 1.6);
+          if (c > 0.8 && c < 0.97) {
+            const k = (c - 0.8) / 0.17;
+            g.lineWidth = 0.8;
+            for (let i = 0; i < 7; i++) {
+              const a = -Math.PI * (0.1 + 0.8 * hash(`${strike}`, i)) ;
+              const r0 = 2 + k * (6 + hash(`${strike}`, i + 9) * 10);
+              const x = hx + Math.cos(a) * r0;
+              const y = hy + Math.sin(a) * r0 + k * k * 6;
+              g.strokeStyle = `rgba(255,${190 + i * 8},90,${(1 - k).toFixed(2)})`;
+              g.beginPath();
+              g.moveTo(x, y);
+              g.lineTo(x - Math.cos(a) * 2.2, y - Math.sin(a) * 2.2);
+              g.stroke();
+            }
+          }
+          g.restore();
+        } });
       }
     }
     // Gentío de las ciudades grandes.
