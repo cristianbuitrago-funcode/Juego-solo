@@ -120,7 +120,10 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       // Azada o siembra: el cuerpo se dobla, los brazos suben y bajan con ritmo.
       const c = (t * 0.9 + seed * 0.1) % 1;
       const swing = c < 0.55 ? c / 0.55 : 1 - (c - 0.55) / 0.45;
-      const e = swing * swing * (3 - 2 * swing);
+      // Doble suavizado: se queda arriba y abajo y pasa rápido por la horizontal (si no, en
+      // cualquier instante podía verse la azada tendida hacia delante como una lanza).
+      const e0 = swing * swing * (3 - 2 * swing);
+      const e = e0 * e0 * (3 - 2 * e0);
       r.lean = 0.18 + (1 - e) * 0.22;
       r.y = (1 - e) * 0.6;
       r.legs[0] = { a: -0.18, b: 0.1, lift: 0 };

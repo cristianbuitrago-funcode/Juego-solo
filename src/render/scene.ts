@@ -25,7 +25,7 @@ import { nextFrame, put } from '../visual/paint';
 import { drawFire, drawPuff } from './fx';
 import { Weather } from '../visual/weather';
 import { drawGrade, Lighting } from './lighting';
-import { Furniture } from './furniture';
+import { Furniture, settlePeople } from './furniture';
 import { actionOf } from './mood';
 import * as S from './sprites';
 import type { Drawable } from './drawable';
@@ -556,6 +556,7 @@ export class WorldScene {
     this.moveFolk(dt);
     this.moveExtras(dt);
     this.separate(dt);
+    this.settle();
     moveAnimals(this, dt);
     moveBirds(this, dt);
     this.socialAcc += dt;
@@ -801,7 +802,7 @@ export class WorldScene {
     let p = this.plazaPoint(regionId, rnd(0), rnd(1));
     for (let k = 1; k < 8; k++) {
       const crowded = [...this.extras.values()].some((o) => { const q = o.path[0] ?? o; return Math.hypot(q.x - p.x, q.y - p.y) < 1.4; });
-      if (!this.furniture.solidAt(p.x, p.y) && !this.furniture.hiddenAt(p.x, p.y, false) && !crowded) break;
+      if (!this.furniture.solidAt(p.x, p.y) && !this.furniture.blocksPerson(p.x, p.y) && !crowded) break;
       p = this.plazaPoint(regionId, rnd(k * 2), rnd(k * 2 + 1));
     }
     return p;
@@ -927,6 +928,18 @@ export class WorldScene {
    * la forja, charlando) se apartan poco a poco hasta dejar un hueco mínimo entre sí,
    * sin meterse en muebles ni en sitios por donde no se pasa.
    */
+  /**
+   * Último paso de colocación, después de todos los empujes: nadie se queda dentro de un
+   * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
+   * pasa, se le lleva al sitio libre más cercano.
+   */
+  private settle(): void {
+    const people: Ent[] = [];
+    for (const e of this.ents.values()) if (!e.inside) people.push(e);
+    for (const e of this.extras.values()) people.push(e);
+    settlePeople(people, ensureLife(this.w).player, this.furniture, (x, y) => passable(this.w, this.l, x, y));
+  }
+
   private separate(dt: number): void {
     const still: Ent[] = [];
     for (const e of this.ents.values()) if (!e.inside && !e.moving) still.push(e);
@@ -935,15 +948,18 @@ export class WorldScene {
     // cuerpo de ancho en horizontal y no muy separadas en profundidad. Se apartan de lado.
     const WIDE = 1.05;
     const DEEP = 1.8;
+    // Quien trabaja con azada o martillo necesita sitio para el golpe.
+    const wideOf = (e: Ent) => (/campo|siembra|cosecha|forja|martill|taller/.test(e.act ?? '') ? 1.7 : WIDE);
     const k = Math.min(1, dt * 4);
     for (let i = 0; i < still.length; i++)
       for (let j = i + 1; j < still.length; j++) {
         const a = still[i];
         const b = still[j];
         const dx = b.x - a.x;
-        if (Math.abs(dx) >= WIDE || Math.abs(b.y - a.y) >= DEEP) continue;
+        const wide = Math.max(wideOf(a), wideOf(b));
+        if (Math.abs(dx) >= wide || Math.abs(b.y - a.y) >= DEEP) continue;
         const sgn = dx > 0.001 ? 1 : dx < -0.001 ? -1 : i % 2 ? 1 : -1;
-        const push = ((WIDE - Math.abs(dx)) / 2) * k;
+        const push = ((wide - Math.abs(dx)) / 2) * k;
         const move = (e: Ent, dir: number) => {
           const nx = e.x + dir * push;
           if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y)) e.x = nx;
@@ -954,10 +970,10 @@ export class WorldScene {
     // Nadie se queda quieto justo detrás de algo alto (las tablas del poste de caminos, un
     // farol): se corre de lado hasta quedar a la vista.
     for (const e of still) {
-      if (!this.furniture.hiddenAt(e.x, e.y, false)) continue;
+      if (!this.furniture.blocksPerson(e.x, e.y)) continue;
       for (const d of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.5, -2.5]) {
         const nx = e.x + d;
-        if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y) && !this.furniture.hiddenAt(nx, e.y, false)) {
+        if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y) && !this.furniture.blocksPerson(nx, e.y)) {
           e.x += (nx - e.x) * k;
           break;
         }
@@ -972,12 +988,13 @@ export class WorldScene {
     for (const e of this.extras.values()) if (e.moving) all.push(e);
     for (const e of all) {
       const dx = e.x - me.x;
-      if (Math.abs(dx) >= WIDE || Math.abs(e.y - me.y) >= DEEP) continue;
+      const W = wideOf(e);
+      if (Math.abs(dx) >= W || Math.abs(e.y - me.y) >= DEEP) continue;
       const dir = dx > 0.001 ? 1 : dx < -0.001 ? -1 : e.x * 7 % 2 > 1 ? 1 : -1;
       const ok = (x: number) => passable(this.w, this.l, x, e.y) && !this.furniture.solidAt(x, e.y);
-      const nx = e.x + dir * (WIDE - Math.abs(dx)) * k;
+      const nx = e.x + dir * (W - Math.abs(dx)) * k;
       // (si por ese lado hay un mueble, se va por el otro)
-      const ox = e.x - dir * (WIDE + Math.abs(dx)) * k;
+      const ox = e.x - dir * (W + Math.abs(dx)) * k;
       if (ok(nx)) e.x = nx;
       else if (ok(ox)) e.x = ox;
     }
@@ -1215,7 +1232,13 @@ export class WorldScene {
       e.stride = strideOf(ap, false);
       const pose = entPose(this, id, e, f, sec, wet, cold);
       // Un yunque por forja: quien llega después a la misma ayuda acarreando, no forma una fila de yunques.
-      if (pose.action === 'hammer' && anvils.some((a) => Math.abs(a.x - e.x) < 2.6 && Math.abs(a.y - e.y) < 1.6)) pose.action = 'carry';
+      if (pose.action === 'hammer' && anvils.some((a) => Math.abs(a.x - e.x) < 4 && Math.abs(a.y - e.y) < 2)) {
+        // (con un saco tendido parecían ofrecérselo al herrero: mejor mirar el golpe, de brazos cruzados)
+        pose.action = 'cross';
+        pose.facing = 'side';
+        const smith = anvils.find((a) => Math.abs(a.x - e.x) < 4 && Math.abs(a.y - e.y) < 2)!;
+        pose.flip = smith.x < e.x;
+      }
       this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
       if (pose.action === 'hammer') {
         anvils.push(e);
@@ -1285,7 +1308,7 @@ export class WorldScene {
     if (darkness(life.clock) > 0.3) {
       // Junto a una farola, el farol de mano casi no se nota (dos focos pegados se leían como un error).
       const byLamp = this.l.villages.some((v) => Math.abs(v.cx - me.x) < v.plazaR + 4 && Math.abs(v.cy - me.y) < v.plazaR + 4 && v.lamps.some((lp) => Math.hypot(lp.x - me.x, lp.y - me.y) < 2.6));
-      this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
+      this.lights.push({ x: me.x * TILE + (ppose.flip ? -3.5 : 3.5), y: me.y * TILE - 11, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
     }
 
     // Las sombras van antes que todo lo que se alza sobre el suelo.

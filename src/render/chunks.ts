@@ -345,13 +345,19 @@ export class ChunkCache {
           if (snowA && rg >= 0 && snowReg[rg]) {
             // Más fina en caminos y plazas (pisada), con claros donde el viento la barre.
             const trod = t === T.Road || t === T.Plaza || t === T.Bridge;
-            const patch = vnoise(wx / 21 + 13, wy / 21 + 7);
-            const fine = vnoise(wx / 5 + 3, wy / 5 + 9);
             // Manto con bordes definidos, no un velo: en el campo, nieve casi entera; en calles y
             // plazas, zonas pisadas (se ve el adoquín) y montones limpios, con un borde corto entre ambos.
-            const v = patch * 0.65 + fine * 0.35;
-            const e = Math.max(0, Math.min(1, (v - 0.43) / 0.16));
-            const a = trod ? 0.28 + e * e * (3 - 2 * e) * 0.68 : 0.9 + patch * 0.08;
+            // (la misma fórmula a ambos lados del borde de la calle, solo con el umbral corrido:
+            // si no, el cambio de tesela dejaba escalones del tamaño de una casilla)
+            // Ruido en ejes girados y en tres octavas: el ruido de valor sobre la rejilla, cortado
+            // por un umbral, dibujaba escalones en ángulo recto.
+            const rx = wx * 0.8 + wy * 0.6;
+            const ry = wy * 0.8 - wx * 0.6;
+            const v = vnoise(rx / 23 + 13, ry / 23 + 7) * 0.55 + vnoise(ry / 9 + 3, rx / 9 + 9) * 0.3 + vnoise(rx / 3.5 + 1, ry / 3.5 + 5) * 0.15 + (trod ? 0 : 0.22);
+            // Casi binaria: o montón de nieve opaco o adoquín pisado limpio; a medias, el adoquín
+            // asomaba borroso bajo un velo y se leía como baja resolución.
+            const e = Math.max(0, Math.min(1, (v - 0.47) / 0.07));
+            const a = 0.1 + e * e * (3 - 2 * e) * 0.87;
             snowA[py * BP + px] = Math.round(255 * a);
           }
         }

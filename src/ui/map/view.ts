@@ -452,7 +452,15 @@ export class MapView {
     this.drawMissions(g, t);
     this.drawLabels(g, t, animate);
     if (this.player) {
-      const p0 = this.toScreen(this.player.x, this.player.y);
+      // En un pueblo, la chincheta va junto a su hito (la posición exacta, a esta escala, caía
+      // en mitad de un camino y parecía señalar otra cosa).
+      let p0 = this.toScreen(this.player.x, this.player.y);
+      let snap = 70;
+      for (const r of this.w!.regions) {
+        const c = this.toScreen(r.center.x, r.center.y);
+        const d = Math.hypot(c.x - p0.x, c.y - p0.y);
+        if (d < snap) (snap = d), (p0 = c);
+      }
       // Encima del hito de un pueblo, la chincheta se aparta a un lado (si no, lo tapa).
       const onMark = this.w!.regions.some((r) => {
         const c = this.toScreen(r.center.x, r.center.y);

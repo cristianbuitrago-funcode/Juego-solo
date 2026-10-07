@@ -207,7 +207,10 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     // Un puesto no se monta encima del poste de caminos.
     if (!stallShown(v, s)) return;
     const open = stallGoods.length > 0;
-    const stx0 = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined);
+    // Nevando no hay fruta fresca: raíces, quesos, pieles, leña y tarros.
+    const WINTER = ['#8a6a4a', '#d8c89a', '#6a5a4a', '#e6dfd0', '#7a4a3a', '#a08060'];
+    const goods = snowRoofs && open ? stallGoods.map((_, j) => WINTER[(j + i) % WINTER.length]) : stallGoods;
+    const stx0 = stallTex(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? goods : undefined);
     const stx = snowRoofs ? snowCapped(stx0, -stx0.ay + stx0.h * 0.16) : stx0;
     items.push({ y: s.y * TILE, draw: () => put(g, stx, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
     // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.

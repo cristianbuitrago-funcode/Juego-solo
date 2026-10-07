@@ -39,10 +39,10 @@ export class Furniture {
   }
 
   /** Si aparece dentro de un mueble, se le lleva al sitio libre más cercano (preferiblemente delante). */
-  unstick(me: { x: number; y: number }, wide = false): void {
+  unstick(me: { x: number; y: number }, wide = false, extra?: (x: number, y: number) => boolean): void {
     // El cuerpo ocupa algo más que un punto: se mira un poco a cada lado.
     // Al llegar, además, que no quede justo detrás de algo alto (farol, árbol, estandarte) que lo tape.
-    const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y)));
+    const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y))) && (!extra || extra(x, y));
     if (clear(me.x, me.y)) return;
     const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
     for (let r = 0.25; r <= 3; r += 0.25)
@@ -89,8 +89,13 @@ export class Furniture {
    * cuerpo ancho (un animal) ahí queda con el poste saliéndole del lomo.
    */
   tallNear(x: number, y: number, half: number, reach = 0.9): boolean {
-    for (const c of this.near(x, y)) if (c.tall && Math.abs(c.y - y) < reach && Math.abs(c.x - x) < half + Math.min(0.35, c.rx)) return true;
+    for (const c of this.near(x, y)) if (c.tall && Math.abs(c.y - y) < reach && Math.abs(c.x - x) < half + (c.wide ?? Math.min(0.35, c.rx))) return true;
     return false;
+  }
+
+  /** ¿Taparía (o cortaría) algo alto a una persona de pie en (x, y), por detrás o a su misma altura? */
+  blocksPerson(x: number, y: number): boolean {
+    return this.hiddenAt(x, y, false) || this.tallNear(x, y, 0.3, 0.6);
   }
 
   private *near(x: number, y: number): Generator<Solid> {
@@ -103,7 +108,17 @@ export class Furniture {
         list = [];
         for (const p of v.props) if (FOOT[p.kind]) list.push(at(p.x, p.y, FOOT[p.kind]));
         for (const st of v.stalls) if (stallShown(v, st)) list.push(at(st.x, st.y, FOOT.puesto));
-        for (const d of this.plazaOf(v.regionId).decor) list.push(at(d.x, d.y, FOOT[d.kind]));
+        const look = this.plazaOf(v.regionId);
+        for (const d of look.decor) list.push(at(d.x, d.y, FOOT[d.kind]));
+        // Las guirnaldas no estorban al andar, pero su cuerda cruza la cara de quien se para
+        // justo detrás de la línea de faroles: cuentan como algo alto y sin huella.
+        for (const [a, b] of look.garlands) {
+          const la = v.lamps[a];
+          const lb = v.lamps[b];
+          if (!la || !lb) continue;
+          const n = Math.max(1, Math.ceil(Math.hypot(lb.x - la.x, lb.y - la.y) / 0.6));
+          for (let i = 1; i < n; i++) list.push({ x: la.x + ((lb.x - la.x) * i) / n, y: la.y + ((lb.y - la.y) * i) / n, rx: 1e-6, ry: 1e-6, tall: 1.6, wide: 0.45 });
+        }
         this.solids.set(v, list);
       }
       yield* list;
@@ -112,3 +127,24 @@ export class Furniture {
 }
 
 type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide?: number; front?: number };
+
+/**
+ * Último paso de colocación de la gente de la escena, después de todos los empujes: nadie se
+ * queda dentro de un mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al
+ * jugador. Si pasa, se le lleva al sitio libre más cercano.
+ */
+export function settlePeople(
+  people: { x: number; y: number; moving: boolean }[],
+  me: { x: number; y: number },
+  furniture: Pick<Furniture, 'solidAt' | 'unstick'>,
+  passable: (x: number, y: number) => boolean,
+): void {
+  const nearMe = (x: number, y: number) => Math.abs(x - me.x) < 0.8 && Math.abs(y - me.y) < 0.9;
+  for (const e of people) {
+    const free = (x: number, y: number) => !nearMe(x, y) && passable(x, y) && !people.some((o) => o !== e && !o.moving && Math.abs(o.x - x) < 0.7 && Math.abs(o.y - y) < 0.7);
+    const inside = furniture.solidAt(e.x, e.y);
+    const onMe = !e.moving && nearMe(e.x, e.y);
+    const onOther = !e.moving && people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.55 && Math.abs(o.y - e.y) < 0.55 && o.x + o.y * 1e-3 < e.x + e.y * 1e-3);
+    if (inside || onMe || onOther) furniture.unstick(e, false, free);
+  }
+}
