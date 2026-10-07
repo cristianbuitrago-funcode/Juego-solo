@@ -20,6 +20,7 @@ import { drawTree, drawTreeShadow, type TreeKind } from '../visual/env/flora';
 import { drawFountainWater, propTex, stallTex } from '../visual/env/props';
 import { bannerTex, drawGarland, pavingTex, planterTex, tableTex, treeBedTex } from '../visual/env/plaza';
 import { alphaAt, put, silhouette } from '../visual/paint';
+import { drawFigure } from '../visual/figure/figure';
 
 /**
  * Lo que se ve de un pueblo: casas según su estado, edificios clave, mobiliario,
@@ -202,8 +203,9 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
   // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
   const look = marketLook(w, regionId);
   v.stalls.slice(0, Math.min(v.stalls.length, 6)).forEach((s, i) => {
-    const stallGoods = look.stalls[i];
-    if (stallGoods === undefined) return; // sin comerciante: no hay puesto
+    // Sin comerciante, el puesto está cerrado (vacío y con el toldo apagado), pero está: el
+    // mercado se lee como mercado y no hay un obstáculo invisible donde estaba.
+    const stallGoods = look.stalls[i] ?? [];
     // Un puesto no se monta encima del poste de caminos.
     if (!stallShown(v, s)) return;
     const open = stallGoods.length > 0;
@@ -223,7 +225,11 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       const beat = Math.floor(vsec + hash(id) * 7);
       const action: Action = near ? (beat % 3 === 0 ? 'wave' : 'talk') /* a quien se acerca se le saluda, no se le señala */ : beat % 7 === 0 ? 'point' : beat % 5 === 0 ? 'talk' : 'idle';
       const pose: Pose = { facing: 'front', flip: me.x < s.x, phase: 0, action, t: vsec + i * 3.1, expr: near ? 'feliz' : 'neutral', lod: sc.lodAt(s.x, s.y), hood: cold && hash(id, 9) < 0.5, heavy: cold, wet };
-      sc.pushPerson(items, ap, pose, s.x * TILE + 3, (s.y - 0.55) * TILE);
+      // Detrás del mostrador (se ordena antes que el puesto) pero dibujado más abajo: los pies
+      // quedan ocultos por el mostrador y la cara asoma bajo el toldo (antes lo tapaba el toldo).
+      const vx = s.x * TILE + 3;
+      const vy = (s.y + 0.3) * TILE;
+      items.push({ y: s.y * TILE - 1, draw: () => drawFigure(g, ap, pose, vx, vy) });
     }
   });
   void food;

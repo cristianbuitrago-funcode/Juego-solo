@@ -138,18 +138,32 @@ export function settlePeople(
   me: { x: number; y: number },
   furniture: Pick<Furniture, 'solidAt' | 'unstick' | 'blocksPerson'>,
   passable: (x: number, y: number) => boolean,
+  /** Figuras que no se mueven de su sitio (quien atiende un puesto): se cuentan, pero no se apartan. */
+  fixed: { x: number; y: number }[] = [],
 ): void {
   // En pantalla una figura mide unas 2 casillas de alto: quien está detrás (más arriba) asoma
   // por encima de la cabeza de quien tiene delante aunque en el suelo estén a una casilla.
   const overlaps = (ax: number, ay: number, bx: number, by: number, w: number) => Math.abs(ax - bx) < w && (by < ay ? ay - by < 1.8 : by - ay < 0.9);
+  const still = (e: object) => [...fixed, ...people.filter((o) => o !== e && !o.moving)];
   for (const e of people) {
-    const free = (x: number, y: number) =>
-      !overlaps(me.x, me.y, x, y, 0.8) && passable(x, y) && !furniture.blocksPerson(x, y) && !people.some((o) => o !== e && !o.moving && overlaps(o.x, o.y, x, y, 0.65));
+    const others = still(e);
+    const free = (x: number, y: number) => !overlaps(me.x, me.y, x, y, 0.8) && passable(x, y) && !furniture.blocksPerson(x, y) && !others.some((o) => overlaps(o.x, o.y, x, y, 0.65));
     const inside = furniture.solidAt(e.x, e.y);
-    if (e.moving && !inside) continue;
+    if (e.moving && !inside) {
+      // Quien pasa de largo no salta de sitio: se abre un poco de lado mientras cruza por
+      // detrás de alguien (o de un farol), para no quedar «sentado» en su cabeza.
+      const hit = others.find((o) => overlaps(o.x, o.y, e.x, e.y, 0.65)) ?? (furniture.blocksPerson(e.x, e.y) ? { x: e.x - 0.01, y: e.y } : null);
+      if (hit) {
+        const nx = e.x + (e.x >= hit.x ? 0.09 : -0.09);
+        if (passable(nx, e.y) && !furniture.solidAt(nx, e.y)) e.x = nx;
+      }
+      continue;
+    }
     const onMe = overlaps(me.x, me.y, e.x, e.y, 0.8);
-    // De dos que se tapan, se aparta el de atrás (el de arriba en pantalla).
-    const onOther = people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.6 && e.y <= o.y && o.y - e.y < 1.8 && (e.y < o.y || e.x < o.x));
+    // De dos que se tapan, se aparta el de atrás (el de arriba en pantalla); de un fijo, siempre el otro.
+    const onOther =
+      fixed.some((o) => overlaps(o.x, o.y, e.x, e.y, 0.65)) ||
+      people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.6 && e.y <= o.y && o.y - e.y < 1.8 && (e.y < o.y || e.x < o.x));
     const hidden = furniture.blocksPerson(e.x, e.y);
     if (inside || onMe || onOther || hidden) furniture.unstick(e, false, free);
   }

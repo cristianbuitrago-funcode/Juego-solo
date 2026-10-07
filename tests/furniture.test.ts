@@ -45,7 +45,10 @@ describe('colocación final de la gente', () => {
           people.push({ x: v.cx + 0.5 + Math.cos(a) * d, y: v.cy + 0.5 + Math.sin(a) * d * 0.7, moving: false });
         }
         people.push({ x: me.x + 0.2, y: me.y, moving: false }, { x: me.x, y: me.y - 0.3, moving: false });
-        for (let k = 0; k < 4; k++) settlePeople(people, me, f, ok);
+        // Quien atiende el primer puesto: fijo, los demás se apartan de él.
+        const fixed = v.stalls.slice(0, 1).map((st) => ({ x: st.x, y: st.y - 0.55 }));
+        for (const fx of fixed) people.push({ x: fx.x + 0.1, y: fx.y - 1, moving: false });
+        for (let k = 0; k < 4; k++) settlePeople(people, me, f, ok, fixed);
         for (const p of people) {
           if (!ok(p.x, p.y)) continue; // sin sitio en 3 casillas (no pasa en estas plazas, pero no es lo que se mide)
           checked++;
@@ -56,6 +59,7 @@ describe('colocación final de la gente', () => {
           expect(covers(me, p, 0.8), at).toBe(false);
           expect(people.some((o) => o !== p && Math.abs(o.x - p.x) < 0.6 && Math.abs(o.y - p.y) < 1.8), at).toBe(false);
           expect(f.blocksPerson(p.x, p.y), at).toBe(false);
+          expect(fixed.some((o) => covers(o, p, 0.65)), at).toBe(false);
         }
       }
       expect(checked).toBeGreaterThan(60);

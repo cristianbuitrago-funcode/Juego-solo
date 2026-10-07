@@ -336,7 +336,7 @@ export function stallTex(full: boolean, color: string, v = 0, goods?: string[]):
         ell(g, 6 + i * 5.6, 26.5, 3, 2.6, vgrad(g, 24, 29, [[0, lit(c, 0.25)], [1, shd(c, 0.2)]]));
         ell(g, 5.2 + i * 5.6, 25.6, 0.9, 0.6, 'rgba(255,255,255,0.5)');
       }
-      plank(g, 30, 18, 10, 9, '#a07a3e');
+      plank(g, 0, 21, 8, 7, '#a07a3e'); // una caja apoyada en el extremo del mostrador (no flotando delante de quien atiende)
     } else {
       plank(g, 8, 22, 10, 6, '#6a4a2a');
     }
