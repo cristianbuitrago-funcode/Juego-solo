@@ -139,6 +139,9 @@ export function entPose(s: PoseHost, id: string, e: Ent, f: Folk | undefined, se
       noticed = !f ? 'neutral' : f.resentment > 0.4 ? 'desconfianza' : f.fear > 0.5 ? 'miedo' : f.trust > 0.62 || f.gratitude > 0.4 ? 'feliz' : f.trust < 0.35 ? 'desconfianza' : 'confiado';
     }
   }
+  // Azada, martillo y caña se leen de perfil; de frente, los brazos salían en cruz y la herramienta
+  // flotaba junto a la mano (se quedaba la orientación del último paso).
+  if (action === 'work' || action === 'hammer' || action === 'fish') facing = 'side';
   // Con lluvia, los que no pueden refugiarse se cubren con los brazos.
   if (wet && !e.moving && (action === 'idle' || action === 'look')) action = 'cross';
   const expr: Expr = react?.expr ?? noticed ?? (f ? moodOf(s.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');

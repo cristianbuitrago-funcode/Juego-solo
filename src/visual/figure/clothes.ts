@@ -500,11 +500,12 @@ export function paintItem(g: CanvasRenderingContext2D, item: Exclude<Item, undef
       g.stroke();
       break;
     case 'cayado':
-      stick(0, -12, 0, 10, 0.75);
+      // Agarrado más arriba: el gancho queda a la altura del hombro, no delante de la cara.
+      stick(0, -8, 0, 13, 0.75);
       g.strokeStyle = WOOD;
       g.lineWidth = 0.75 * s;
       g.beginPath();
-      g.arc(1.3 * s, -12 * s, 1.3 * s, Math.PI, Math.PI * 2.1);
+      g.arc(1.3 * s, -8 * s, 1.3 * s, Math.PI, Math.PI * 2.1);
       g.stroke();
       break;
     case 'baston':

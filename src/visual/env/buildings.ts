@@ -732,14 +732,63 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         const top = base - 46;
         side(top, '#7a7266');
         stoneBase(g, R, x0, top, W, 46);
+        // Boca de la fragua: arco de ladrillo, fondo de hollín, lecho de brasas con ascuas,
+        // herramientas colgadas y el fuelle (antes, un rectángulo negro con un degradado).
         g.fillStyle = '#1e1814';
-        g.fillRect(x0 + 14, base - 32, 40, 32);
-        const fg = g.createRadialGradient(x0 + 34, base - 10, 1, x0 + 34, base - 10, 16);
+        g.beginPath();
+        g.moveTo(x0 + 14, base);
+        g.lineTo(x0 + 14, base - 24);
+        g.quadraticCurveTo(x0 + 34, base - 38, x0 + 54, base - 24);
+        g.lineTo(x0 + 54, base);
+        g.fill();
+        g.strokeStyle = '#8a4a32';
+        g.lineWidth = 2.4;
+        g.beginPath();
+        g.moveTo(x0 + 13, base);
+        g.lineTo(x0 + 13, base - 24);
+        g.quadraticCurveTo(x0 + 34, base - 39.5, x0 + 55, base - 24);
+        g.lineTo(x0 + 55, base);
+        g.stroke();
+        g.strokeStyle = alpha('#3a1e14', 0.6);
+        g.lineWidth = 0.6;
+        for (let k = 0; k < 9; k++) {
+          const a = Math.PI + (k / 8) * Math.PI;
+          g.beginPath();
+          g.moveTo(x0 + 34 + Math.cos(a) * 19, base - 24 + Math.sin(a) * 13);
+          g.lineTo(x0 + 34 + Math.cos(a) * 22, base - 24 + Math.sin(a) * 15.5);
+          g.stroke();
+        }
+        const fg = g.createRadialGradient(x0 + 34, base - 8, 1, x0 + 34, base - 8, 18);
         fg.addColorStop(0, '#ffe8a0');
-        fg.addColorStop(0.35, '#f08a3a');
+        fg.addColorStop(0.3, '#f08a3a');
         fg.addColorStop(1, 'rgba(120,30,10,0)');
         g.fillStyle = fg;
-        g.fillRect(x0 + 14, base - 32, 40, 32);
+        g.fillRect(x0 + 14, base - 34, 40, 34);
+        // Lecho de brasas: carbón oscuro y ascuas que brillan entre los trozos.
+        for (let k = 0; k < 18; k++) {
+          const bx = x0 + 20 + R() * 28;
+          const by = base - 5 - R() * 4;
+          ell(g, bx, by, 1.6 + R(), 1 + R() * 0.6, R() < 0.55 ? '#2a1a14' : R() < 0.5 ? '#ff9a3a' : '#ffd070');
+        }
+        // Herramientas colgadas en la pared del fondo.
+        g.strokeStyle = '#4a4a4e';
+        g.lineWidth = 1;
+        for (const [tx, len] of [[x0 + 22, 9], [x0 + 27, 11], [x0 + 44, 8]] as const) {
+          g.beginPath();
+          g.moveTo(tx, base - 28);
+          g.lineTo(tx, base - 28 + len);
+          g.stroke();
+          g.fillStyle = '#5a5a60';
+          g.fillRect(tx - 1.5, base - 28 + len, 3, 1.6);
+        }
+        // Fuelle de cuero junto a la boca.
+        g.fillStyle = vgrad(g, base - 14, base - 4, [[0, '#7a5232'], [1, '#4a301c']]);
+        g.beginPath();
+        g.moveTo(x0 + 56, base - 12);
+        g.lineTo(x0 + 66, base - 15);
+        g.lineTo(x0 + 66, base - 5);
+        g.lineTo(x0 + 56, base - 7);
+        g.fill();
         g.fillStyle = vgrad(g, top - 26, top + 4, [[0, lit(st.roof, 0.1)], [1, shd(st.roof, 0.25)]]);
         g.beginPath();
         g.moveTo(x0 - 6, top + 4);

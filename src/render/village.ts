@@ -1,7 +1,7 @@
 import type { WorldState } from '../core/types';
 import { darkness, hourOf, type Season } from '../world/clock';
 import { marketOf } from '../world/economy';
-import { stallShown, vendorSpot, type BuildingKind, type Layout } from '../world/layout';
+import { STALL_BACK_DY, stallShown, vendorSpot, type BuildingKind, type Layout } from '../world/layout';
 import { ensureLife, housesFor } from '../world/life';
 import { marketLook } from '../world/marketview';
 import { idx } from '../world/terrain';
@@ -219,7 +219,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const cap = (t: typeof stx0) => (snowRoofs ? snowCapped(t, -t.ay + t.h * 0.16) : t);
     const stBack = cap(stallTex(open, tint, i, open ? goods : undefined, 'back'));
     const stFront = cap(stallTex(open, tint, i, open ? goods : undefined, 'front'));
-    items.push({ y: s.y * TILE - 12, draw: () => put(g, stBack, s.x * TILE, s.y * TILE) });
+    items.push({ y: s.y * TILE + STALL_BACK_DY, draw: () => put(g, stBack, s.x * TILE, s.y * TILE) });
     items.push({ y: s.y * TILE, draw: () => put(g, stFront, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay * 0.6, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
     // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
     const hh = hourOf(life.clock);

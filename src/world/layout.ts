@@ -90,6 +90,12 @@ export function stallShown(v: Pick<Village, 'sign'>, st: { x: number; y: number 
   return Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6;
 }
 
+/**
+ * Orden de dibujo de un puesto, en píxeles de mundo respecto a su pie: el toldo y los postes se
+ * ordenan aquí (detrás de quien atiende) y el mostrador en 0 (delante).
+ */
+export const STALL_BACK_DY = -12;
+
 /** Dónde está de pie quien atiende un puesto (detrás del mostrador). Una sola fuente para dibujo y colocación. */
 export function vendorSpot(st: { x: number; y: number }): { x: number; y: number } {
   return { x: st.x + 3 / 16, y: st.y - 0.55 };

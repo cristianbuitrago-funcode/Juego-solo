@@ -166,6 +166,11 @@ export function settlePeople(
       fixed.some((o) => overlaps(o.x, o.y, e.x, e.y, 0.65)) ||
       people.some((o) => o !== e && !o.moving && Math.abs(o.x - e.x) < 0.6 && e.y <= o.y && o.y - e.y < 1.8 && (e.y < o.y || e.x < o.x));
     const hidden = furniture.blocksPerson(e.x, e.y);
-    if (inside || onMe || onOther || hidden) furniture.unstick(e, false, free);
+    if (inside || onMe || onOther || hidden) {
+      furniture.unstick(e, false, free);
+      // Y ese es ahora su sitio: si no, volvía andando al de antes (otra vez detrás del jugador).
+      const t = e as { tx?: number; ty?: number; path?: unknown[] };
+      if (t.tx !== undefined && t.ty !== undefined) (t.tx = e.x), (t.ty = e.y), t.path && (t.path.length = 0);
+    }
   }
 }

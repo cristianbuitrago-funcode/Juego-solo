@@ -192,8 +192,9 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
     case 'listen':
     case 'nod':
     case 'shake':
-      // Se habla y se señala con la mano libre: solo un bastón o una lanza se quedan.
-      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
+      // Se habla y se señala con la mano libre: solo un bastón o una lanza se quedan. (El cayado,
+      // con su gancho a la altura de la cara, se deja apoyado: tapaba la cara de quien charlaba.)
+      return own === 'lanza' || own === 'baston' ? own : undefined;
     case 'fight':
       return own && WEAPONS.has(own) && own !== 'arco' ? own : undefined;
     case 'run':
