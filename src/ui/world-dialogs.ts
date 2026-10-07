@@ -104,6 +104,7 @@ function interiorCanvas(app: App, kind: InteriorKind, regionId: number): HTMLCan
       p.flip = s0.flip;
       p.fixed = true;
       p.behind = !!s0.behind;
+      p.drink = s0.action === 'sit'; // los de la mesa beben
     });
   }
   const weather = app.scene?.debugWeather ?? weatherIn(w, regionId);

@@ -12,7 +12,7 @@ import type { Avatar, Folk } from '../world/types';
 export type HairStyle = 'corto' | 'rapado' | 'largo' | 'coleta' | 'trenza' | 'mono' | 'rizado' | 'calvo' | 'melena';
 export type Beard = 'ninguna' | 'sombra' | 'corta' | 'larga' | 'bigote' | 'perilla';
 export type Hat = 'paja' | 'gorro' | 'piel' | 'capucha' | 'panuelo' | 'pluma' | 'casco' | 'corona' | 'turbante' | 'impermeable' | 'boina' | undefined;
-export type Item = 'azada' | 'martillo' | 'cana' | 'cayado' | 'cesta' | 'lanza' | 'saco' | 'baston' | 'arco' | 'farol' | 'libro' | 'red' | undefined;
+export type Item = 'azada' | 'martillo' | 'cana' | 'cayado' | 'cesta' | 'lanza' | 'saco' | 'baston' | 'arco' | 'farol' | 'libro' | 'red' | 'jarra' | undefined;
 
 export interface Outfit {
   top: 'camisa' | 'tunica' | 'jubon' | 'abrigo' | 'tunicaLarga' | 'acolchado';

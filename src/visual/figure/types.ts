@@ -44,4 +44,5 @@ export interface Pose {
   umbrella?: boolean; // paraguas encerado (lluvia, gente acomodada)
   wet?: boolean; // ropa mojada (más oscura y brillante)
   speed?: number; // 0..1 velocidad real (mezcla de reposo y marcha)
+  drink?: boolean; // sentado con una jarra que se lleva a la boca de vez en cuando
 }

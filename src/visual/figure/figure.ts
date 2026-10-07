@@ -208,6 +208,8 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
     case 'cross':
     case 'argue':
     case 'sit':
+      if (pose.drink) return 'jarra';
+      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
     case 'rest':
       return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
     default:
@@ -342,7 +344,7 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
         // Ángulo del objeto respecto al brazo. Bastones, cayados y lanzas (fuera de combate) se
         // quedan verticales pase lo que pase con el brazo; lo que cuelga, cuelga; las herramientas
         // siguen un ángulo propio en el mundo (-90° + R.item). Hay que anular brazo y torso.
-        const upright = item === 'cayado' || item === 'paraguas' || item === 'baston' || (item === 'lanza' && pose.action !== 'fight');
+        const upright = item === 'cayado' || item === 'paraguas' || item === 'baston' || item === 'jarra' || (item === 'lanza' && pose.action !== 'fight');
         const hangs = pose.action === 'idle' || pose.action === 'walk' || pose.action === 'look';
         g.rotate(upright ? l.a + l.b - R.lean + R.item * 0.3 : hangs ? l.a + l.b - R.lean - 0.15 + R.item : l.b + l.a - Math.PI / 2 + R.item);
         put(g, tItem, 0, 0);

@@ -23,6 +23,8 @@ export interface InteriorPerson {
   fixed?: boolean;
   /** Tras la barra: más al fondo y con la barra delante (el posadero). */
   behind?: boolean;
+  /** Sentado bebiendo de una jarra. */
+  drink?: boolean;
 }
 
 export interface InteriorOpts {
@@ -154,7 +156,7 @@ function person(g: CanvasRenderingContext2D, p: InteriorPerson, t: number, k: nu
   g.beginPath();
   g.ellipse(0, 0, 8, 2.2, 0, 0, Math.PI * 2);
   g.fill();
-  drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: t + p.x * 7, expr: p.expr, lod: 0 }, 0, 0, { res: k * scale });
+  drawFigure(g, p.ap, { facing: p.action === 'talk' || p.action === 'listen' ? 'front' : 'side', flip: !!p.flip, phase: 0, action: p.action, t: t + p.x * 7, expr: p.expr, lod: 0, drink: p.drink }, 0, 0, { res: k * scale });
   g.restore();
 }
 

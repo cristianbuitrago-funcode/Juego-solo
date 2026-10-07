@@ -167,6 +167,13 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       r.arms[1] = { a: 0.3, b: 0.65, lift: 0.2 };
       r.lean = pose.action === 'rest' ? -0.08 : 0.02;
       r.breath = 1 + S(t * 1.3 + seed) * 0.015;
+      if (pose.drink) {
+        // La jarra en la mano, apoyada; de vez en cuando se la lleva a la boca y echa la cabeza atrás.
+        const c = (t * 0.22 + seed * 0.13) % 1;
+        const up = c < 0.1 ? c / 0.1 : c < 0.25 ? 1 : c < 0.35 ? 1 - (c - 0.25) / 0.1 : 0;
+        r.arms[1] = { a: 0.45 + up * 0.75, b: 1.15 + up * 0.95, lift: 0.3 };
+        r.head.nod = -0.08 * up;
+      }
       break;
     }
     case 'sleep': {

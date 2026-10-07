@@ -533,6 +533,19 @@ export function paintItem(g: CanvasRenderingContext2D, item: Exclude<Item, undef
       ell(g, 0.8 * s, 1.4 * s, 0.7 * s, 0.5 * s, '#6aa24f');
       break;
     }
+    case 'jarra': {
+      // Jarra de barro con asa y espuma, agarrada por el asa.
+      g.fillStyle = vgrad(g, -1 * s, 2.6 * s, [[0, '#b88a5a'], [1, '#6a4a2e']]);
+      g.fillRect(0.2 * s, -1.2 * s, 2.4 * s, 3.4 * s);
+      g.fillStyle = '#f2ead8';
+      g.fillRect(0.1 * s, -1.6 * s, 2.6 * s, 0.7 * s);
+      g.strokeStyle = '#6a4a2e';
+      g.lineWidth = 0.4 * s;
+      g.beginPath();
+      g.arc(0.2 * s, 0.5 * s, 0.9 * s, Math.PI * 0.5, Math.PI * 1.5);
+      g.stroke();
+      break;
+    }
     case 'saco':
       blob(g, [-0.5 * s, 0.5 * s, 2.8 * s, 1 * s, 3.4 * s, 5.5 * s, 1.2 * s, 6.8 * s, -1.6 * s, 5.8 * s], vgrad(g, 0, 7 * s, [[0, '#d8c8a0'], [1, '#8a7650']]), 0.45);
       break;
