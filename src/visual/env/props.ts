@@ -313,6 +313,9 @@ export function propTex(kind: PropKind, v = 0): Tex {
  * Puesto del mercado. `part` lo parte en dos capas para que quien atiende quede entre ellas:
  * 'back' (postes y toldo, detrás de la persona) y 'front' (mostrador y género, delante).
  */
+/** Cuánto sube el puesto dibujado (la tela de arriba del toldo), en píxeles de mundo desde su pie. */
+export const STALL_TOP_PX = 35 + (25 + 3) * 0.8;
+
 export function stallTex(full: boolean, color: string, v = 0, goods?: string[], part: 'all' | 'back' | 'front' = 'all'): Tex {
   // El toldo va por encima de la cabeza de quien atiende (postes largos) y se dibuja en la capa de
   // delante: así es un techo sobre la persona y no una cortina detrás de ella.

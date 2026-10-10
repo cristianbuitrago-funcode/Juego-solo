@@ -46,7 +46,7 @@ export class Furniture {
     const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y))) && (!extra || extra(x, y));
     if (clear(me.x, me.y)) return;
     const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
-    for (let r = 0.25; r <= (wide ? 5 : 4.5); r += 0.25)
+    for (let r = 0.25; r <= 6; r += 0.25)
       for (let k = 0; k < 12; k++) {
         // Empieza por abajo (hacia la cámara) y gira a ambos lados.
         const a = Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);

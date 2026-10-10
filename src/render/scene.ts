@@ -244,15 +244,19 @@ export class WorldScene {
    */
   hudBand = 0;
   private heads: number[] = [];
-  private underHud = false;
+  private hudShift = 0;
   private hudRule(): void {
-    let under = false;
+    // Zona segura: cuántos píxeles de pantalla habría que bajar la escena para que ninguna cara quede
+    // bajo la franja del HUD. La cámara sube ese tanto (suave y con tope) en vez de taparlas.
+    let need = 0;
     if (this.hudBand > 0)
-      for (let i = 0; i < this.heads.length && !under; i += 2) {
+      for (let i = 0; i < this.heads.length; i += 2) {
         const p = this.toScreen(this.heads[i], this.heads[i + 1]);
-        if (p.x > 0 && p.x < this.vw && p.y > -10 && p.y < this.hudBand) under = true;
+        if (p.x > 8 && p.x < this.vw - 8 && p.y > -30 && p.y < this.hudBand + 6) need = Math.max(need, this.hudBand + 6 - p.y);
       }
-    if (under !== this.underHud) this.parent.classList.toggle('under-hud', (this.underHud = under));
+    const want = Math.min(70, need);
+    // (histéresis: sube rápido y baja despacio, para que no tiemble cuando alguien entra y sale)
+    this.hudShift += (want - this.hudShift) * (want > this.hudShift ? 0.2 : 0.03);
   }
 
   /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
@@ -616,7 +620,7 @@ export class WorldScene {
     const z = Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ));
     // Con la botonera de acciones abajo, el encuadre sube un poco: lo que hay delante del
     // jugador (una forja, un puesto) no queda debajo de los botones.
-    const ui = this.focus ? (this.vh * 0.09) / z : 0;
+    const ui = (this.focus ? (this.vh * 0.09) / z : 0) - this.hudShift / z;
     return {
       x: (me.x + this.lookAhead.x * look) * TILE,
       y: (me.y + this.lookAhead.y * look * 0.8) * TILE - 10 + ui,
@@ -1291,8 +1295,18 @@ export class WorldScene {
           const hy = ay - 14;
           g.save();
           g.globalCompositeOperation = 'lighter';
-          g.fillStyle = 'rgba(255,120,40,0.85)';
-          g.fillRect(hx - 3, hy - 1, 6, 1.6);
+          // Pieza al rojo (brillo y núcleo claro) y un par de pavesas que suben siempre.
+          g.fillStyle = 'rgba(255,110,30,0.55)';
+          g.beginPath();
+          g.ellipse(hx, hy, 6, 2.6, 0, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = 'rgba(255,200,90,0.95)';
+          g.fillRect(hx - 3.5, hy - 1, 7, 2);
+          for (let i = 0; i < 3; i++) {
+            const u = (pose.t * 0.7 + i / 3) % 1;
+            g.fillStyle = `rgba(255,${170 + i * 25},80,${(1 - u).toFixed(2)})`;
+            g.fillRect(hx + Math.sin(u * 6 + i * 2) * 3, hy - 3 - u * 14, 1.1, 1.1);
+          }
           if (c > 0.8 && c < 0.97) {
             const k = (c - 0.8) / 0.17;
             g.lineWidth = 0.8;

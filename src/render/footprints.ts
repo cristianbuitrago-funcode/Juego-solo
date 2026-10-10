@@ -1,3 +1,5 @@
+import { STALL_TOP_PX } from '../visual/env/props';
+import { TILE } from '../world/types';
 /**
  * Huellas del mobiliario de los pueblos, en teselas: una sola tabla para el choque del
  * jugador y de los animales (elipse `rx`×`ry`, desplazada `dy` hacia arriba desde el pie
@@ -31,7 +33,8 @@ export const FOOT: Readonly<Record<string, Footprint>> = {
   lenya: { rx: 0.9, ry: 0.3, dy: 0.15 },
   // Puestos del mercado y adornos de la plaza.
   // (alto: quien queda justo detrás se mete visualmente entre postes y toldo)
-  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05, front: 1.7, tall: 2.4, wide: 1.35 }, // (el toldo sube ~3,2 casillas; tapa la cabeza de quien esté hasta ~2 detrás)
+  // La altura sale del dibujo (STALL_TOP_PX), no de un número a mano.
+  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05, front: 1.7, tall: STALL_TOP_PX / TILE, wide: 1.35 },
   arbol: { rx: 0.75, ry: 0.4, dy: 0.1, tall: 3.2, wide: 1.5 },
   jardinera: { rx: 0.85, ry: 0.3, dy: 0.1 },
   mesa: { rx: 1.15, ry: 0.4, dy: 0.1 },
