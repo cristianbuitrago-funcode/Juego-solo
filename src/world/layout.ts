@@ -13,7 +13,7 @@ import { T, TH, TW, WORLD_SCALE } from './types';
  */
 export type BuildingKind = 'casa' | 'salon' | 'almacen' | 'posada' | 'templo' | 'forja' | 'hogar' | 'establo' | 'granero';
 
-export type PropKindL = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
+export type PropKindL = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo' | 'estatua' | 'valla' | 'vallaV' | 'heno' | 'lenya' | 'carro' | 'cartel' | 'abrevadero';
 
 export interface Prop {
   kind: PropKindL;
@@ -85,6 +85,22 @@ export interface Layout {
 
 const cache = new Map<number, Layout>();
 
+/** ¿Se monta este puesto? Junto al poste de caminos no hay sitio: ni se dibuja ni se atiende. */
+export function stallShown(v: Pick<Village, 'sign'>, st: { x: number; y: number }): boolean {
+  return Math.hypot(st.x - (v.sign.x + 1.2), st.y - (v.sign.y + 0.4)) >= 2.6;
+}
+
+/**
+ * Orden de dibujo de un puesto, en píxeles de mundo respecto a su pie: el toldo y los postes se
+ * ordenan aquí (detrás de quien atiende) y el mostrador en 0 (delante).
+ */
+export const STALL_BACK_DY = -12;
+
+/** Dónde está de pie quien atiende un puesto (detrás del mostrador). Una sola fuente para dibujo y colocación. */
+export function vendorSpot(st: { x: number; y: number }): { x: number; y: number } {
+  return { x: st.x + 3 / 16, y: st.y - 0.55 };
+}
+
 export function getLayout(w: WorldState): Layout {
   const hit = cache.get(w.seed);
   if (hit) return hit;
@@ -94,10 +110,22 @@ export function getLayout(w: WorldState): Layout {
   return l;
 }
 
+/** Poste de caminos en el borde de la plaza: al sur en el pueblo de origen, algo ladeado en los demás. */
+function signAt(seed: number, cx: number, cy: number, plazaR: number): { x: number; y: number } {
+  const a = Math.PI / 2 + [0, -0.55, 0.55][seed % 3];
+  const d = plazaR - 0.6;
+  return { x: cx + 0.5 + Math.cos(a) * d - 0.5 * (1 - Math.abs(Math.sin(a))) , y: cy + Math.sin(a) * d };
+}
+
 const natural = (t: number) => t === T.Grass || t === T.Meadow || t === T.Forest || t === T.Sand || t === T.Clay || t === T.Rock || t === T.Salt;
 
 function buildLayout(w: WorldState): Layout {
   const terrain = getTerrain(w);
+  // El trazado escribe plazas y caminos en las teselas del terreno (que está en caché). Si se
+  // vuelve a construir (otra partida abierta entre medias, otra instancia del módulo), debe partir
+  // del terreno original: si no, los pueblos se colocan en otro sitio y no casan con lo guardado.
+  if (terrain.natural) terrain.tiles.set(terrain.natural);
+  else terrain.natural = terrain.tiles.slice();
   const tiles = terrain.tiles;
   const blocked = new Uint8Array(TW * TH);
   const rng = new Rng(w.seed ^ 0x5bd1e995);
@@ -156,7 +184,7 @@ function buildLayout(w: WorldState): Layout {
         const edge = i * i + j * j > (clearR - 4) * (clearR - 4) && terrain.variant[k] < 110;
         if ((tiles[k] === T.Forest && !edge) || (tiles[k] === T.Marsh && i * i + j * j < 100)) tiles[k] = T.Grass;
       }
-    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0, props: [], sign: { x: cx + 0.5, y: cy + plazaR - 0.6 }, lamps: [] };
+    return { regionId: r.id, cx, cy, plazaR, keys: [], houses: [], fields: [], stalls: [], wallR: 0, props: [], sign: signAt(r.isHome ? 0 : r.id, cx, cy, plazaR), lamps: [] };
   });
 
   // 2) Edificios clave alrededor de la plaza y ranuras de casas.
@@ -275,7 +303,7 @@ function buildLayout(w: WorldState): Layout {
         v.props.push({ kind: 'vallaV', x: x + fw + 0.1, y: y + j + 1, v: 0 });
       }
     }
-    furnish(v, w.regions[v.regionId], tiles, blocked, rng);
+    furnish(v, w.regions[v.regionId], tiles, blocked, rng, w.seed);
   }
 
   // 5) Puestos fronterizos donde un camino cruza de una región a otra.
@@ -306,7 +334,7 @@ function buildLayout(w: WorldState): Layout {
  * la posada y el almacén, heno junto al granero, abrevadero en el establo,
  * y calles que unen cada puerta con la plaza.
  */
-function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: Uint8Array, blocked: Uint8Array, rng: Rng): void {
+function furnish(v: Village, r: { isHome: boolean }, tiles: Uint8Array, blocked: Uint8Array, rng: Rng, seed: number): void {
   const add = (kind: Prop['kind'], x: number, y: number, block = false) => {
     v.props.push({ kind, x, y, v: rng.int(0, 5) });
     if (block) blocked[idx(Math.floor(x), Math.floor(y - 0.3))] = 1;
@@ -332,15 +360,40 @@ function furnish(v: Village, r: { population: number; isHome: boolean }, tiles: 
       const k = idx(Math.floor(b.x + b.w / 2), Math.floor(b.y + b.h + s));
       if (!blocked[k] && (tiles[k] === T.Grass || tiles[k] === T.Meadow || tiles[k] === T.Clay)) tiles[k] = T.Road;
     }
-  // Plaza: fuente (o pozo), bancos y faroles.
-  add(r.population > 450 || r.isHome ? 'fuente' : 'pozo', v.cx + 0.5, v.cy + 1.6, false);
+  // Plaza: cada pueblo la suya. El centro depende de su tamaño (en casas, que no
+  // cambia) y de su suerte: fuente, pozo o el monumento a alguien; bancos y faroles
+  // tampoco se repiten igual. Generador propio por pueblo: la disposición no depende
+  // del estado del mundo (al recargar una partida, el pueblo sigue igual).
+  const pr = new Rng(((seed >>> 0) * 31 + v.regionId * 7919 + 17) >>> 0);
+  const size = v.houses.length;
+  const center = r.isHome ? 'fuente' : size > 30 && pr.chance(0.5) ? 'estatua' : size > 14 ? (pr.chance(0.75) ? 'fuente' : 'estatua') : 'pozo';
+  add(center, v.cx + 0.5, v.cy + 1.6, false);
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked[idx(v.cx + dx, v.cy + dy)] = 1;
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+  // Cuatro bancos (los ancianos van a sentarse en ellos), girados a gusto de cada pueblo.
+  const benches = 4;
+  const turn = r.isHome ? Math.PI / 4 : Math.PI / 4 + Math.round(pr.next() * 3) * (Math.PI / 8);
+  // Los puestos giran con los bancos: cada plaza tiene su trazado y nunca se pisan.
+  const spin = turn - Math.PI / 4;
+  if (spin) for (const st of v.stalls) {
+    const dx = st.x - (v.cx + 0.5);
+    const dy = st.y - (v.cy + 0.5);
+    st.x = v.cx + 0.5 + dx * Math.cos(spin) - dy * Math.sin(spin);
+    st.y = v.cy + 0.5 + dx * Math.sin(spin) + dy * Math.cos(spin);
+  }
+  for (let k = 0; k < benches; k++) {
+    let a = (k / benches) * Math.PI * 2 + turn;
+    // El banco que caería sobre el poste de caminos (al sur) se corre a un lado.
+    const bx = v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6);
+    const by = v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6);
+    if (Math.hypot(bx - (v.sign.x + 1.2), by - (v.sign.y + 0.4)) < 2.6) a -= Math.PI / 5;
     add('banco', v.cx + 0.5 + Math.cos(a) * (v.plazaR - 0.6), v.cy + 0.5 + Math.sin(a) * (v.plazaR - 0.6));
   }
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
+  // Los faroles conservan su corona de seis (bloquean el paso: moverlos cambia por dónde camina la gente).
+  const lamps = 6;
+  // La corona de farolas gira en cada pueblo (el de origen la conserva).
+  const lturn = r.isHome ? 0 : ((v.regionId * 37) % 6) * (Math.PI / 18);
+  for (let k = 0; k < lamps; k++) {
+    const a = (k / lamps) * Math.PI * 2 + lturn;
     const p = { x: v.cx + 0.5 + Math.cos(a) * (v.plazaR + 0.6), y: v.cy + 0.5 + Math.sin(a) * (v.plazaR + 0.6) };
     add('farol', p.x, p.y, true);
     v.lamps.push({ x: p.x, y: p.y - 3 });
@@ -606,4 +659,9 @@ export function nearestWalkable(l: Layout, x: number, y: number, maxR = 12): { x
 /** Puerta de un edificio (tesela delante de su fachada, hacia abajo). */
 export function doorOf(b: Building): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h + 0.6 };
+}
+
+/** Solo para pruebas: construye el trazado de nuevo, sin caché (sobre el mismo terreno en caché). */
+export function rebuildLayout(w: WorldState): Layout {
+  return buildLayout(w);
 }

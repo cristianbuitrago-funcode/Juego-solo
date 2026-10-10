@@ -1,0 +1,163 @@
+/*
+ * ECOS — capa visual de la interfaz (se carga después de styles.css).
+ * Papel de pergamino con grano, filetes de tinta y oro viejo, tipografía
+ * Alegreya (títulos y narración) y Alegreya Sans (cuerpo), empaquetadas en
+ * el juego para que se vean igual en cualquier móvil y sin conexión.
+ */
+@import '@fontsource/alegreya/latin-400.css';
+@import '@fontsource/alegreya/latin-700.css';
+@import '@fontsource/alegreya/latin-400-italic.css';
+@import '@fontsource/alegreya-sans/latin-400.css';
+@import '@fontsource/alegreya-sans/latin-500.css';
+@import '@fontsource/alegreya-sans/latin-700.css';
+
+:root {
+  --serif: 'Alegreya', 'Noto Serif', Georgia, serif;
+  --sans: 'Alegreya Sans', 'Noto Sans', system-ui, sans-serif;
+  --gold: #c9a052;
+  --gold-2: #e7c77e;
+  --leather: rgba(30, 21, 14, 0.78);
+  --ico-accent: #d9a441;
+  /* Grano de papel (ruido fractal, sin imágenes externas). */
+  --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .35  0 0 0 0 .25  0 0 0 0 .14  0 0 0 .09 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+body { font-size: calc(var(--fs) * 1.04); letter-spacing: 0.005em; }
+
+/* ---------- Iconos propios ---------- */
+.ico { width: 1.3em; height: 1.3em; vertical-align: -0.28em; display: inline-block; flex: none; }
+.ico-text { display: inline; }
+.hud .ico, .fab-left .ico, .advance .ico { --ico-accent: #e3b45a; }
+.modal .ico, .diary .ico, .screen .ico, .sheet .ico { --ico-accent: #d6a54a; }
+
+/* ---------- HUD ---------- */
+.hud { background: linear-gradient(rgba(16, 11, 7, 0.86), rgba(16, 11, 7, 0.6) 62%, rgba(16, 11, 7, 0)); padding-bottom: 14px; } /* la escena se aparta del HUD (zona segura en scene.ts), así que la banda puede ser legible */
+.hud .clock { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.6); }
+.hud .clock b { font-family: var(--serif); font-size: 1.18em; letter-spacing: 0.02em; }
+.hud .clock small { font-size: 0.78em; letter-spacing: 0.03em; }
+.hud .icon-btn { background: var(--leather); border: 1.5px solid rgba(201, 160, 82, 0.55); box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.4); }
+.hud .chip { background: var(--leather); border: 1px solid rgba(201, 160, 82, 0.4); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); font-weight: 500; font-variant-numeric: tabular-nums; }
+.hud .chip.news { background: linear-gradient(#b5562d, #8c3c1c); border-color: var(--gold); }
+.mood-dot { box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4), 0 0 6px currentColor; }
+
+/* Botones de acción flotantes: anillo de latón sobre cuero. */
+.fab-left .icon-btn, .hud-fab, .act-btn, .run-btn, .quick-btn {
+  background: radial-gradient(circle at 50% 35%, #3a2a1c, #1c140d) !important;
+  color: #f3e3bd !important;
+  border: 2px solid var(--gold) !important;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.45), inset 0 2px 0 rgba(255, 230, 170, 0.18), 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+.fab-left .icon-btn .ico { width: 1.45em; height: 1.45em; }
+.icon-btn.on, .fab-left .icon-btn.on, .run-btn.on { border-color: var(--gold-2) !important; box-shadow: 0 0 0 3px rgba(231, 199, 126, 0.35), 0 0 16px rgba(231, 199, 126, 0.5) !important; }
+.advance { background: linear-gradient(#c0643a, #8e3d1d); border: 2px solid var(--gold); box-shadow: inset 0 2px 0 rgba(255, 220, 170, 0.3), 0 6px 16px rgba(0, 0, 0, 0.45); font-family: var(--serif); font-weight: 700; }
+
+/* ---------- Susurros, carteles y avisos ---------- */
+.whispers { top: auto; bottom: calc(150px + var(--safe-bottom)); }
+.whisper { background: rgba(24, 17, 11, 0.86); border: 1px solid rgba(201, 160, 82, 0.35); font-family: var(--serif); font-size: 0.95em; }
+.banner small { font-family: var(--sans); font-weight: 500; letter-spacing: 0.3em; }
+.banner div { font-family: var(--serif); font-size: 2.3em; letter-spacing: 0.04em; }
+.banner::after { content: ''; display: block; height: 1px; margin: 8px auto 0; width: 70%; background: linear-gradient(90deg, transparent, var(--gold-2), transparent); }
+.prompt-label { background: rgba(24, 17, 11, 0.86); border: 1px solid rgba(201, 160, 82, 0.4); font-family: var(--serif); font-size: 0.98em; letter-spacing: 0.02em; }
+.toast { background: rgba(28, 20, 13, 0.94); border: 1px solid rgba(201, 160, 82, 0.45); font-family: var(--serif); }
+
+/* ---------- Botones ---------- */
+.btn { font-family: var(--sans); font-weight: 500; letter-spacing: 0.01em; border-radius: 10px; }
+.btn.primary { background: linear-gradient(#c0643a, #9a4522); box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.35); }
+.btn.teal { background: linear-gradient(#3a7f82, #285e61); box-shadow: inset 0 1px 0 rgba(200, 240, 235, 0.3); }
+
+/* ---------- Diálogos y paneles: pergamino con filete doble ---------- */
+.modal, .modal.dialog {
+  background-color: #f2e6cb;
+  background-image: var(--grain), radial-gradient(ellipse at 50% 0%, rgba(255, 250, 235, 0.65), rgba(255, 250, 235, 0) 60%), linear-gradient(#f4e9d0, #eadbb8);
+  border-top: none;
+  box-shadow: 0 -12px 34px rgba(0, 0, 0, 0.45), inset 0 0 0 1.5px rgba(122, 88, 40, 0.55), inset 0 0 0 5px rgba(242, 230, 203, 1), inset 0 0 0 6px rgba(201, 160, 82, 0.7), inset 0 0 40px rgba(120, 80, 30, 0.18);
+  position: relative;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .modal, :root:not([data-theme='light']) .modal.dialog {
+    background-color: #2e261d;
+    background-image: var(--grain), linear-gradient(#352c22, #2a231b);
+    box-shadow: 0 -12px 34px rgba(0, 0, 0, 0.55), inset 0 0 0 1.5px rgba(201, 160, 82, 0.45), inset 0 0 0 5px #2e261d, inset 0 0 0 6px rgba(201, 160, 82, 0.35);
+  }
+}
+.modal h2 { font-family: var(--serif); font-weight: 700; letter-spacing: 0.01em; }
+.modal h2::after { content: ''; display: block; height: 1px; width: 64px; margin-top: 6px; background: linear-gradient(90deg, var(--gold), transparent); }
+.modal.dialog p { font-family: var(--serif); font-size: 1.06em; line-height: 1.55; }
+.modal .tiny { font-family: var(--sans); letter-spacing: 0.04em; }
+/* Esquinas ornamentadas. */
+.modal.dialog::before, .modal.dialog::after { content: ''; position: absolute; top: 10px; width: 22px; height: 22px; border-top: 2px solid var(--gold); pointer-events: none; }
+.modal.dialog::before { left: 10px; border-left: 2px solid var(--gold); border-top-left-radius: 4px; }
+.modal.dialog::after { right: 10px; border-right: 2px solid var(--gold); border-top-right-radius: 4px; }
+
+/* Opciones del diálogo: renglones con viñeta de oro, no botones de formulario. */
+.dlg-choices { gap: 6px; }
+.dlg-choices .btn { background: rgba(255, 250, 238, 0.55); border: 1px solid rgba(122, 88, 40, 0.28); border-left: 3px solid var(--gold); border-radius: 8px; font-size: 1em; min-height: 48px; }
+.dlg-choices .btn.teal { background: linear-gradient(90deg, rgba(47, 111, 115, 0.16), rgba(255, 250, 238, 0.5)); border-left-color: var(--accent-2); color: var(--ink); }
+.dlg-choices .btn:active { background: rgba(201, 160, 82, 0.22); }
+.dlg-choices .btn.exit { background: transparent; border: none; border-top: 1px solid rgba(122, 88, 40, 0.2); border-radius: 0; min-height: 44px; justify-content: center; align-items: center; color: var(--ink-soft); font-style: italic; font-family: var(--serif); margin-top: 4px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .dlg-choices .btn { background: rgba(255, 240, 210, 0.05); border-color: rgba(201, 160, 82, 0.25); border-left-color: var(--gold); }
+  :root:not([data-theme='light']) .dlg-choices .btn.exit { background: transparent; }
+}
+/* Si hay «Salir», sobra la ✕. */
+.modal.has-exit > .close-x { display: none; }
+.close-x { background: transparent !important; border: 1.5px solid rgba(122, 88, 40, 0.4) !important; width: 40px !important; height: 40px !important; font-size: 16px !important; }
+
+/* Viñeta del interior encabezando el diálogo. */
+.modal.with-room { padding-top: 0; }
+.modal canvas.room { display: block; width: calc(100% + 36px); margin: 0 -18px 12px; aspect-ratio: 360 / 160; height: auto; border-radius: 22px 22px 0 0; border-bottom: 2px solid var(--gold); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); }
+@media (min-width: 700px) { .modal canvas.room { border-radius: 22px 22px 0 0; } }
+.dlg-head .portrait { border: 2px solid var(--gold); box-shadow: 0 0 0 3px rgba(43, 30, 21, 0.75), 0 4px 10px rgba(0, 0, 0, 0.4); border-radius: 50% 50% 12px 12px; }
+
+/* ---------- Diario y pestañas ---------- */
+.diary { background-color: #f2e6cb; background-image: var(--grain), linear-gradient(#f4e9d0, #ecdfc0); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .diary { background-color: #2c251d; background-image: var(--grain), linear-gradient(#332a20, #2a231b); } }
+.diary-head { border-bottom: 1px solid rgba(201, 160, 82, 0.5); }
+.tabs { -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); padding-right: 28px; }
+.tabs button { font-family: var(--serif); font-size: 0.98em; border-color: rgba(122, 88, 40, 0.3); }
+.tabs button.on { background: linear-gradient(#3a2a1c, #241910); color: #f3e3bd; border: 1px solid var(--gold); }
+.screen h2, .sheet h2, .diary h2 { font-family: var(--serif); }
+.screen h3, .sheet h3, .modal h3 { font-family: var(--serif); letter-spacing: 0.02em; border-bottom-color: rgba(201, 160, 82, 0.45); }
+.legend { background: rgba(242, 230, 203, 0.94); border: 1px solid rgba(201, 160, 82, 0.6); font-family: var(--serif); }
+
+/* ---------- Menú principal ---------- */
+.menu .logo { font-family: var(--serif); font-weight: 700; letter-spacing: 0.24em; color: #f2e2b8; text-shadow: 0 0 28px rgba(233, 180, 76, 0.45), 0 2px 0 rgba(0, 0, 0, 0.5); }
+.menu .tag { font-family: var(--serif); color: #e9d6a8; opacity: 0.92; }
+.menu .btn { font-family: var(--serif); font-size: 1.08em; border: 1px solid rgba(201, 160, 82, 0.45); }
+@media (max-height: 600px) { .menu { justify-content: flex-start; } .menu .rings { width: 90px; height: 90px; } .menu .logo { font-size: 48px; } }
+
+/* Plano de cine: el HUD se retira mientras dura. */
+.stage.cine .hud, .stage.cine .fab-left, .stage.cine .prompt, .stage.cine .advance, .stage.cine .run-btn, .stage.cine .quick-btn, .stage.cine .whispers { opacity: 0; pointer-events: none; transition: opacity 0.5s; }
+.hud, .fab-left, .prompt, .advance, .run-btn, .quick-btn, .whispers { transition: opacity 0.6s; }
+
+/* Transición mundo ↔ mapa. */
+.world-canvas { transition: transform 0.45s ease; transform-origin: 50% 55%; }
+.stage.to-map .world-canvas { transform: scale(0.82); }
+.diary.from-world { animation: map-in 0.45s ease-out; }
+/* Vuelta al mundo: el diario se disuelve hacia el jugador. */
+.diary.to-world { animation: map-out 0.32s ease-in forwards; }
+@keyframes map-out { to { opacity: 0; transform: scale(1.1); filter: blur(4px); } }
+@keyframes map-in { from { opacity: 0; transform: scale(1.14); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
+body[data-motion='reduced'] .diary.from-world, body[data-motion='reduced'] .diary.to-world, body[data-motion='reduced'] .world-canvas { animation: none; transition: none; }
+
+/* El lema del menú no es un «chip»: texto sobre el fondo oscuro. */
+.menu .tag { background: none; padding: 0; border: none; color: #ecd9ab; font-size: 1.15em; letter-spacing: 0.06em; }
+.run-btn .ico, .quick-btn .ico { width: 1.5em; height: 1.5em; }
+/* Una sola forma de «seleccionado» en todo el diario (cuero y oro). */
+.diary .tabs button.on, .diary .seg button.on, .diary .chips button.on, .map-tabs button.on { background: linear-gradient(#3a2a1c, #241910) !important; color: #f3e3bd !important; border: 1px solid var(--gold) !important; }
+.map-layers .opt-chip.on { background: linear-gradient(#3a2a1c, #241910) !important; color: #f3e3bd !important; border-color: var(--gold) !important; }
+.map-layers .opt-chip { font-family: var(--serif); }
+
+/* Separador del chip de recursos: una fina barra, no un punto que se lea «0·0». */
+.hud .chip .sep { display: inline-block; width: 1px; height: 1em; margin: 0 0.45em; background: rgba(233, 214, 168, 0.35); vertical-align: middle; }
+
+/* Un rótulo de llegada no debe asomar detrás de un panel o del diario. */
+.stage:has(.overlay) .banner, .stage:has(.diary) .banner { opacity: 0 !important; animation: none; }
+/* Pestañas del diario: se desvanecen en el borde (se lee «hay más, desliza»), no se cortan en seco. */
+.diary-head .tabs { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); padding-right: 30px; }
+.diary-head .tabs button { padding: 0 13px; }
+/* El rótulo de llegada, alto: no tapa el hito de la plaza ni las caras. */
+.banner { top: 12%; }
+/* En el plano de cine, el rótulo va en la franja inferior, como un subtítulo: no tapa caras ni el hito. */
+.stage.cine .banner { top: auto; bottom: 1.8%; animation: bannerin 2.3s ease 0.5s both; } /* entra con la franja ya abierta y se va (2,8 s) antes de que se cierre (2,7–3,6 s) */
+.stage.cine .banner div { font-size: 1.65em; }
+.stage.cine .banner small { font-size: 0.78em; }

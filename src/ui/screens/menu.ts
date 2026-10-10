@@ -120,7 +120,7 @@ export function settingsDialog(app: App): void {
     toggle('Texto grande', 'Aumenta el tamaño de letra de los paneles.', s.textSize === 'grande', (v) => (s.textSize = v ? 'grande' : 'normal')),
     h('div', { class: 'field' }, h('label', null, '🖼 Calidad gráfica'),
       h('select', { onchange: (e: Event) => { s.quality = (e.target as HTMLSelectElement).value as typeof s.quality; app.saveSettings(); } },
-        ...([['alta', 'Alta: máxima nitidez'], ['media', 'Media: equilibrada'], ['baja', 'Baja: menos gentío, más batería']] as const).map(([v, l]) => h('option', { value: v, selected: s.quality === v }, l)))),
+        ...([['auto', 'Automática: según el dispositivo'], ['ultra', 'Ultra: máximo detalle'], ['alta', 'Alta: sombras del sol y gentío'], ['media', 'Media: equilibrada'], ['baja', 'Baja: menos efectos, más batería']] as const).map(([v, l]) => h('option', { value: v, selected: s.quality === v }, l)))),
     toggle('Reducir animaciones', 'Detiene el humo, los carros y los pulsos del mapa. Ahorra batería.', s.reduceMotion, (v) => (s.reduceMotion = v)),
     toggle('Vibración', 'Pequeña vibración al tomar decisiones.', s.haptics, (v) => (s.haptics = v)),
     toggle('Mostrar ayuda al empezar', 'Abre «Cómo jugar» en cada partida nueva.', s.tutorial, (v) => (s.tutorial = v)),

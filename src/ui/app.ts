@@ -1,4 +1,5 @@
 import { geoOf, weatherIn } from '../world/geography';
+import { playerRegion } from '../world/society';
 import { warOf } from '../world/war';
 import { darkness } from '../world/clock';
 import { renderWorld } from './screens/world';
@@ -9,7 +10,7 @@ import { loadGame, saveGame } from '../core/save';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { WorldScene, type Target } from '../render/scene';
-import { clockText, dayOf, hourOf, seasonOf, weatherOf, yearOf } from '../world/clock';
+import { clockText, dayOf, hourOf, seasonOf, yearOf } from '../world/clock';
 import { wireWorld } from '../world';
 import { maybeSpawn } from '../world/encounters';
 import { getLayout } from '../world/layout';
@@ -137,6 +138,8 @@ export class App {
     this.scene.reduceMotion = this.settings.reduceMotion;
     this.scene.setQuality(this.settings.quality);
     this.hud = h('header', { class: 'hud' });
+    // La franja que ocupa el HUD (para que la escena sepa cuándo hay una cara debajo).
+    new ResizeObserver(() => this.scene && this.hud && (this.scene.hudBand = this.hud.offsetHeight)).observe(this.hud);
     this.whisperBox = h('div', { class: 'whispers' });
     this.prompt = h('div', { class: 'prompt' });
     this.stage.append(
@@ -283,7 +286,7 @@ export class App {
       h('p', null, 'Abres los ojos. El cielo empieza a clarear. No sabes dónde estás.'),
       h('p', null, 'Intentas recordar cómo llegaste aquí. Tu nombre. Cualquier cosa.'),
       h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
-      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.'); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
+      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.', false, true); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
     );
     this.stage.append(el);
   }
@@ -345,6 +348,9 @@ export class App {
     const l = getLayout(w);
     const me = life.player;
     const region = l.terrain.region[Math.floor(me.y) * 500 + Math.floor(me.x)];
+    // Lo que se dice «desde lejos» (hay humo, quizá un pueblo) deja de valer en cuanto llegas a uno.
+    if (this.whisperBox?.querySelector('[data-far]') && l.villages.some((v) => Math.hypot(v.cx - me.x, v.cy - me.y) < v.plazaR + 9))
+      this.whisperBox.querySelectorAll('[data-far]').forEach((el) => el.remove());
     // El paisaje sonoro: el bosque, la costa, el viento del monte, la lluvia, los tambores de guerra.
     if (region >= 0) audio.setAmbience({ biome: geoOf(w, region).biome, weather: weatherIn(w, region), war: !!warOf(w, region), night: darkness(life.clock) > 0.5 });
     // Observación directa cada hora de juego.
@@ -445,7 +451,7 @@ export class App {
       life.visited[id] = w.day;
       return;
     }
-    if (prev >= 0 || first) this.banner(homey ? 'Vuelves a casa' : first ? 'Llegas a' : 'Has entrado en', r.name);
+    if (prev >= 0 || first) this.banner(homey ? 'De vuelta en' : first ? 'Llegas a' : 'Has entrado en', r.name);
     if (first) {
       life.visited[id] = w.day;
       if (prev >= 0 || ident?.mode !== 'forastero') this.notes(exploreLearning(w, true));
@@ -466,8 +472,9 @@ export class App {
     const w = this.w;
     if (!w || !this.hud) return;
     const life = ensureLife(w);
-    const weather = weatherOf(w, w.day);
-    const wIcon = { despejado: hourOf(life.clock) > 20 || hourOf(life.clock) < 6 ? '🌙' : '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' }[weather];
+    // El tiempo que se ve en la escena (el de tu región), no el general.
+    const weather = (this.scene?.debugWeather ?? weatherIn(w, playerRegion(w))) as keyof typeof WICON;
+    const wIcon = weather === 'despejado' && (hourOf(life.clock) > 20 || hourOf(life.clock) < 6) ? '🌙' : WICON[weather] ?? '☀';
     const inv = life.player.inventory;
     const free = w.player.agents - w.missions.length - Object.values(w.intel).filter((i) => i.observerStationed).length;
     const id = life.identity;
@@ -478,8 +485,8 @@ export class App {
       h('div', { class: 'clock' }, h('b', null, `Día ${w.day} · ${clockText(life.clock)}`), h('small', null, `${wIcon} ${seasonOf(w.day)} · año ${yearOf(w.day)} · `, h('span', { class: `mood-dot mood-${w.mood}` })), life.prologue?.objective ? h('small', { class: 'objective' }, life.prologue.objective) : null),
       h('div', { class: 'stats' },
         auth >= 5 ? h('span', { class: 'chip', title: 'Provisiones del pueblo' }, '🌾', String(Math.round(w.player.reserves))) : null,
-        needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(needs.coins)) : null,
-        h('span', { class: 'chip', title: 'Tu mochila' }, '🎒', `${inv.comida}·${inv.hierbas}`),
+        needs ? h('span', { class: 'chip', title: 'Monedas' }, '🪙', String(Math.floor(needs.coins))) : null,
+        h('span', { class: 'chip', title: 'Comida · hierbas' }, '🍞', String(Math.floor(inv.comida)), h('span', { class: 'sep' }), '🌿', String(Math.floor(inv.hierbas))),
         life.society && cargoCount(playerEco(w)) > 0 ? h('span', { class: 'chip', title: 'Tu carga' }, playerEco(w).vehicle === 'carreta' ? '🛞' : playerEco(w).vehicle === 'mula' ? '🐴' : '📦', `${Math.round(cargoCount(playerEco(w)))}/${capacityOf(playerEco(w))}`) : null,
         needs && needs.hunger >= 0.6 ? h('span', { class: `chip ${needs.hunger >= 0.8 ? 'warn' : ''}`, title: 'Hambre' }, '🍞') : null,
         needs && needs.fatigue >= 0.65 ? h('span', { class: `chip ${needs.fatigue >= 0.85 ? 'warn' : ''}`, title: 'Cansancio' }, '💤') : null,
@@ -497,9 +504,10 @@ export class App {
     this.prompt.append(h('div', { class: 'prompt-label' }, t.label), h('div', { class: 'prompt-actions' }, ...focusButtons(this, t)));
   }
 
-  whisper(text: string, sound = false): void {
+  whisper(text: string, sound = false, far = false): void {
     if (!this.whisperBox) return;
     const el = h('div', { class: 'whisper' }, text);
+    if (far) el.dataset.far = '1';
     this.whisperBox.append(el);
     if (sound) audio.sfx('peticion');
     while (this.whisperBox.children.length > 3) this.whisperBox.firstChild?.remove();
@@ -507,12 +515,25 @@ export class App {
     window.setTimeout(() => el.remove(), 7000);
   }
 
-  banner(top: string, main: string): void {
+  private cineTimer = 0;
+  banner(top: string, main: string, cine = !/^Día \d/.test(top) && top !== 'Has entrado en'): void {
     if (!this.stage) return;
     this.stage.querySelector('.banner')?.remove();
     const b = h('div', { class: 'banner' }, h('small', null, top), h('div', null, main));
     this.stage.append(b);
-    window.setTimeout(() => b.remove(), 3600);
+    // Los momentos que merecen cartel (llegar a un sitio nuevo, descubrirse, una nueva
+    // generación) merecen plano de cine; el amanecer de cada día, no.
+    if (!cine) return;
+    this.scene?.cinematic({ seconds: 3.6 }); // franjas abiertas hasta ~2,7 s, cerradas a 3,6 s
+    this.stage.classList.add('cine');
+    // Al llegar a un sitio, lo que se susurraba antes (p. ej. «hay humo hacia allí») ya no vale.
+    if (/^(Llegas|De vuelta)/.test(top)) this.whisperBox?.replaceChildren();
+    // Un solo temporizador: si llega otro cartel, el HUD no reaparece a mitad del plano.
+    window.clearTimeout(this.cineTimer);
+    // El rótulo se ha ido a 2,8 s (antes de que se cierren las franjas); el HUD vuelve
+    // mientras se cierran, sin un hueco vacío al final.
+    this.cineTimer = window.setTimeout(() => this.stage?.classList.remove('cine'), 3150);
+    window.setTimeout(() => b.remove(), 3000);
   }
 
   // -------------------------------------------------------------------------
@@ -523,18 +544,32 @@ export class App {
     audio.sfx('tap');
     this.diaryView = v;
     if (!this.diary) {
-      this.diary = h('section', { class: 'diary' });
+      this.diary = h('section', { class: `diary ${v === 'mapa' ? 'from-world' : ''}` });
       this.stage.append(this.diary);
+      // Transición mundo → mapa: la escena se aleja mientras el mapa aparece; después,
+      // con el diario cubriéndolo todo, el mundo deja de pintarse.
+      if (v === 'mapa') this.stage.classList.add('to-map');
+      const sc = this.scene;
+      window.setTimeout(() => sc && this.diary && (sc.covered = true), 480);
     }
     this.pause(true);
     this.renderDiary();
   }
 
   closeDiary(): void {
+    if (this.scene) this.scene.covered = false;
+    this.stage?.classList.remove('to-map');
     this.map?.destroy();
     this.map = null;
     this.sheet = null;
-    this.diary?.remove();
+    // Transición de vuelta: el diario se desvanece mientras el mundo se acerca.
+    const d = this.diary;
+    if (d) {
+      d.classList.remove('from-world');
+      d.classList.add('to-world');
+      d.style.pointerEvents = 'none';
+      window.setTimeout(() => d.remove(), 320);
+    }
     this.diary = null;
     this.pause(false);
     this.renderHud();
@@ -571,6 +606,8 @@ export class App {
       ),
       body,
     );
+    // La pestaña activa siempre a la vista (las demás se deslizan).
+    requestAnimationFrame(() => this.diary?.querySelector('.diary-head .tabs button.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }));
     if (this.diaryView === 'mapa') {
       body.classList.add('map-body');
       this.map = new MapView(body, { onTap: (id) => (id === null ? this.closeRegion() : this.openRegion(id)), onLongPress: (id) => this.openRegion(id) });
@@ -658,6 +695,8 @@ export class App {
     });
     box.append(h('button', { class: 'icon-btn close-x', 'aria-label': 'Cerrar', onclick: close }, '✕'), ...(build(close).filter(Boolean) as Node[]));
     (this.stage ?? this.root).append(overlay);
+    // El rótulo de llegada no debe quedar asomando detrás del panel.
+    this.stage?.querySelectorAll('.banner').forEach((b) => b.remove());
     this.modals.push(overlay);
     this.pause(true);
     return close;
@@ -710,3 +749,5 @@ export class App {
 export function moodWord(m: WorldState['mood']): string {
   return { calma: 'calma', tension: 'tensión', crisis: 'crisis', descubrimiento: 'hallazgo' }[m];
 }
+
+const WICON = { despejado: '☀', nublado: '☁', lluvia: '🌧', tormenta: '⛈', viento: '🌬', niebla: '🌫', nieve: '❄' } as const;

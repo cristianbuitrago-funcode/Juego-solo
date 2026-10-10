@@ -1,26 +1,42 @@
 import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import type { WorldState } from '../core/types';
-import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf } from '../world/clock';
+import { darkness, hourOf, SECONDS_PER_MINUTE, seasonOf, type Season } from '../world/clock';
 import { weatherIn } from '../world/geography';
+import { clearMaterials } from '../visual/env/materials';
+import { drawSmall, drawTree, drawTreeShadow, type SmallKind, type TreeKind } from '../visual/env/flora';
 import { playerRegion } from '../world/society';
-import { getLayout, doorOf, type BuildingKind, type Layout } from '../world/layout';
-import { ensureLife, explore, housesFor } from '../world/life';
+import { getLayout, doorOf, stallShown, vendorSpot, type BuildingKind, type Layout } from '../world/layout';
+import { ensureLife, explore } from '../world/life';
 import { findPath, passable } from '../world/path';
-import { along, roadPath } from '../world/roadnet';
 import { routineOf } from '../world/routines';
 import { prologueBlocks, prologueItems } from '../world/prologue';
-import { overheard } from '../world/gossip';
 import { convoyPositions } from '../world/trade';
-import { GOOD_COLOR, marketLook } from '../world/marketview';
-import type { Good } from '../world/economy';
 import { idx, speedOf, walkable } from '../world/terrain';
-import { TILE, TW, type Folk, type FolkRole } from '../world/types';
-import { appearanceOf, playerAppearance, type Appearance } from './appearance';
-import { CHUNK, ChunkCache, type StaticObject } from './chunks';
-import { drawHuman, type Action, type Expr, type Facing, type Pose } from './human';
-import { drawFire, drawFlame, drawPuff, WeatherFx } from './fx';
-import { actionOf, moodOf } from './mood';
+import { T, TILE, TW, type Folk, type FolkRole } from '../world/types';
+import type { Appearance } from './appearance';
+import { CHUNK, ChunkCache, PAD, type StaticObject } from './chunks';
+import type { Action, Expr, Facing, Pose } from '../visual/figure/types';
+import { drawFigure, drawFigureShadow } from '../visual/figure/figure';
+import { contactShadow, sunAt, type SunState } from '../visual/light';
+import { houseTex } from '../visual/env/buildings';
+import { animalTex, anvilTex, propTex, tentTex } from '../visual/env/props';
+import { adaptTier, VQ, resolveTier, setTier, type AdaptState, type QualitySetting } from '../visual/quality';
+import { nextFrame, put } from '../visual/paint';
+import { drawFire, drawPuff } from './fx';
+import { Weather } from '../visual/weather';
+import { drawGrade, Lighting } from './lighting';
+import { Furniture, settlePeople } from './furniture';
+import { actionOf } from './mood';
 import * as S from './sprites';
+import type { Drawable } from './drawable';
+import { postDrawables, roadTraffic } from './traffic';
+import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
+import { moveAnimals, type Animal } from './animals';
+import { drawBirds, moveBirds, type Bird } from './birds';
+import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
+import { buyerSpot, villageDrawables } from './village';
+import { hudShiftFor } from './screenbox';
+import { drawWet } from './wet';
 
 /**
  * Escena del mundo explorable: cámara que sigue al personaje, terreno por
@@ -31,11 +47,6 @@ import * as S from './sprites';
  * de verdad. Los lejanos "viven" en su rutina abstracta y se materializan
  * en el sitio correcto cuando el jugador se acerca.
  */
-const hashOf = (s: string) => {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-};
 
 export type Target =
   | { kind: 'folk'; id: string; label: string }
@@ -58,7 +69,7 @@ export interface SceneCallbacks {
   onTick(): void; // cada ~1 s real (presencia, descubrimientos, encuentros)
 }
 
-interface Ent {
+export interface Ent {
   x: number;
   y: number;
   path: { x: number; y: number }[];
@@ -76,6 +87,7 @@ interface Ent {
   partner?: string; // con quién conversa
   greeted?: boolean;
   react?: { expr?: Expr; action?: Action; until: number };
+  stride?: number; // zancada de su cuerpo (teselas por paso)
 }
 
 /** Figurante de las ciudades grandes: da vida a la plaza, no tiene memoria. */
@@ -84,25 +96,12 @@ interface Extra extends Ent {
   wait: number;
 }
 
-interface Animal {
-  kind: S.AnimalKind;
-  x: number;
-  y: number;
-  hx: number;
-  hy: number;
-  tx: number;
-  ty: number;
-  flip: boolean;
-  anim: number;
-  water?: boolean; // patos: solo nadan
-  v: number;
-}
-
 interface Light {
   x: number; // píxeles de mundo
   y: number;
   r: number;
   k: number;
+  flat?: number; // charco de luz en el suelo (elipse aplastada)
 }
 
 interface Particle {
@@ -116,46 +115,39 @@ interface Particle {
   color: string;
 }
 
-interface Drawable {
-  y: number;
-  draw: () => void;
-}
 
 const BUILDING_LABEL: Record<string, string> = { salon: 'Salón', almacen: 'Almacén', posada: 'Posada', templo: 'Templo', forja: 'Forja', hogar: 'Tu casa', establo: 'Establo', granero: 'Granero' };
 
 /** Zoom de cámara: explorando, junto a alguien y conversando. */
-const ZOOM = { explore: 2, near: 2.5, talk: 3.5 };
-
-function hash(s: string, salt = 0): number {
-  let h = 2166136261 ^ salt;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return (h >>> 0) / 4294967296;
-}
+const ZOOM = { explore: 2.6, near: 3.1, talk: 4.4 };
 
 export class WorldScene {
   readonly canvas: HTMLCanvasElement;
-  private g: CanvasRenderingContext2D; // mundo, en píxeles de arte 1:1
+  g: CanvasRenderingContext2D; // mundo (misma superficie que la pantalla, con la transformación de la cámara)
   private screen: CanvasRenderingContext2D; // pantalla (capas de luz, clima, interfaz)
-  private buf = document.createElement('canvas');
-  private l: Layout;
-  private chunks: ChunkCache;
-  private dark = document.createElement('canvas');
+  l: Layout;
+  chunks: ChunkCache;
   cam = { x: 0, y: 0, z: ZOOM.explore };
   private userZ = 1; // multiplicador del pellizco
-  private converseId: string | null = null;
-  private apCache = new Map<string, { key: string; ap: Appearance }>();
+  converseId: string | null = null;
+  apCache = new Map<string, { key: string; ap: Appearance }>();
+  playerLook: unknown = null;
+  wxFrame = 'despejado';
+  seasonFrame: Season = 'primavera';
+  playerLookKey = '';
   private extras = new Map<string, Extra>();
-  private birds: { x: number; y: number; vx: number; ph: number }[] = [];
-  private lights: Light[] = [];
+  birds: Bird[] = [];
+  lights: Light[] = [];
   private socialAcc = 0;
-  private folkById = new Map<string, Folk>();
+  folkById = new Map<string, Folk>();
   private dpr = 1;
-  private vw = 0;
-  private vh = 0;
-  private ents = new Map<string, Ent>();
-  private animals = new Map<number, Animal[]>();
+  vw = 0;
+  vh = 0;
+  ents = new Map<string, Ent>();
+  animals = new Map<number, Animal[]>();
   private particles: Particle[] = [];
-  private wfx = new WeatherFx();
+  private wfx = new Weather();
+  private lastCam = { x: 0, y: 0 };
   private lastDraw = 0;
   private raf = 0;
   private last = performance.now();
@@ -163,13 +155,40 @@ export class WorldScene {
   private lodAcc = 0;
   private focusAcc = 0;
   private region = -1;
-  private focus: Target | null = null;
-  private playerAnim = 0;
-  private playerMoving = false;
-  private playerRun = false;
-  private facing = { x: 0, y: 1 };
-  private path: { x: number; y: number }[] = [];
-  private pending: Target | null = null;
+  focus: Target | null = null;
+  playerAnim = 0;
+  playerMoving = false;
+  /** Velocidad real del jugador (teselas/s): acelera y frena, no salta. */
+  private vel = { x: 0, y: 0 };
+  /** Segundos quieto (el acercamiento a quien está al lado espera un poco). */
+  private stillT = 0;
+  private paintsSeen = 0;
+  /** Plano de cine en curso (momentos importantes): encuadre, acercamiento, franjas y cámara lenta. */
+  private cine: { x?: number; y?: number; z: number; start: number; dur: number; slow: number } | null = null;
+  playerHidden = false;
+  /** Qué tapó al jugador en el último fotograma (para revisar escenas). */
+  hiddenBy = '';
+  /** Huellas sólidas del mobiliario (elipses en teselas): solo frenan al jugador. */
+  private snowCheck = -1e9;
+  private snowWeather = '';
+  private realDt = 0;
+  private joyRun = false;
+  /** Anticipación de la cámara, filtrada (no da latigazos al girar). */
+  private lookAhead = { x: 0, y: 0 };
+  /** Destino tocado: un anillo que se desvanece en el suelo. */
+  tapMark: { x: number; y: number; t: number } | null = null;
+  private ro: ResizeObserver | null = null;
+  /** Capa de oscuridad nocturna (a media resolución). */
+  private onKeyDown = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+    this.keys.add(e.key.toLowerCase());
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) this.stop();
+  };
+  private onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
+  playerRun = false;
+  facing = { x: 0, y: 1 };
+  path: { x: number; y: number }[] = [];
+  pending: Target | null = null;
   private follow: string | null = null;
   private joy: { id: number; bx: number; by: number; x: number; y: number } | null = null;
   private pointers = new Map<number, { x: number; y: number; t: number; sx: number; sy: number }>();
@@ -183,14 +202,90 @@ export class WorldScene {
   reduceMotion = false;
   /** Multiplicador de velocidad del personaje (hambre, cansancio). */
   speed: () => number = () => 1;
-  private quality: 'alta' | 'media' | 'baja' = 'media';
 
-  /** Calidad gráfica: resolución del lienzo, gentío y detalle de las figuras. */
-  setQuality(q: 'alta' | 'media' | 'baja'): void {
-    if (q === this.quality) return;
-    this.quality = q;
+  /** Nivel gráfico (LOW–ULTRA, o automático): resolución, texturas, sombras, partículas y gentío. */
+  private qualitySetting: QualitySetting = 'auto';
+  private frameMs: number[] = [];
+  /** Intervalos entre fotogramas (ms) y el mejor ritmo visto: así se nota la carga de la GPU, que no sale en el tiempo de dibujo. */
+  private gapMs: number[] = [];
+  private adapt: AdaptState = { calm: 0, sinceChange: 0, gpuCapped: false, bestGap: 1e9 };
+  private lastFrameT = 0;
+  private lastDowngrade = 0;
+  setQuality(q: QualitySetting): void {
+    this.qualitySetting = q;
+    const changed = setTier(resolveTier(q));
+    // Las texturas llevan la resolución en su clave: no se vacía el caché de golpe (daba un tirón).
+    if (changed) (S.clearSprites(), clearMaterials());
     this.resize();
-    if (q === 'baja') this.extras.clear();
+    if (VQ().crowd === 0) this.extras.clear();
+  }
+  get low(): boolean {
+    return VQ().tier === 'low';
+  }
+  sun: SunState = sunAt(12, 'despejado');
+  shadowQ: (() => void)[] = [];
+  private lighting = new Lighting();
+  focusGrad: CanvasGradient | null = null;
+  /** Lo que se pinta sobre el suelo, antes incluso que las sombras (pavimentos con dibujo). */
+  groundQ: (() => void)[] = [];
+  furniture = new Furniture(() => this.w, () => this.l);
+
+  /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
+  pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
+    this.keepVisible(x, y - 26); // la cara, para la regla del HUD
+    this.faces.push(x, y);
+    const g = this.g;
+    const sun = this.sun;
+    this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
+    items.push({ y, draw: () => drawFigure(g, ap, pose, x, y) });
+  }
+
+  /**
+   * Zona segura del HUD: si una cara cae bajo la franja del HUD (alto `hudBand`, en píxeles CSS),
+   * la cámara sube lo justo (suave y con tope) para que no quede tapada. La app fija `hudBand`.
+   */
+  hudBand = 0;
+  private heads: number[] = [];
+  private smithAps = new WeakMap<Appearance, Appearance>();
+  private smithAp(ap: Appearance): Appearance {
+    if (ap.outfit.apron === '#6a4a30') return ap;
+    let c = this.smithAps.get(ap);
+    if (!c) this.smithAps.set(ap, (c = { ...ap, outfit: { ...ap.outfit, apron: '#6a4a30', sleeves: 'remangadas' } }));
+    return c;
+  }
+  /** Un punto (píxeles de mundo) que el HUD no debe tapar: caras, la hoguera… */
+  keepVisible(x: number, y: number): void {
+    this.heads.push(x, y);
+  }
+  private faces: number[] = [];
+  /** ¿Hay la cara de alguien (píxeles de mundo) dentro del rectángulo, con el pie por detrás de `footY`? */
+  faceBehind(x0: number, y0: number, x1: number, y1: number, footY: number): boolean {
+    const f = this.faces;
+    for (let i = 0; i < f.length; i += 2) if (f[i] > x0 && f[i] < x1 && f[i + 1] - 26 > y0 && f[i + 1] - 26 < y1 && f[i + 1] < footY) return true;
+    return false;
+  }
+  private hudShift = 0;
+  private hudRule(): void {
+    // Zona segura: cuántos píxeles de pantalla habría que bajar la escena para que ninguna cara quede
+    // bajo la franja del HUD. La cámara sube ese tanto (suave y con tope) en vez de taparlas.
+    const ys: number[] = [];
+    if (this.hudBand > 0)
+      for (let i = 0; i < this.heads.length; i += 2) {
+        const p = this.toScreen(this.heads[i], this.heads[i + 1]);
+        if (p.x > 8 && p.x < this.vw - 8) ys.push(p.y);
+      }
+    const want = hudShiftFor(ys, this.hudBand, this.hudShift);
+    // (histéresis: sube rápido y baja despacio, para que no tiemble cuando alguien entra y sale)
+    // (por tiempo, no por fotograma: a 30 fps no debe ir el doble de lento que a 60)
+    const dt = Math.min(0.1, this.realDt || 1 / 60);
+    const k = 1 - Math.pow(1 - (want > this.hudShift ? 0.2 : 0.03), dt * 60);
+    this.hudShift += (want - this.hudShift) * k;
+  }
+
+  /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
+  debugWeather: string | null = null;
+  weatherHere(): string {
+    return this.debugWeather ?? weatherIn(this.w, playerRegion(this.w));
   }
 
   constructor(private parent: HTMLElement, public w: WorldState, private cb: SceneCallbacks) {
@@ -198,7 +293,7 @@ export class WorldScene {
     this.canvas.className = 'world-canvas';
     parent.appendChild(this.canvas);
     this.screen = this.canvas.getContext('2d')!;
-    this.g = this.buf.getContext('2d')!;
+    this.g = this.screen;
     this.l = getLayout(w);
     for (const c of prologueBlocks(w)) this.l.blocked[idx(c.x, c.y)] = 1;
     this.chunks = new ChunkCache(w, this.l);
@@ -206,30 +301,106 @@ export class WorldScene {
     this.cam.x = life.player.x * TILE;
     this.cam.y = life.player.y * TILE;
     this.bindInput();
-    new ResizeObserver(() => this.resize()).observe(parent);
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(parent);
     this.resize();
     const loop = (t: number) => {
-      const dt = Math.min(0.05, (t - this.last) / 1000);
+      const dt0 = Math.min(0.05, (t - this.last) / 1000);
+      const cine = this.cineAmount();
+      const dt = this.cine ? dt0 * (1 - (1 - this.cine.slow) * cine) : dt0;
       this.last = t;
       if (!this.paused) {
         this.converseId = null; // sin diálogo abierto no hay conversación
+        this.realDt = dt0; // el jugador se mueve a tiempo real aunque el mundo vaya a cámara lenta
         this.update(dt);
       }
-      this.updateCamera(dt);
-      this.draw(t);
+      this.updateCamera(dt0);
+      // Tapado por el diario o el mapa (opacos), el mundo no se pinta; detrás de un
+      // diálogo, que lo deja ver en penumbra y quieto, basta un fotograma de cada tres.
+      this.frameNo++;
+      if (!this.covered && (!this.paused || this.frameNo % 3 === 0)) {
+        const w0 = performance.now();
+        this.draw(t);
+        // Se mide el trabajo de dibujo (no el intervalo entre fotogramas: un móvil a 30 Hz no es lento).
+        if (!this.paused) this.watchFrames(performance.now() - w0, this.lastFrameT ? t - this.lastFrameT : 0);
+        this.lastFrameT = this.paused ? 0 : t;
+      }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
   }
 
+  /**
+   * En automático, si el dispositivo no llega (el 95 % de los fotogramas de
+   * los últimos segundos tarda más de 22 ms), se baja un nivel gráfico.
+   */
+  /** Tapado por una pantalla opaca (diario, mapa): no hace falta pintar el mundo. */
+  covered = false;
+  private frameNo = 0;
+  /**
+   * En automático, el nivel se adapta al dispositivo midiendo cuánto tarda en
+   * pintarse cada fotograma: si el 95 % pasa de 16 ms, baja un nivel; si dos
+   * tandas seguidas se quedan por debajo de 7 ms, sube (sin pasar del detectado).
+   */
+  private watchFrames(ms: number, gap: number): void {
+    if (this.qualitySetting !== 'auto' || document.hidden || ms > 250 || ms <= 0) return;
+    this.frameMs.push(ms);
+    if (gap > 0 && gap < 250) this.gapMs.push(gap);
+    if (this.frameMs.length < 240) return;
+    const sorted = this.frameMs.sort((a, b) => a - b);
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    this.frameMs.length = 0;
+    // Ritmo real de la pantalla: la mediana de los intervalos entre fotogramas.
+    let gapMed = 0;
+    if (this.gapMs.length > 60) gapMed = this.gapMs.sort((a, c) => a - c)[Math.floor(this.gapMs.length / 2)];
+    this.gapMs.length = 0;
+    const now = performance.now();
+    this.adapt.sinceChange = now - this.lastDowngrade;
+    const next = adaptTier(VQ().tier, resolveTier('auto'), p95, gapMed, this.adapt);
+    if (next === VQ().tier) return;
+    this.lastDowngrade = now;
+    setTier(next);
+    // Las texturas pintadas llevan la resolución en su clave: las nuevas se pintan según se
+    // necesitan y las viejas salen solas del caché (vaciarlo de golpe daba un tirón). Solo se
+    // vacía el pequeño caché de sprites antiguos (estructuras), que no la lleva.
+    S.clearSprites();
+    this.resize();
+  }
+
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    this.ro?.disconnect();
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
     this.canvas.remove();
   }
 
   setWorld(w: WorldState): void {
     this.w = w;
+    this.furniture.clear();
+    this.vendorSpots.clear();
     this.chunks.setWorld(w);
+  }
+
+  /**
+   * Momento importante: la cámara se acerca despacio (al jugador o a un punto,
+   * en teselas), aparecen franjas de cine y el tiempo se ralentiza un poco.
+   */
+  cinematic(o: { x?: number; y?: number; zoom?: number; seconds?: number; slow?: number } = {}): void {
+    if (this.reduceMotion) return;
+    this.cine = { x: o.x, y: o.y, z: o.zoom ?? 1.22, start: performance.now(), dur: (o.seconds ?? 3.2) * 1000, slow: o.slow ?? 0.45 };
+  }
+  /** 0..1..0: cuánto pesa el plano de cine ahora (entra y sale suave). */
+  private cineAmount(): number {
+    const c = this.cine;
+    if (!c) return 0;
+    const u = (performance.now() - c.start) / c.dur;
+    if (u >= 1) {
+      this.cine = null;
+      return 0;
+    }
+    const e = (v: number) => v * v * (3 - 2 * v);
+    return u < 0.2 ? e(u / 0.2) : u > 0.75 ? e((1 - u) / 0.25) : 1;
   }
 
   /** Coloca al jugador (viaje rápido, sucesión). */
@@ -237,6 +408,7 @@ export class WorldScene {
     const p = ensureLife(this.w).player;
     p.x = x;
     p.y = y;
+    this.furniture.unstick(p, true);
     this.cam.x = x * TILE;
     this.cam.y = y * TILE;
     this.path = [];
@@ -300,7 +472,7 @@ export class WorldScene {
   // Entrada: joystick virtual, tocar para caminar, pellizcar para zoom.
   // -------------------------------------------------------------------------
   private resize(): void {
-    this.dpr = Math.min(this.quality === 'alta' ? 2 : this.quality === 'media' ? 1.5 : 1, window.devicePixelRatio || 1);
+    this.dpr = Math.min(VQ().dpr, window.devicePixelRatio || 1);
     const r = this.parent.getBoundingClientRect();
     this.vw = r.width;
     this.vh = r.height;
@@ -308,8 +480,7 @@ export class WorldScene {
     this.canvas.height = Math.round(r.height * this.dpr);
     this.canvas.style.width = `${r.width}px`;
     this.canvas.style.height = `${r.height}px`;
-    this.dark.width = Math.ceil(r.width / 2);
-    this.dark.height = Math.ceil(r.height / 2);
+    this.lighting.resize(r.width, r.height);
   }
 
   private toWorld(sx: number, sy: number): { x: number; y: number } {
@@ -317,7 +488,7 @@ export class WorldScene {
     return { x: ((sx - r.left - this.vw / 2) / this.cam.z + this.cam.x) / TILE, y: ((sy - r.top - this.vh / 2) / this.cam.z + this.cam.y) / TILE };
   }
 
-  private toScreen(x: number, y: number): { x: number; y: number } {
+  toScreen(x: number, y: number): { x: number; y: number } {
     return { x: (x - this.cam.x) * this.cam.z + this.vw / 2, y: (y - this.cam.y) * this.cam.z + this.vh / 2 };
   }
 
@@ -349,7 +520,6 @@ export class WorldScene {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         this.userZ = Math.max(0.55, Math.min(2.2, this.pinch.z * (d / Math.max(1, this.pinch.d))));
-        this.cam.z = this.zoomTarget().z;
         return;
       }
       if (this.joy && this.joy.id === e.pointerId) {
@@ -364,11 +534,13 @@ export class WorldScene {
       if (this.pointers.size < 2) this.pinch = null;
       if (this.joy && this.joy.id === e.pointerId) {
         this.joy = null;
+        // Un toque corto en la zona del joystick sigue siendo un toque.
+        if (p && Math.hypot(p.x - p.sx, p.y - p.sy) < 12 && performance.now() - p.t < 350 && !this.pointers.size) this.tap(e.clientX, e.clientY);
         return;
       }
       if (!p || this.pointers.size) return;
       const moved = Math.hypot(p.x - p.sx, p.y - p.sy);
-      if (moved < 12 && performance.now() - p.t < 450) this.tap(e.clientX, e.clientY);
+      if (moved < 12 && performance.now() - p.t < 350) this.tap(e.clientX, e.clientY);
     };
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
@@ -376,12 +548,8 @@ export class WorldScene {
       e.preventDefault();
       this.userZ = Math.max(0.55, Math.min(2.2, this.userZ * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
     }, { passive: false });
-    window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
-      this.keys.add(e.key.toLowerCase());
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(e.key.toLowerCase())) this.stop();
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
   }
 
   /** Tocar el mundo: caminar hasta allí, o hasta la persona/lugar tocado. */
@@ -400,6 +568,7 @@ export class WorldScene {
         return;
       }
     }
+    this.tapMark = { x: p.x, y: p.y, t: performance.now() };
     this.walkTo(p.x, p.y);
   }
 
@@ -410,7 +579,7 @@ export class WorldScene {
     const w = this.w;
     const life = ensureLife(w);
     this.cb.advance((dt / SECONDS_PER_MINUTE) * this.timeScale);
-    this.movePlayer(dt);
+    this.movePlayer(this.realDt || dt);
     const me = life.player;
 
     this.tickAcc += dt;
@@ -432,8 +601,10 @@ export class WorldScene {
     }
     this.moveFolk(dt);
     this.moveExtras(dt);
-    this.moveAnimals(dt);
-    this.moveBirds(dt);
+    this.separate(dt);
+    this.settle(dt);
+    moveAnimals(this, dt);
+    moveBirds(this, dt);
     this.socialAcc += dt;
     if (this.socialAcc > 0.3) {
       this.socialAcc = 0;
@@ -461,20 +632,52 @@ export class WorldScene {
       return { x: ((me.x + conv.x) / 2) * TILE, y: ((me.y + conv.y) / 2) * TILE - 16 + (this.vh * 0.2) / z, z };
     }
     const near = this.focus?.kind === 'folk' || this.focus?.kind === 'encounter' || this.focus?.kind === 'messenger';
-    return { x: me.x * TILE, y: me.y * TILE - 10, z: Math.max(1, Math.min(4.5, (near && !this.playerMoving ? ZOOM.near : ZOOM.explore) * this.userZ)) };
+    // La cámara mira un poco hacia donde se camina (más al correr) y solo se acerca a quien está al lado tras un rato quieto.
+    const look = this.reduceMotion ? 0 : 1;
+    const cine = this.cineAmount();
+    if (cine > 0 && this.cine) {
+      const cx = (this.cine.x ?? me.x) * TILE;
+      const cy = (this.cine.y ?? me.y) * TILE - 14;
+      return { x: cx, y: cy, z: Math.min(4.6, ZOOM.explore * this.userZ * (1 + (this.cine.z - 1) * cine)) };
+    }
+    const z = Math.max(1, Math.min(4.5, (near && this.stillT > 1.4 ? ZOOM.near : ZOOM.explore) * this.userZ));
+    // Con la botonera de acciones abajo, el encuadre sube un poco: lo que hay delante del
+    // jugador (una forja, un puesto) no queda debajo de los botones.
+    const ui = (this.focus ? (this.vh * 0.09) / z : 0) - this.hudShift / z;
+    return {
+      x: (me.x + this.lookAhead.x * look) * TILE,
+      y: (me.y + this.lookAhead.y * look * 0.8) * TILE - 10 + ui,
+      z,
+    };
   }
 
   private updateCamera(dt: number): void {
+    // La anticipación sigue a la velocidad con retraso (≈0,5 s): al dar media vuelta no salta.
+    const kl = 1 - Math.exp(-dt * 2);
+    this.lookAhead.x += (this.vel.x * 0.38 - this.lookAhead.x) * kl;
+    this.lookAhead.y += (this.vel.y * 0.38 - this.lookAhead.y) * kl;
     const tg = this.zoomTarget();
-    const k = Math.min(1, dt * 6);
-    this.cam.x += (tg.x - this.cam.x) * k;
-    this.cam.y += (tg.y - this.cam.y) * k;
-    this.cam.z += (tg.z - this.cam.z) * Math.min(1, dt * (this.converseId ? 3 : 1.6));
+    // Suavizado exponencial (igual a 30 que a 120 fps) con una zona muerta pequeña.
+    const k = 1 - Math.exp(-dt * 5.5);
+    const ex = tg.x - this.cam.x;
+    const ey = tg.y - this.cam.y;
+    const dead = 3;
+    const ed = Math.hypot(ex, ey);
+    if (ed > dead) {
+      const f = (ed - dead) / ed;
+      this.cam.x += ex * f * k;
+      this.cam.y += ey * f * k;
+    }
+    const zk = 1 - Math.exp(-dt * (this.pinch ? 14 : this.converseId ? 3 : 1.4));
+    // Curva suave: el zoom empieza y termina despacio.
+    const dz = tg.z - this.cam.z;
+    this.cam.z += dz * zk * Math.min(1, 0.35 + Math.abs(dz) * 1.2);
   }
 
   private movePlayer(dt: number): void {
     const life = ensureLife(this.w);
     const me = life.player;
+    this.furniture.unstick(me);
     let dx = 0;
     let dy = 0;
     let run = this.running;
@@ -483,9 +686,13 @@ export class WorldScene {
       const jy = this.joy.y - this.joy.by;
       const len = Math.hypot(jx, jy);
       if (len > 8) {
-        dx = jx / len;
-        dy = jy / len;
-        if (len > 52) run = true;
+        // Analógico: cuanto más se aleja el dedo, más rápido; muy lejos, se corre.
+        const amt = Math.min(1, 0.35 + (len - 8) / 40);
+        dx = (jx / len) * amt;
+        dy = (jy / len) * amt;
+        // Se corre al llevar el dedo al anillo exterior (con histéresis: no parpadea en el borde).
+        this.joyRun = this.joyRun ? len > 42 : len > 50;
+        if (this.joyRun) run = true;
       }
     } else {
       if (this.keys.has('arrowleft') || this.keys.has('a')) dx -= 1;
@@ -522,15 +729,28 @@ export class WorldScene {
         dy = (n.y - me.y) / d;
       }
     }
-    this.playerMoving = !!(dx || dy);
-    this.playerRun = run;
-    if (!this.playerMoving) return;
-    this.facing = { x: dx, y: dy };
+    const want = !!(dx || dy);
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
-    const speed = (run ? 7.2 : 4.2) * speedOf(tile) * this.speed() * dt;
-    const nx = me.x + dx * speed;
-    const ny = me.y + dy * speed;
-    const ok = (x: number, y: number) => passable(this.w, this.l, x, y);
+    // Escala humana: una persona mide ~1,9 teselas; andar ≈ 1,6 pasos dobles por segundo.
+    const top = (run ? 6.4 : 3.2) * speedOf(tile) * this.speed();
+    // Inercia: arranca en ~0,12 s y frena en ~0,08 s.
+    const kv = 1 - Math.exp(-dt * (want ? 20 : 34));
+    this.vel.x += (dx * top - this.vel.x) * kv;
+    this.vel.y += (dy * top - this.vel.y) * kv;
+    const v = Math.hypot(this.vel.x, this.vel.y);
+    if (!want && v < 0.25) (this.vel.x = 0), (this.vel.y = 0);
+    this.playerMoving = want || v > 0.6;
+    this.playerRun = run && v > 5;
+    this.stillT = this.playerMoving ? 0 : this.stillT + dt;
+    if (!this.playerMoving && v === 0) return;
+    if (want) this.facing = { x: dx, y: dy };
+    const nx = me.x + this.vel.x * dt;
+    const ny = me.y + this.vel.y * dt;
+    const ox = me.x;
+    const oy = me.y;
+    // Si ya está dentro de un mueble (al aparecer o cargar), puede salir libremente.
+    const stuck = this.furniture.solidAt(me.x, me.y);
+    const ok = (x: number, y: number) => passable(this.w, this.l, x, y) && (stuck || !this.furniture.solidAt(x, y));
     if (ok(nx, ny)) (me.x = nx), (me.y = ny);
     else if (ok(nx, me.y)) me.x = nx;
     else if (ok(me.x, ny)) me.y = ny;
@@ -542,7 +762,17 @@ export class WorldScene {
       this.pending = this.path.length ? this.pending : null;
       if (t && at && Math.hypot(at.x - me.x, at.y - me.y) < 2.5) this.cb.onArrive(t);
     }
-    this.playerAnim += dt * (run ? 16 : 11);
+    // El paso sigue al avance real (contra una pared no se camina en el sitio) y a la
+    // zancada de este cuerpo: los pies no patinan.
+    const moved = Math.hypot(me.x - ox, me.y - oy);
+    // Al correr por tierra o camino se levanta un poco de polvo.
+    if (this.playerRun && moved > 0 && !this.reduceMotion && Math.random() < dt * 6) {
+      const tt = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
+      if (tt === T.Road || tt === T.Clay || tt === T.Sand || tt === T.Field) this.puff(me.x * TILE - this.vel.x * 2, me.y * TILE, 'rgba(176,150,112,', 0.55);
+    }
+    const pap = this.apCache.get('@player')?.ap;
+    this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
+    if (moved < 0.002 && !want) this.playerMoving = false;
   }
 
   /** Materializa los vecinos cercanos y "desmaterializa" los lejanos. */
@@ -589,17 +819,18 @@ export class WorldScene {
     const me = ensureLife(w).player;
     const keep = new Set<string>();
     const h = hourOf(ensureLife(w).clock);
-    const weather = weatherIn(w, playerRegion(w));
+    const weather = this.weatherHere();
     const out = h < 7 || h > 21 || weather === 'lluvia' || weather === 'tormenta';
     for (const v of this.l.villages) {
       const r = w.regions[v.regionId];
-      if (out || this.quality === 'baja' || r.abandoned || r.population < 800 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
-      const n = Math.min(16, Math.floor((r.population - 600) / 110) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
+      if (out || this.low || r.abandoned || r.population < 250 || Math.hypot(v.cx - me.x, v.cy - me.y) > 44) continue;
+      // Hasta en una aldea hay alguien de paso por la plaza (antes, por debajo de 800 vecinos, nadie).
+      const n = Math.min(VQ().crowd, Math.max(r.population < 500 ? 2 : 3, Math.floor((r.population - 600) / 110)) * (r.flags.hambre || r.flags.guerra ? 0.5 : 1));
       for (let i = 0; i < n; i++) {
         const id = `x:${v.regionId}:${i}`;
         keep.add(id);
         if (this.extras.has(id)) continue;
-        const p = this.plazaPoint(v.regionId, hash(id), hash(id, 1));
+        const p = this.freePlazaPoint(v.regionId, (k) => hash(id, 40 + k));
         this.extras.set(id, { ...p, path: [], tx: p.x, ty: p.y, inside: false, frame: 0, flip: false, moving: false, anim: i, dx: 0, dy: 1, act: 'pasea', facing: 'front', regionId: v.regionId, wait: hash(id, 3) * 6 });
       }
     }
@@ -613,13 +844,26 @@ export class WorldScene {
     return { x: v.cx + 0.5 + Math.cos(ang) * d, y: v.cy + 0.5 + Math.sin(ang) * d };
   }
 
+  /** Un sitio de la plaza libre de mobiliario y sin otro figurante encima (si se puede). */
+  private freePlazaPoint(regionId: number, rnd: (k: number) => number): { x: number; y: number } {
+    let p = this.plazaPoint(regionId, rnd(0), rnd(1));
+    for (let k = 1; k < 8; k++) {
+      const crowded = [...this.extras.values()].some((o) => { const q = o.path[0] ?? o; return Math.hypot(q.x - p.x, q.y - p.y) < 1.4; });
+      // (tampoco detrás de un puesto: asomaría por encima de la cabeza de quien atiende)
+      const byStall = this.l.villages[regionId].stalls.some((st) => Math.abs(st.x - p.x) < 1.3 && st.y - p.y > 0 && st.y - p.y < 1.8);
+      if (!this.furniture.solidAt(p.x, p.y) && !this.furniture.blocksPerson(p.x, p.y) && !crowded && !byStall) break;
+      p = this.plazaPoint(regionId, rnd(k * 2), rnd(k * 2 + 1));
+    }
+    return p;
+  }
+
   private moveExtras(dt: number): void {
     for (const [id, e] of this.extras) {
       if (!e.path.length) {
         e.moving = false;
         e.wait -= dt;
         if (e.wait <= 0) {
-          const p = this.plazaPoint(e.regionId, Math.random(), Math.random());
+          const p = this.freePlazaPoint(e.regionId, () => Math.random());
           e.path = [p];
           e.wait = 3 + Math.random() * 9;
           e.act = Math.random() < 0.4 ? 'charla' : 'pasea';
@@ -646,7 +890,7 @@ export class WorldScene {
     e.flip = e.dx < 0;
     e.moving = true;
     e.inside = false;
-    e.anim += dt * 11;
+    e.anim += (sp / (e.stride ?? 0.9)) * Math.PI;
   }
 
   /**
@@ -721,7 +965,109 @@ export class WorldScene {
     }
     const spot = enc.get(f.id);
     if (spot) return { ...spot, inside: false, activity: 'discute' };
-    return routineOf(this.w, f, ensureLife(this.w).clock);
+    const r = routineOf(this.w, f, ensureLife(this.w).clock);
+    // Varios oficios esperan en el mismo punto (la puerta de la forja, del salón…): cada
+    // uno se coloca un poco a su aire para no fundirse en una sola figura con tres martillos.
+    if (r.inside || f.role === 'anciano' || f.role === 'comerciante') return r;
+    return { ...r, x: r.x + (hash(f.id, 21) - 0.5) * 2.6, y: r.y + (hash(f.id, 22) - 0.5) * 0.9 };
+  }
+
+  /**
+   * Nadie se queda encima de nadie: los que están quietos (en su puesto, a la puerta de
+   * la forja, charlando) se apartan poco a poco hasta dejar un hueco mínimo entre sí,
+   * sin meterse en muebles ni en sitios por donde no se pasa.
+   */
+  /**
+   * Último paso de colocación, después de todos los empujes: nadie se queda dentro de un
+   * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
+   * pasa, se le lleva al sitio libre más cercano.
+   */
+  private vendorSpots = new Map<number, { day: number; spots: { x: number; y: number }[] }>();
+  private settle(dt: number): void {
+    const people: Ent[] = [];
+    for (const e of this.ents.values()) if (!e.inside) people.push(e);
+    for (const e of this.extras.values()) people.push(e);
+    // Quien atiende cada puesto montado (se dibuja detrás del mostrador, ver village.ts).
+    const me = ensureLife(this.w).player;
+    // (los puestos no se mueven: sus sitios se calculan una vez por pueblo, no en cada fotograma)
+    const vendors: { x: number; y: number }[] = [];
+    for (const v of this.l.villages) {
+      if (Math.abs(v.cx - me.x) >= 40 || Math.abs(v.cy - me.y) >= 40) continue;
+      // (con quien compra hoy en cada puesto: también es un sitio fijo)
+      let c = this.vendorSpots.get(v.regionId);
+      if (!c || c.day !== this.w.day) {
+        const spots: { x: number; y: number }[] = [];
+        v.stalls.slice(0, 6).forEach((st, i) => {
+          if (!stallShown(v, st)) return;
+          spots.push(vendorSpot(st));
+          const b = buyerSpot(v.regionId, i, st, this.w.day);
+          if (b) spots.push(b);
+        });
+        this.vendorSpots.set(v.regionId, (c = { day: this.w.day, spots }));
+      }
+      for (const sp of c.spots) vendors.push(sp);
+    }
+    settlePeople(people, me, this.furniture, (x, y) => passable(this.w, this.l, x, y), vendors, dt);
+  }
+
+  private separate(dt: number): void {
+    const still: Ent[] = [];
+    for (const e of this.ents.values()) if (!e.inside && !e.moving) still.push(e);
+    for (const e of this.extras.values()) if (!e.moving) still.push(e);
+    // Las figuras son estrechas y altas: dos personas «se funden» si están a menos de un
+    // cuerpo de ancho en horizontal y no muy separadas en profundidad. Se apartan de lado.
+    const WIDE = 1.05;
+    const DEEP = 1.8;
+    // Quien trabaja con azada o martillo necesita sitio para el golpe.
+    const wideOf = (e: Ent) => (/campo|siembra|cosecha|forja|martill|taller/.test(e.act ?? '') ? 1.7 : WIDE);
+    const k = Math.min(1, dt * 4);
+    for (let i = 0; i < still.length; i++)
+      for (let j = i + 1; j < still.length; j++) {
+        const a = still[i];
+        const b = still[j];
+        const dx = b.x - a.x;
+        const wide = Math.max(wideOf(a), wideOf(b));
+        if (Math.abs(dx) >= wide || Math.abs(b.y - a.y) >= DEEP) continue;
+        const sgn = dx > 0.001 ? 1 : dx < -0.001 ? -1 : i % 2 ? 1 : -1;
+        const push = ((wide - Math.abs(dx)) / 2) * k;
+        const move = (e: Ent, dir: number) => {
+          const nx = e.x + dir * push;
+          if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y)) e.x = nx;
+        };
+        move(a, -sgn);
+        move(b, sgn);
+      }
+    // Nadie se queda quieto justo detrás de algo alto (las tablas del poste de caminos, un
+    // farol): se corre de lado hasta quedar a la vista.
+    for (const e of still) {
+      if (!this.furniture.blocksPerson(e.x, e.y)) continue;
+      for (const d of [0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.5, -2.5]) {
+        const nx = e.x + d;
+        if (passable(this.w, this.l, nx, e.y) && !this.furniture.solidAt(nx, e.y) && !this.furniture.blocksPerson(nx, e.y)) {
+          e.x += (nx - e.x) * k;
+          break;
+        }
+      }
+    }
+    // Nadie se queda encima del protagonista (al llegar, o si se le para delante): el
+    // vecino se aparta del todo hacia su lado; el jugador no se mueve.
+    const me = ensureLife(this.w).player;
+    // (también quien va andando: si su camino pasa por el sitio del jugador, lo rodea)
+    const all: Ent[] = [...still];
+    for (const e of this.ents.values()) if (!e.inside && e.moving) all.push(e);
+    for (const e of this.extras.values()) if (e.moving) all.push(e);
+    for (const e of all) {
+      const dx = e.x - me.x;
+      const W = wideOf(e);
+      if (Math.abs(dx) >= W || Math.abs(e.y - me.y) >= DEEP) continue;
+      const dir = dx > 0.001 ? 1 : dx < -0.001 ? -1 : e.x * 7 % 2 > 1 ? 1 : -1;
+      const ok = (x: number) => passable(this.w, this.l, x, e.y) && !this.furniture.solidAt(x, e.y);
+      const nx = e.x + dir * (W - Math.abs(dx)) * k;
+      // (si por ese lado hay un mueble, se va por el otro)
+      const ox = e.x - dir * (W + Math.abs(dx)) * k;
+      if (ok(nx)) e.x = nx;
+      else if (ok(ox)) e.x = ox;
+    }
   }
 
   private moveFolk(dt: number): void {
@@ -736,107 +1082,10 @@ export class WorldScene {
     }
   }
 
-  private moveBirds(dt: number): void {
-    const h = hourOf(ensureLife(this.w).clock);
-    const weather = weatherIn(this.w, playerRegion(this.w));
-    const want = this.reduceMotion || this.quality === 'baja' || h < 6.5 || h > 20 || weather === 'lluvia' || weather === 'tormenta' || weather === 'nieve' ? 0 : 7;
-    const vw = this.vw / this.cam.z;
-    const vh = this.vh / this.cam.z;
-    this.birds = this.birds.filter((b) => Math.abs(b.x - this.cam.x) < vw && Math.abs(b.y - this.cam.y) < vh);
-    if (this.birds.length < want && Math.random() < dt * 0.4) {
-      const dir = Math.random() < 0.5 ? 1 : -1;
-      const y0 = this.cam.y - vh * 0.4 + Math.random() * vh * 0.5;
-      for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) this.birds.push({ x: this.cam.x - dir * (vw * 0.55 + i * 14), y: y0 + (i % 2) * 9 + i * 4, vx: dir * (55 + Math.random() * 10), ph: Math.random() * 6 });
-    }
-    for (const b of this.birds) {
-      b.x += b.vx * dt;
-      b.y += Math.sin(b.ph + b.x / 60) * 0.2;
-      b.ph += dt * 11;
-    }
-  }
-
-  private moveAnimals(dt: number): void {
-    const me = ensureLife(this.w).player;
-    for (const v of this.l.villages) {
-      const far = Math.hypot(v.cx - me.x, v.cy - me.y) > 60;
-      if (far) {
-        this.animals.delete(v.regionId);
-        continue;
-      }
-      let list = this.animals.get(v.regionId);
-      if (!list) {
-        list = this.spawnAnimals(v.regionId);
-        this.animals.set(v.regionId, list);
-      }
-      for (const a of list) {
-        const d = Math.hypot(a.tx - a.x, a.ty - a.y);
-        if (d < 0.2) {
-          if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
-            const R = a.kind === 'perro' ? 14 : a.kind === 'caballo' ? 4 : a.water ? 3 : 8;
-            a.tx = a.hx + (Math.random() - 0.5) * R;
-            a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
-            const tt = this.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
-            const ok = a.water ? tt === 2 || tt === 1 || tt === 10 : passable(this.w, this.l, a.tx, a.ty);
-            if (!ok) (a.tx = a.x), (a.ty = a.y);
-          }
-          continue;
-        }
-        const sp = Math.min(d, ({ ciervo: 1.6, perro: 2.2, caballo: 0.8, pato: 0.5 } as Record<string, number>)[a.kind] ?? 0.7) * dt;
-        a.x += ((a.tx - a.x) / d) * sp;
-        a.y += ((a.ty - a.y) / d) * sp;
-        a.flip = a.tx < a.x;
-        a.anim += dt * 6;
-      }
-    }
-  }
-
-  /** Los rebaños crecen o menguan con la comida y la salud de la tierra. */
-  private spawnAnimals(regionId: number): Animal[] {
-    const w = this.w;
-    const r = w.regions[regionId];
-    const v = this.l.villages[regionId];
-    const food = r.isHome ? w.player.reserves / 5 : r.food;
-    const plenty = r.flags.hambre ? 0.25 : Math.min(1.2, 0.4 + food / 20) * (0.5 + r.ecology * 0.6);
-    const out: Animal[] = [];
-    const herd = (kind: Animal['kind'], n: number, cx: number, cy: number) => {
-      for (let i = 0; i < Math.round(n * plenty); i++) {
-        const x = cx + (hash(`${regionId}${kind}`, i) - 0.5) * 6;
-        const y = cy + (hash(`${regionId}${kind}`, i + 50) - 0.5) * 5;
-        if (!passable(w, this.l, x, y)) continue;
-        out.push({ kind, x, y, hx: cx, hy: cy, tx: x, ty: y, flip: hash(`${regionId}${kind}`, i + 9) < 0.5, anim: i, v: i });
-      }
-    };
-    const field = v.fields[0] ?? { x: v.cx + 10, y: v.cy + 8, w: 4, h: 4 };
-    const pasture = { x: field.x + field.w + 4, y: field.y + 2 };
-    if (r.resource === 'lana') herd('oveja', 12, pasture.x, pasture.y);
-    else if (r.resource === 'grano' || r.isHome) herd('vaca', 4, pasture.x, pasture.y);
-    else herd('vaca', 2, pasture.x, pasture.y);
-    herd('gallina', 5, v.cx + v.plazaR + 3, v.cy + v.plazaR + 1);
-    if ((r.resource === 'hierbas' || r.resource === 'ambar') && r.ecology > 0.55) herd('ciervo', 3, v.cx + 26, v.cy - 18);
-    // Caballos junto al establo y perros por las calles.
-    const stable = v.keys.find((k) => k.kind === 'establo');
-    if (stable) herd('caballo', 2.6, stable.x + stable.w / 2, stable.y + stable.h + 2);
-    for (let i = 0; i < (r.population > 700 ? 2 : 1); i++) {
-      const x = v.cx + 0.5 + (hash(`${regionId}perro`, i) - 0.5) * 8;
-      const y = v.cy + v.plazaR + 1.5;
-      if (passable(w, this.l, x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
-    }
-    // Patos donde hay agua cerca.
-    for (let k = 0; k < 40; k++) {
-      const x = v.cx + 0.5 + (hash(`${regionId}pato`, k) - 0.5) * 50;
-      const y = v.cy + 0.5 + (hash(`${regionId}pato`, k + 99) - 0.5) * 50;
-      const tt = this.l.terrain.tiles[idx(Math.floor(x), Math.floor(y))];
-      if (tt !== 2 && tt !== 10) continue;
-      for (let i = 0; i < 3; i++) out.push({ kind: 'pato', x: x + i * 0.4, y: y + (i % 2) * 0.3, hx: x, hy: y, tx: x, ty: y, flip: i % 2 === 0, anim: i, water: true, v: i });
-      break;
-    }
-    return out;
-  }
-
   // -------------------------------------------------------------------------
   // Objetivos de interacción
   // -------------------------------------------------------------------------
-  private targetPos(t: Target): { x: number; y: number } | undefined {
+  targetPos(t: Target): { x: number; y: number } | undefined {
     const w = this.w;
     const life = ensureLife(w);
     switch (t.kind) {
@@ -908,7 +1157,7 @@ export class WorldScene {
         const label = b.kind === 'hogar' && id?.mode === 'forastero' && !id.housed ? 'Casa vacía' : BUILDING_LABEL[b.kind];
         consider({ kind: 'building', regionId: v.regionId, building: b.kind, label }, d.x, d.y, radius * 0.9);
       }
-      consider({ kind: 'signpost', regionId: v.regionId, label: 'Cruce de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
+      consider({ kind: 'signpost', regionId: v.regionId, label: 'Poste de caminos' }, v.sign.x + 1.2, v.sign.y, radius * 0.8);
     }
     this.l.posts.forEach((p, i) => consider({ kind: 'post', index: i, label: 'Puesto fronterizo' }, p.x, p.y, radius * 1.3));
     for (const cv of convoyPositions(w)) consider({ kind: 'convoy', id: cv.c.id, label: cv.c.status === 'atacada' ? 'Una carreta volcada' : cv.c.kind === 'jugador' ? 'Tu carreta' : `Caravana de ${cv.c.ownerName}` }, cv.x, cv.y, radius * 1.4);
@@ -942,42 +1191,64 @@ export class WorldScene {
     const life = ensureLife(w);
     const g = this.g;
     const z = this.cam.z;
-    // El mundo se dibuja a 1 píxel de arte por píxel de mundo en un lienzo
-    // intermedio y se amplía sin suavizado: todo comparte la misma rejilla.
-    const bw = Math.ceil(this.vw / z) + 2;
-    const bh = Math.ceil(this.vh / z) + 2;
-    if (this.buf.width < bw || this.buf.height < bh || this.buf.width > bw + 160 || this.buf.height > bh + 160) {
-      this.buf.width = bw + 48;
-      this.buf.height = bh + 48;
-    }
-    const ox = Math.floor(this.cam.x - this.vw / 2 / z);
-    const oy = Math.floor(this.cam.y - this.vh / 2 / z);
+    // El mundo se dibuja directamente a la resolución de la pantalla, con
+    // suavizado: las texturas pintadas se ven nítidas a cualquier zoom.
+    nextFrame();
+    const dz = this.dpr * z;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#2f5468';
-    g.fillRect(0, 0, bw, bh);
-    g.setTransform(1, 0, 0, 1, -ox, -oy);
-    g.imageSmoothingEnabled = false;
-
+    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // El trueno sacude un instante la cámara (2–3 px), salvo con movimiento reducido.
+    const shake = !this.reduceMotion && this.wfx.flash > 0.55 ? (this.wfx.flash - 0.55) * 6 : 0;
+    const sx = shake ? (Math.random() - 0.5) * shake : 0;
+    const sy = shake ? (Math.random() - 0.5) * shake : 0;
+    g.setTransform(dz, 0, 0, dz, this.dpr * (this.vw / 2 - this.cam.x * z + sx), this.dpr * (this.vh / 2 - this.cam.y * z + sy));
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'low';
+    this.sun = sunAt(hourOf(life.clock), this.weatherHere());
+    this.shadowQ = [];
+    this.groundQ = [];
+    this.heads.length = 0;
+    this.faces.length = 0;
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
     const y1 = this.cam.y + this.vh / 2 / z;
-    const season = seasonOf(w.day);
-    const weather = weatherIn(w, playerRegion(w));
+    // Estación y tiempo se deciden una vez por fotograma; el resto del dibujo los lee de aquí.
+    const season = (this.seasonFrame = seasonOf(w.day));
+    const weather = this.weatherHere();
+    this.wxFrame = weather;
     const look = (season === 'invierno' || weather === 'nieve' ? 'invierno' : season) as S.SeasonLook;
+    // Dónde nieva ahora (el suelo se cubre por regiones).
+    // (una vez por segundo basta: el tiempo de cada región cambia por horas)
+    if (t - this.snowCheck > 1000 || this.snowWeather !== weather) {
+      this.snowCheck = t;
+      this.snowWeather = weather;
+      const snowNow = this.chunks.snowing;
+      snowNow.clear();
+      const pr = playerRegion(w);
+      w.regions.forEach((_, i) => {
+        if ((i === pr ? weather : weatherIn(w, i)) === 'nieve') snowNow.add(i);
+      });
+    }
     const stateKey = this.chunks.stateKey(season);
     const CPX = CHUNK * TILE;
     const cx0 = Math.max(0, Math.floor(x0 / CPX));
     const cy0 = Math.max(0, Math.floor(y0 / CPX));
     const cx1 = Math.floor(x1 / CPX);
     const cy1 = Math.floor(y1 / CPX);
-    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX, cy * CPX);
-    if (weather === 'nieve' || w.regions.some((r) => r.flags.invierno)) {
-      g.fillStyle = 'rgba(240,245,250,0.32)';
-      g.fillRect(x0, y0, x1 - x0, y1 - y0);
-    }
+    // Caben los fragmentos visibles y un anillo alrededor (nunca se desaloja uno que se ve).
+    this.chunks.capacity = (cx1 - cx0 + 3) * (cy1 - cy0 + 3) + 1;
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(this.chunks.get(cx, cy, season, stateKey), cx * CPX - PAD, cy * CPX - PAD, CPX + PAD * 2, CPX + PAD * 2);
+    // Si este fotograma no ha tenido que pintar suelo, se adelanta un vecino (hacia donde se camina).
+    if (this.chunks.paints === this.paintsSeen) this.chunks.prewarm(Math.floor(this.cam.x / CPX), Math.floor(this.cam.y / CPX), Math.sign(this.vel.x), Math.sign(this.vel.y), season, stateKey);
+    this.paintsSeen = this.chunks.paints;
 
+    // Suelo mojado: más oscuro, con charcos que reflejan y ondas de lluvia.
+    if (weather === 'lluvia' || weather === 'tormenta') drawWet(this, g, x0, y0, x1, y1, t, weather === 'tormenta');
     const items: Drawable[] = [];
+    const reg0 = playerRegion(w);
+    const snowyHere = reg0 >= 0 && this.chunks.snowyRegion(reg0, season);
     this.lights = [];
     this.folkById.clear();
     for (const f of life.folk) if (f.alive) this.folkById.set(f.id, f);
@@ -991,18 +1262,18 @@ export class WorldScene {
       for (let cx = cx0; cx <= cx1; cx++)
         for (const o of this.chunks.objectsOf(cx, cy)) {
           if (!inView(o.x, o.y)) continue;
-          items.push({ y: o.y, draw: () => this.drawStatic(o, look) });
+          this.drawStatic(o, look, t, snowyHere, items);
         }
 
     // Pueblos.
     for (const v of this.l.villages) {
       if (!inView(v.cx * TILE, v.cy * TILE, 34 * TILE)) continue;
-      this.villageDrawables(v.regionId, items, inView, t, cold);
+      villageDrawables(this, v.regionId, items, inView, t, cold);
     }
     // Puestos fronterizos, campamentos de guerra y soldados.
     this.l.posts.forEach((p) => {
       if (!inView(p.x * TILE, p.y * TILE, 200)) return;
-      this.postDrawables(p, items, t);
+      postDrawables(this, p, items, t);
     });
     // Lugares.
     for (const p of this.l.places) {
@@ -1017,83 +1288,208 @@ export class WorldScene {
       if (!inView(it.x * TILE, it.y * TILE)) continue;
       if (it.id === 'cabana') {
         const st = this.styleOf(w.player.home);
-        items.push({ y: (it.y + 1) * TILE, draw: () => S.drawSprite(g, S.house(st, 'abandonada', 1, 4), it.x * TILE, (it.y + 1) * TILE) });
+        const ct = houseTex(st, 'abandonada', 1, 4, 0.2);
+        items.push({ y: (it.y + 1) * TILE, draw: () => put(g, ct, it.x * TILE, (it.y + 1) * TILE) });
       } else items.push({ y: it.y * TILE, draw: () => S.drawSprite(g, S.prologueProp(it.id as 'mochila'), it.x * TILE, it.y * TILE) });
     }
     // Caminantes de los caminos: caravanas, refugiados, soldados en marcha, viajeros.
-    this.roadTraffic(items, inView, t);
+    roadTraffic(this, items, inView, t);
     // Vecinos: figura completa cerca, simplificada a media distancia, silueta lejos.
+    const anvils: { x: number; y: number }[] = [];
     for (const [id, e] of this.ents) {
       if (e.inside || !inView(e.x * TILE, e.y * TILE)) continue;
       const f = this.folkById.get(id);
       if (!f) continue;
-      const ap = this.dress(this.apOf(f), wet, cold);
-      const pose = this.entPose(id, e, f, sec, wet, cold);
-      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
+      const ap = this.dress(apOf(this, f), wet, cold);
+      e.stride = strideOf(ap, false);
+      const pose = entPose(this, id, e, f, sec, wet, cold);
+      // Un yunque por forja: quien llega después a la misma ayuda acarreando, no forma una fila de yunques.
+      if (pose.action === 'hammer' && anvils.some((a) => Math.abs(a.x - e.x) < 4 && Math.abs(a.y - e.y) < 2)) {
+        // (con un saco tendido parecían ofrecérselo al herrero: mejor mirar el golpe, de brazos cruzados)
+        pose.action = 'cross';
+        pose.facing = 'side';
+        const smith = anvils.find((a) => Math.abs(a.x - e.x) < 4 && Math.abs(a.y - e.y) < 2)!;
+        pose.flip = smith.x < e.x;
+      }
+      // Quien golpea el yunque lleva el mandil de cuero del oficio, sea cual sea su papel en el pueblo.
+      this.pushPerson(items, pose.action === 'hammer' ? this.smithAp(ap) : ap, pose, e.x * TILE, e.y * TILE);
+      if (pose.action === 'hammer') {
+        anvils.push(e);
+        // El yunque delante, donde cae el martillo.
+        const ax = e.x * TILE + (pose.flip ? -12 : 12);
+        const ay = e.y * TILE + 1;
+        const an = anvilTex();
+        this.shadowQ.push(() => contactShadow(g, ax, ay, 9, 2.5, 0.4));
+        // La pieza al rojo sobre el yunque y, en cada golpe, un abanico de chispas.
+        const c = (pose.t * 1.3 + ap.seed * 0.1) % 1;
+        const strike = Math.floor(pose.t * 1.3 + ap.seed * 0.1);
+        // La pieza al rojo alumbra al herrero y al yunque (más en cada golpe).
+        this.lights.push({ x: ax, y: ay - 14, r: 34, k: c > 0.8 && c < 0.97 ? 0.75 : 0.5 });
+        items.push({ y: ay, draw: () => {
+          put(g, an, ax, ay);
+          if (this.low) return;
+          const hx = ax + (pose.flip ? 2 : -2);
+          const hy = ay - 14;
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          // Pieza al rojo: una barra fina que va del rojo oscuro (lado de las tenazas) al amarillo
+          // de la punta, con un halo pequeño; y unas pavesas que suben siempre.
+          const dir = pose.flip ? 1 : -1;
+          // (de día también: un resplandor que tiñe la cara del yunque y la mano del herrero)
+          const glow = g.createRadialGradient(hx, hy, 0, hx, hy, 15);
+          glow.addColorStop(0, 'rgba(255,140,40,0.5)');
+          glow.addColorStop(0.35, 'rgba(255,110,30,0.18)');
+          glow.addColorStop(1, 'rgba(255,90,20,0)');
+          g.fillStyle = glow;
+          g.fillRect(hx - 15, hy - 15, 30, 30);
+          g.globalCompositeOperation = 'source-over';
+          const bar = g.createLinearGradient(hx - dir * 5, hy, hx + dir * 4, hy);
+          bar.addColorStop(0, '#5a1a0c');
+          bar.addColorStop(0.45, '#d4401a');
+          bar.addColorStop(1, '#ffe08a');
+          g.strokeStyle = bar;
+          g.lineCap = 'round';
+          g.lineWidth = 1.8;
+          g.beginPath();
+          g.moveTo(hx - dir * 5, hy + 0.4);
+          g.lineTo(hx + dir * 4, hy - 0.2);
+          g.stroke();
+          g.globalCompositeOperation = 'lighter';
+          // Pavesas: suben derivando y se apagan, como trazos cortos (en columna y redondas se leían
+          // como luciérnagas).
+          g.lineCap = 'round';
+          g.lineWidth = 0.8;
+          for (let i = 0; i < 4; i++) {
+            const u = (pose.t * 0.55 + hash(`${i}`, 3)) % 1;
+            const drift = (hash(`${i}`, 5) - 0.5) * 14 * u + Math.sin(u * 5 + i * 2) * 1.5;
+            const x = hx + (hash(`${i}`, 7) - 0.5) * 6 + drift;
+            const y = hy - 2 - u * 15;
+            g.strokeStyle = `rgba(255,${150 + i * 20},60,${(0.9 * (1 - u) * (1 - u)).toFixed(2)})`;
+            g.beginPath();
+            g.moveTo(x, y);
+            g.lineTo(x - drift * 0.08, y + 1.4);
+            g.stroke();
+          }
+          if (c > 0.8 && c < 0.97) {
+            const k = (c - 0.8) / 0.17;
+            g.lineWidth = 1.2;
+            g.lineCap = 'round';
+            for (let i = 0; i < 9; i++) {
+              const a = -Math.PI * (0.1 + 0.8 * hash(`${strike}`, i)) ;
+              const r0 = 2 + k * (6 + hash(`${strike}`, i + 9) * 10);
+              const x = hx + Math.cos(a) * r0;
+              const y = hy + Math.sin(a) * r0 + k * k * 6;
+              g.strokeStyle = `rgba(255,${190 + i * 8},90,${(1 - k).toFixed(2)})`;
+              g.beginPath();
+              g.moveTo(x, y);
+              g.lineTo(x - Math.cos(a) * 3.2, y - Math.sin(a) * 3.2);
+              g.stroke();
+            }
+          }
+          g.restore();
+        } });
+      }
     }
     // Gentío de las ciudades grandes.
     for (const [id, e] of this.extras) {
       if (!inView(e.x * TILE, e.y * TILE)) continue;
-      const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'pastor', 'comerciante'];
+      // (sin pastores: en el gentío de una ciudad, tanto cayado se leía como una procesión)
+      const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'artesano', 'comerciante'];
       const ap = this.dress(this.extraAp(id, e.regionId, roles[Math.floor(hash(id, 4) * roles.length)], 14 + Math.floor(hash(id, 5) * 50)), wet, cold);
-      const pose = this.entPose(id, e, undefined, sec, wet, cold);
-      items.push({ y: e.y * TILE, draw: () => drawHuman(g, ap, pose, e.x * TILE, e.y * TILE) });
+      e.stride = strideOf(ap, false);
+      const pose = entPose(this, id, e, undefined, sec, wet, cold);
+      this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
     }
     // Mensajeros esperando ante tu salón.
     for (const m of this.messengers()) {
       const ap = this.extraAp(`m:${m.id}`, m.regionId, 'exploradora', 30, (a) => (a.outfit.item = 'saco'));
-      const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet, heavy: cold };
-      items.push({ y: m.y * TILE, draw: () => drawHuman(g, ap, pose, m.x * TILE, m.y * TILE) });
+      const pose: Pose = { facing: 'front', flip: false, phase: 0, action: Math.floor(sec / 3 + m.x) % 3 === 0 ? 'look' : 'idle', t: sec + m.x, expr: 'preocupado', lod: this.lodAt(m.x, m.y), hood: wet || cold, heavy: cold };
+      this.pushPerson(items, ap, pose, m.x * TILE, m.y * TILE);
     }
     // Animales.
     for (const list of this.animals.values())
       for (const a of list) {
         if (!inView(a.x * TILE, a.y * TILE)) continue;
         const moving = Math.hypot(a.tx - a.x, a.ty - a.y) > 0.2;
-        items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => S.drawSprite(g, S.animal(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.flip, a.v), a.x * TILE, a.y * TILE) });
+        items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => put(g, animalTex(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.v), a.x * TILE, a.y * TILE, a.flip) });
       }
     // Jugador.
     const me = life.player;
-    const pap = this.dress(this.playerAp(darkness(life.clock) > 0.3), wet, cold);
-    const ppose = this.playerPose(sec, wet, cold);
-    items.push({ y: me.y * TILE, draw: () => drawHuman(g, pap, ppose, me.x * TILE, me.y * TILE) });
-    if (darkness(life.clock) > 0.3) this.lights.push({ x: me.x * TILE + (ppose.flip ? -10 : 10), y: me.y * TILE - 14, r: 72, k: 1 });
+    const pap = this.dress(playerAp(this, darkness(life.clock) > 0.3), wet, cold);
+    const ppose = playerPose(this, sec, wet, cold);
+    this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
+    if (darkness(life.clock) > 0.3) {
+      // Junto a una farola, el farol de mano casi no se nota (dos focos pegados se leían como un error).
+      const byLamp = this.l.villages.some((v) => Math.abs(v.cx - me.x) < v.plazaR + 4 && Math.abs(v.cy - me.y) < v.plazaR + 4 && v.lamps.some((lp) => Math.hypot(lp.x - me.x, lp.y - me.y) < 2.6));
+      this.lights.push({ x: me.x * TILE + (ppose.flip ? -3.5 : 3.5), y: me.y * TILE - 11, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
+    }
 
+    // Las sombras van antes que todo lo que se alza sobre el suelo.
+    for (const gq of this.groundQ) gq();
+    for (const sh of this.shadowQ) sh();
     items.sort((a, b) => a.y - b.y);
+    this.playerHidden = false;
+    this.hiddenBy = '';
     for (const it of items) it.draw();
+    this.hudRule();
+    if (this.playerHidden) this.hiddenBy = 'árbol';
+    // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)? Primero el
+    // rectángulo y, si el sprite lo sabe, sus píxeles: el aire junto al tejado no tapa.
+    const covers = (at: (x: number, y: number) => number, px: number, py: number) => [[0, -10], [0, -18], [-3, -14], [3, -14], [0, -24]].some(([dx, dy]) => at(px + dx, py + dy) > 0.5);
+    {
+      const px = me.x * TILE;
+      const py = me.y * TILE;
+      for (const it of items)
+        if (it.box && it.y > py && it.box.x0 < px + 6 && it.box.x1 > px - 6 && it.box.y0 < py - 8 && it.box.y1 > py - 28 && (!it.solidAt || covers(it.solidAt, px, py))) {
+          this.playerHidden = true;
+          this.hiddenBy = `box ${Math.round(it.box.x0)},${Math.round(it.box.y0)}-${Math.round(it.box.x1)},${Math.round(it.box.y1)} y=${Math.round(it.y)}`;
+          break;
+        }
+    }
+    // Si el follaje tapa al protagonista, se le sigue viendo en transparencia (no se pierde nunca).
+    if (this.playerHidden) {
+      g.save();
+      // (a 0,5 la copa de un cerezo en flor lo dejaba lavado de rosa)
+      g.globalAlpha = 0.8;
+      drawFigure(g, pap, ppose, me.x * TILE, me.y * TILE);
+      g.restore();
+    }
 
     this.drawParticles(g, t);
-    this.drawBirds(g);
-    this.drawMarkers(g, t);
-    // Lluvia, nieve y viento en la misma rejilla de píxeles que el mundo.
+    drawBirds(this, g);
+    drawMarkers(this, g, t);
+    // Lluvia, nieve y viento, en coordenadas de pantalla.
     {
       const dt = this.lastDraw ? Math.min(0.1, (t - this.lastDraw) / 1000) : 1 / 60;
       this.lastDraw = t;
-      g.setTransform(1, 0, 0, 1, 0, 0);
-      this.wfx.draw(g, weather, bw, bh, t, this.paused && !this.converseId ? 0 : dt, this.reduceMotion);
+      g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      // Las partículas se desplazan con el mundo cuando se mueve la cámara.
+      const cdx = (this.lastCam.x - this.cam.x) * z;
+      const cdy = (this.lastCam.y - this.cam.y) * z;
+      this.lastCam = { x: this.cam.x, y: this.cam.y };
+      this.wfx.draw(g, weather, this.vw, this.vh, t, this.paused && !this.converseId ? 0 : dt, this.reduceMotion, Math.abs(cdx) < 50 ? cdx : 0, Math.abs(cdy) < 50 ? cdy : 0);
     }
-
-    // Ampliación a pantalla (vecino más próximo) con el resto de subpíxel para un desplazamiento suave.
     const sg = this.screen;
-    {
-      const sc = z * this.dpr;
-      const fx = this.cam.x - this.vw / 2 / z - ox;
-      const fy = this.cam.y - this.vh / 2 / z - oy;
-      sg.setTransform(1, 0, 0, 1, 0, 0);
-      sg.imageSmoothingEnabled = false;
-      sg.drawImage(this.buf, 0, 0, bw, bh, Math.round(-fx * sc), Math.round(-fy * sc), bw * sc, bh * sc);
-    }
     this.drawScreen(sg, t, weather, life);
   }
 
   /** Capa de pantalla: luz del día, noche, clima, joystick, etiquetas. */
   private drawScreen(g: CanvasRenderingContext2D, t: number, weather: string, life: ReturnType<typeof ensureLife>): void {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawGrade(g, hourOf(life.clock), weather);
-    this.drawNight(g);
-    this.drawWeather(g, weather, t);
-    this.drawLabels(g);
-    this.drawEdgeArrows(g, t);
+    // darkness() llega a 0,62 en plena noche (lo usa también la simulación): aquí, de 0 a 1.
+    const nightK = Math.min(1, darkness(life.clock) / 0.62);
+    drawGrade(g, hourOf(life.clock), weather, this.vw, this.vh, nightK > 0.01);
+    this.lighting.night(g, weather, nightK, this.lights, this.cam, this.vw, this.vh);
+    drawLabels(this, g);
+    drawEdgeArrows(this, g, t);
+    const cine = this.cineAmount();
+    if (cine > 0) {
+      // Franjas de cine (2,35:1 aproximado) que entran y salen.
+      const bar = this.vh * 0.11 * cine;
+      g.fillStyle = '#0b0806';
+      g.fillRect(0, 0, this.vw, bar);
+      g.fillRect(0, this.vh - bar, this.vw, bar);
+    }
     if (this.joy) {
       g.fillStyle = 'rgba(243,232,207,0.18)';
       g.strokeStyle = 'rgba(243,232,207,0.5)';
@@ -1102,6 +1498,14 @@ export class WorldScene {
       g.arc(this.joy.bx, this.joy.by, 56, 0, Math.PI * 2);
       g.fill();
       g.stroke();
+      // Anillo interior: dentro se camina; al cruzarlo, se corre (se ilumina).
+      g.strokeStyle = this.joyRun ? 'rgba(231,199,126,0.95)' : 'rgba(243,232,207,0.28)';
+      g.lineWidth = this.joyRun ? 3 : 1.5;
+      g.setLineDash([4, 5]);
+      g.beginPath();
+      g.arc(this.joy.bx, this.joy.by, 46, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
       const dx = this.joy.x - this.joy.bx;
       const dy = this.joy.y - this.joy.by;
       const len = Math.min(56, Math.hypot(dx, dy));
@@ -1113,38 +1517,43 @@ export class WorldScene {
     }
   }
 
-  private drawStatic(o: StaticObject, look: S.SeasonLook): void {
+  /** Árboles, matorrales, hierba alta, flores, juncos y rocas (pintados), con su sombra. */
+  private drawStatic(o: StaticObject, look: S.SeasonLook, t: number, snowy: boolean, items: Drawable[]): void {
     const g = this.g;
     const r = o.region >= 0 ? this.w.regions[o.region] : undefined;
+    const sec = t / 1000;
+    const wind = this.wxFrame === 'viento' || this.wxFrame === 'tormenta' ? 1 : 0.2;
     switch (o.kind) {
       case 'arbol': {
-        let kind: S.TreeKind = o.tree ?? 'roble';
+        let kind: TreeKind = (o.tree ?? 'roble') as TreeKind;
         // Un ecosistema degradado deja árboles muertos.
         if (r && r.ecology < 0.42 && o.v % 3 !== 0) kind = 'muerto';
-        S.drawSprite(g, S.tree(kind, look, o.v), o.x, o.y);
+        const sun = this.sun;
+        this.shadowQ.push(() => drawTreeShadow(g, kind, look, o.v, o.x, o.y, sun, snowy));
+        const me = ensureLife(this.w).player;
+        const focus = { x: me.x * TILE, y: me.y * TILE };
+        items.push({ y: o.y, draw: () => void (drawTree(g, kind, look, o.v, o.x, o.y, sec, wind, snowy, focus) && (this.playerHidden = true)) });
         break;
       }
       case 'arbusto':
-        S.drawSprite(g, S.tree('arbusto', look, o.v), o.x, o.y);
-        break;
       case 'junco':
       case 'hierba':
       case 'flores':
-        S.drawSprite(g, S.tree(o.kind, look, o.v), o.x, o.y);
-        break;
       case 'roca':
-        S.drawSprite(g, S.rock(o.v, look === 'invierno'), o.x, o.y);
+        // En los niveles bajos se pinta menos hierba alta y flores (las rocas, siempre).
+        if (o.kind !== 'roca' && ((o.v * 2654435761) >>> 0) % 1000 > VQ().grass * 1000) break;
+        items.push({ y: o.y, draw: () => drawSmall(g, o.kind as SmallKind, look, o.v, o.x, o.y, sec, snowy) });
         break;
       case 'pico':
-        S.drawSprite(g, S.peak(o.v), o.x, o.y);
+        items.push({ y: o.y, draw: () => S.drawSprite(g, S.peak(o.v), o.x, o.y) });
         break;
       case 'mojon':
-        S.drawSprite(g, S.boundaryStone(), o.x, o.y);
+        items.push({ y: o.y, draw: () => S.drawSprite(g, S.boundaryStone(), o.x, o.y) });
         break;
     }
   }
 
-  private hueOf(regionId: number): number {
+  hueOf(regionId: number): number {
     const r = this.w.regions[regionId];
     return (r.isHome ? PLAYER_CULTURE : CULTURES.find((c) => c.id === r.culture) ?? PLAYER_CULTURE).hue;
   }
@@ -1167,10 +1576,20 @@ export class WorldScene {
         if (!walkable(this.l.terrain.tiles[k]) || this.l.blocked[k]) continue;
         const hx = tx * TILE;
         const hy = ty * TILE;
-        const spr = st.state === 'ruinas' ? S.placeSprite('ruinas') : st.tier === 'campamento' && st.state === 'vivo' ? S.tent(style.roof) : S.house(style, st.state === 'abandonado' ? 'abandonada' : 'normal', Math.floor(hash(st.id, i + 9) * 3), 3 + (i % 2));
-        items.push({ y: hy, draw: () => S.drawSprite(g, spr, hx, hy) });
+        if (st.state === 'ruinas' || (st.tier === 'campamento' && st.state === 'vivo')) {
+          if (st.state === 'ruinas') {
+            const spr = S.placeSprite('ruinas');
+            items.push({ y: hy, draw: () => S.drawSprite(g, spr, hx, hy) });
+          } else {
+            const tt = tentTex(style.roof);
+            items.push({ y: hy, draw: () => put(g, tt, hx, hy) });
+          }
+        } else {
+          const ht = houseTex(style, st.state === 'abandonado' ? 'abandonada' : 'normal', Math.floor(hash(st.id, i + 9) * 3), 3 + (i % 2), 0.4);
+          items.push({ y: hy, draw: () => put(g, ht, hx, hy) });
+        }
       }
-      if (st.state === 'vivo' && st.tier !== 'campamento') items.push({ y: (st.y + 0.5) * TILE, draw: () => S.drawSprite(g, S.prop('pozo'), st.x * TILE, (st.y + 0.5) * TILE) });
+      if (st.state === 'vivo' && st.tier !== 'campamento') items.push({ y: (st.y + 0.5) * TILE, draw: () => put(g, propTex('pozo'), st.x * TILE, (st.y + 0.5) * TILE) });
     }
     for (const p of a.pois) {
       if (!inView(p.x * TILE, p.y * TILE)) continue;
@@ -1179,334 +1598,18 @@ export class WorldScene {
     }
   }
 
-  private styleOf(regionId: number): S.Style {
+  styleOf(regionId: number): S.Style {
     const r = this.w.regions[regionId];
     return S.styleFor(r.isHome ? 'eco' : r.culture, this.hueOf(regionId));
   }
 
-  private villageDrawables(regionId: number, items: Drawable[], inView: (x: number, y: number, m?: number) => boolean, t: number, cold: boolean): void {
-    const w = this.w;
-    const g = this.g;
-    const life = ensureLife(w);
-    const v = this.l.villages[regionId];
-    const r = w.regions[regionId];
-    const town = life.towns[regionId];
-    const st = this.styleOf(regionId);
-    const hue = this.hueOf(regionId);
-    const night = darkness(life.clock) > 0.3;
-    const built = Math.min(v.houses.length, town?.houses ?? 3);
-    const target = housesFor(w, regionId);
-    const abandonedFrom = built - (town?.abandoned ?? 0);
-    v.houses.forEach((b, i) => {
-      if (i > built || (i === built && target <= built)) return;
-      const bx = (b.x + b.w / 2) * TILE;
-      const by = (b.y + b.h) * TILE;
-      if (!inView(bx, by)) return;
-      const state: S.HouseState = i === built ? 'obra' : town?.burned.includes(i) ? 'quemada' : i >= abandonedFrom ? 'abandonada' : 'normal';
-      // De noche, las ventanas de las casas habitadas se encienden (no todas a la vez).
-      const lit = state === 'normal' && night && (hash(`${regionId}:${i}`) < 0.82 || hourOf(life.clock) < 23);
-      const wins = st.shape === 'redondo' ? [{ x: -b.w * 8 + 10, y: -32, w: 11, h: 11 }] : S.houseWindows(b.w);
-      if (lit) for (const wn of wins) this.lights.push({ x: bx + wn.x + wn.w / 2, y: by + wn.y + wn.h / 2, r: 20, k: 0.8 });
-      items.push({
-        y: by,
-        draw: () => {
-          S.drawSprite(g, S.house(st, state, i % 3, b.w), bx, by);
-          if (lit) for (const wn of wins) this.litWindow(bx + wn.x, by + wn.y, wn.w, wn.h, t + i * 300);
-        },
-      });
-      if (state === 'quemada' && !this.reduceMotion && Math.random() < 0.06) this.puff(bx, by - 50, 'rgba(60,55,50,', 2);
-      if (state === 'normal' && st.shape !== 'redondo' && !this.reduceMotion && Math.random() < 0.006 && (hourOf(life.clock) < 9 || hourOf(life.clock) > 17 || cold)) this.puff(bx + b.w * 8 - 17.5 - (i % 3 % 2) * 20, by - 96, 'rgba(205,205,205,', 1.1);
-    });
-    const food = r.isHome ? w.player.reserves / 5 : r.food;
-    for (const b of v.keys) {
-      if (!this.buildingExists(regionId, b.kind)) continue;
-      const bx = (b.x + b.w / 2) * TILE;
-      const by = (b.y + b.h) * TILE;
-      if (!inView(bx, by)) continue;
-      const extra = b.kind === 'almacen' ? (food < 4 ? 'vacio' : '') : b.kind === 'salon' ? `hsl(${hue} 55% 45%)` : '';
-      items.push({ y: by, draw: () => S.drawSprite(g, S.keyBuilding(b.kind, st, extra), bx, by) });
-      if (night && (b.kind === 'posada' || b.kind === 'salon' || b.kind === 'templo' || b.kind === 'hogar')) this.lights.push({ x: bx, y: by - 20, r: b.kind === 'posada' ? 42 : 30, k: 0.85 });
-      if (b.kind === 'forja') {
-        const working = hourOf(life.clock) > 8 && hourOf(life.clock) < (r.militancy > 0.55 ? 23 : 18);
-        if (working) this.lights.push({ x: bx - 14, y: by - 14, r: 34, k: 0.9 });
-        if (working && !this.reduceMotion && Math.random() < (r.militancy > 0.55 ? 0.14 : 0.05)) this.puff(bx + 16, by - 96, 'rgba(70,65,60,', 1.6);
-      }
-    }
-    // Mobiliario: bancos, faroles, fuente, barriles, carros, heno…
-    for (const pr of v.props) {
-      const px = pr.x * TILE;
-      const py = pr.y * TILE;
-      if (!inView(px, py)) continue;
-      items.push({ y: py, draw: () => S.drawSprite(g, S.prop(pr.kind, pr.v), px, py) });
-    }
-    if (night) for (const lp of v.lamps) {
-      const px = lp.x * TILE;
-      const py = lp.y * TILE + 9; // cabeza del farol (el farol mide ~43 px)
-      if (!inView(px, py)) continue;
-      this.lights.push({ x: px, y: py, r: 36, k: 0.95 });
-      items.push({ y: py + 39, draw: () => this.flame(px, py, t) });
-    }
-    // Mercado: lo que hay se ve en los puestos; los que cierran, se quedan vacíos.
-    const look = marketLook(w, regionId);
-    v.stalls.slice(0, Math.min(v.stalls.length, 6)).forEach((s, i) => {
-      const stallGoods = look.stalls[i];
-      if (stallGoods === undefined) return; // sin comerciante: no hay puesto
-      const open = stallGoods.length > 0;
-      items.push({ y: s.y * TILE, draw: () => S.drawSprite(g, S.stall(open, `hsl(${(hue + i * 40) % 360} ${open ? 50 : 18}% ${open ? 55 : 40}%)`, i, open ? stallGoods : undefined), s.x * TILE, s.y * TILE) });
-    });
-    void food;
-    // Empalizada.
-    if (town?.walls) {
-      const R = v.wallR;
-      const steps = Math.floor((2 * Math.PI * R) / 1.1);
-      for (let i = 0; i < steps; i++) {
-        const a = (i / steps) * Math.PI * 2;
-        const x = v.cx + 0.5 + Math.cos(a) * R;
-        const y = v.cy + 0.5 + Math.sin(a) * R;
-        const k = idx(Math.floor(x), Math.floor(y));
-        const tt = this.l.terrain.tiles[k];
-        if (tt === 13 || tt === 14 || tt === 2 || tt === 1 || tt === 0 || tt === 9) continue; // puertas en los caminos
-        const px = x * TILE;
-        const py = y * TILE;
-        if (!inView(px, py)) continue;
-        items.push({
-          y: py,
-          draw: () => {
-            g.fillStyle = '#5e4128';
-            g.fillRect(px - 3.5, py - 36, 7, 36);
-            g.fillStyle = '#7d5a3a';
-            g.fillRect(px - 3.5, py - 36, 3, 36);
-            g.fillStyle = '#8a6440';
-            g.beginPath();
-            g.moveTo(px - 3.5, py - 36);
-            g.lineTo(px, py - 43);
-            g.lineTo(px + 3.5, py - 36);
-            g.fill();
-            g.fillStyle = 'rgba(40,28,18,0.7)';
-            g.fillRect(px - 4, py - 28, 8, 2);
-            g.fillRect(px - 4, py - 12, 8, 2);
-          },
-        });
-      }
-    }
-    if (town?.tower) {
-      const px = (v.cx + v.plazaR + 1.5) * TILE;
-      const py = (v.cy - v.plazaR) * TILE;
-      if (night) this.lights.push({ x: px, y: py - 106, r: 56, k: 1 });
-      items.push({
-        y: py,
-        draw: () => {
-          // Torre de vigía de madera: cuatro pies, plataforma y tejadillo.
-          g.strokeStyle = '#5e4128';
-          g.lineWidth = 4;
-          g.beginPath();
-          g.moveTo(px - 14, py);
-          g.lineTo(px - 9, py - 92);
-          g.moveTo(px + 14, py);
-          g.lineTo(px + 9, py - 92);
-          g.stroke();
-          g.lineWidth = 1.8;
-          g.beginPath();
-          for (let k = 0; k < 4; k++) {
-            const y0 = py - k * 23;
-            g.moveTo(px - 13 + k * 1.2, y0);
-            g.lineTo(px + 12 - k * 1.2, y0 - 23);
-            g.moveTo(px + 13 - k * 1.2, y0);
-            g.lineTo(px - 12 + k * 1.2, y0 - 23);
-          }
-          g.stroke();
-          g.fillStyle = '#7d5a3a';
-          g.fillRect(px - 16, py - 100, 32, 10);
-          g.fillStyle = '#6b4a2e';
-          g.beginPath();
-          g.moveTo(px - 19, py - 120);
-          g.lineTo(px, py - 134);
-          g.lineTo(px + 19, py - 120);
-          g.fill();
-          g.fillRect(px - 15, py - 120, 3, 20);
-          g.fillRect(px + 12, py - 120, 3, 20);
-          if (night || Math.floor(t / 700) % 2) this.flame(px, py - 106, t);
-        },
-      });
-    }
-    // Hoguera de la plaza al anochecer.
-    const hh = hourOf(life.clock);
-    if ((hh > 19 || hh < 1) && !r.abandoned && weatherIn(w, playerRegion(w)) !== 'lluvia' && weatherIn(w, playerRegion(w)) !== 'tormenta') {
-      const spot = this.fireSpot(regionId);
-      const px = spot.x * TILE;
-      const py = spot.y * TILE;
-      this.lights.push({ x: px, y: py - 8, r: 70, k: 1 });
-      items.push({ y: py, draw: () => this.fire(px, py, t, 1.2) });
-      if (!this.reduceMotion && Math.random() < 0.05) this.puff(px, py - 26, 'rgba(120,110,100,', 1);
-    }
-  }
-
-  /** Hueco más despejado de la plaza para la hoguera (lejos de puestos, bancos y fuente). */
-  private fireSpots = new Map<number, { x: number; y: number }>();
-  private fireSpot(regionId: number): { x: number; y: number } {
-    const hit = this.fireSpots.get(regionId);
-    if (hit) return hit;
-    const v = this.l.villages[regionId];
-    const obstacles = [...v.stalls, ...v.props.map((p) => ({ x: p.x, y: p.y })), { x: v.cx + 0.5, y: v.cy + 1.6 }];
-    let best = { x: v.cx + 0.5 - (v.plazaR - 2.4), y: v.cy + 1 };
-    let bd = -1;
-    for (let k = 0; k < 24; k++) {
-      const a = (k / 24) * Math.PI * 2;
-      for (const r of [v.plazaR - 2.6, v.plazaR - 3.4]) {
-        const p = { x: v.cx + 0.5 + Math.cos(a) * r, y: v.cy + 0.5 + Math.sin(a) * r * 0.9 };
-        const d = Math.min(...obstacles.map((o) => Math.hypot(o.x - p.x, (o.y - p.y) * 1.4)));
-        if (d > bd) (bd = d), (best = p);
-      }
-    }
-    this.fireSpots.set(regionId, best);
-    return best;
-  }
-
-  private postDrawables(p: { routeId: number; a: number; b: number; x: number; y: number; pathIndex: number }, items: Drawable[], t: number): void {
-    const w = this.w;
-    const g = this.g;
-    const route = w.routes[p.routeId];
-    const a = w.regions[p.a];
-    const b = w.regions[p.b];
-    const px = p.x * TILE;
-    const py = p.y * TILE;
-    const closed = route.status !== 'abierta';
-    const owner = a.isHome ? b : a;
-    items.push({ y: py + 4, draw: () => S.drawSprite(g, S.post(`hsl(${this.hueOf(owner.id)} 60% 45%)`, closed), px - 30, py + 4) });
-    if (closed) items.push({ y: py + 6, draw: () => S.drawSprite(g, S.barricade(), px + 4, py + 6) });
-    if (darkness(ensureLife(w).clock) > 0.3) this.lights.push({ x: px - 30, y: py - 40, r: 44, k: 0.9 });
-    const sec = t / 1000;
-    const lifeW = ensureLife(w);
-    const weather = weatherIn(w, playerRegion(w));
-    // Guardias según la tensión; campamentos si hay guerra.
-    const war = a.relations[b.id]?.war;
-    const mil = Math.max(a.militancy, b.militancy, a.relations[b.id]?.tension ?? 0);
-    const guards = war ? 6 : mil > 0.55 ? 4 : mil > 0.35 ? 2 : route.status === 'cerrada' ? 2 : 1;
-    for (let i = 0; i < guards; i++) {
-      const side = i % 2 ? a : b;
-      const sx = px + (i % 2 ? -1 : 1) * (26 + (i >> 1) * 20);
-      const sy = py + 18 + (i >> 1) * 10;
-      const ap = this.extraAp(`g:${p.routeId}:${side.id}:${i}`, side.id, 'guardia', 24 + i * 5);
-      const me = lifeW.player;
-      const close = Math.hypot(me.x * TILE - sx, me.y * TILE - sy) < 70;
-      const pose: Pose = {
-        facing: close ? 'front' : 'side',
-        flip: i % 2 === 0,
-        phase: 0,
-        action: war ? (Math.floor(sec / 2 + i) % 3 ? 'look' : 'point') : close ? 'idle' : 'look',
-        t: sec + i,
-        expr: war ? 'enfadado' : mil > 0.55 ? 'desconfianza' : 'neutral',
-        lod: this.lodAt(sx / TILE, sy / TILE),
-        hood: weather === 'lluvia' || weather === 'tormenta',
-        heavy: weather === 'nieve',
-      };
-      items.push({ y: sy, draw: () => drawHuman(g, ap, pose, sx, sy) });
-    }
-    if (war) {
-      for (let i = 0; i < 3; i++) {
-        const tx = px + (i - 1) * 70;
-        const ty = py - 70 - (i % 2) * 16;
-        items.push({ y: ty, draw: () => S.drawSprite(g, S.tent(`hsl(${this.hueOf(i % 2 ? a.id : b.id)} 35% 50%)`), tx, ty) });
-      }
-      this.lights.push({ x: px, y: py - 50, r: 64, k: 1 });
-      items.push({ y: py - 40, draw: () => this.fire(px, py - 40, t, 1.1) });
-    }
-  }
-
-  /** Comercio, refugiados, soldados y caravanas por los caminos (solo lo visible). */
-  private roadTraffic(items: Drawable[], inView: (x: number, y: number, m?: number) => boolean, t: number): void {
-    const w = this.w;
-    const g = this.g;
-    const life = ensureLife(w);
-    const h = hourOf(life.clock);
-    const day = h > 6.5 && h < 20;
-    const clock = life.clock;
-    for (const road of this.l.roads) {
-      const len = road.path.length;
-      if (len < 4) continue;
-      // Soldados en marcha entre regiones en guerra.
-      if (w.regions[road.a].relations[road.b]?.war) {
-        for (let i = 0; i < 5; i++) {
-          const phase = ((clock * 1.5) / len + i * 0.04) % 1;
-          const pos = along(road.path, 0.35 + phase * 0.3);
-          const px = pos.x * TILE + (i % 2) * 14;
-          const py = pos.y * TILE + (i % 3) * 8;
-          if (!inView(px, py)) continue;
-          const side = i % 2 ? road.a : road.b;
-          const ap = this.extraAp(`s:${road.routeId}:${i}`, side, 'guardia', 22 + i * 3);
-          const pose = this.marchPose(pos.dx, 0, t / 1000 * 9 + i * 1.3, 'enfadado', px, py, false);
-          items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
-        }
-      }
-    }
-    // Caravanas de verdad: cada carreta lleva una carga concreta de un pueblo a otro.
-    for (const cv of convoyPositions(w)) {
-      const px = cv.x * TILE;
-      const py = cv.y * TILE;
-      if (!inView(px, py)) continue;
-      const main = Object.keys(cv.c.cargo)[0] as Good | undefined;
-      const color = cv.c.status === 'atacada' ? '#5a4a3a' : main ? GOOD_COLOR[main] : '#d9c08a';
-      const moving = cv.c.status === 'viaje' && day;
-      items.push({ y: py, draw: () => S.drawSprite(g, S.cart(moving ? Math.floor(t / 250) % 4 : 0, cv.dx < 0, color), px, py) });
-      if (cv.c.status === 'atacada') items.push({ y: py + 6, draw: () => S.drawSprite(g, S.prop('cajas', 1), px + 26, py + 8) });
-    }
-    // Refugiados: caminan de verdad de su región a la de destino.
-    for (const r of w.regions) {
-      const mig = r.flags.emigrando;
-      if (!mig) continue;
-      const to = Number(mig.data?.to);
-      const path = roadPath(w, r.id, to);
-      if (!path.length) continue;
-      for (let i = 0; i < 4; i++) {
-        const phase = ((clock * 0.8) / path.length + i * 0.015 + r.id * 0.21) % 1;
-        const pos = along(path, phase);
-        const px = pos.x * TILE + (i % 2) * 12;
-        const py = pos.y * TILE + (i % 3) * 7;
-        if (!inView(px, py)) continue;
-        const role: FolkRole = (['campesino', 'anciano', 'campesino', 'nino'] as FolkRole[])[i];
-        const ap = this.extraAp(`r:${r.id}:${i}`, r.id, role, role === 'nino' ? 9 : role === 'anciano' ? 66 : 30, (a) => {
-          a.outfit.item = role === 'anciano' ? 'baston' : 'saco';
-          a.outfit.patches = true;
-        });
-        const pose = this.marchPose(pos.dx, 0, t / 1000 * 6 + i, i % 2 ? 'triste' : 'miedo', px, py, true);
-        items.push({ y: py, draw: () => drawHuman(g, ap, pose, px, py) });
-      }
-    }
-    // Tus caravanas: salen del almacén y llegan días después.
-    for (const c of life.caravans) {
-      const path = roadPath(w, w.player.home, c.to);
-      if (!path.length) continue;
-      const k = (clock - c.depart) / Math.max(1, c.arrive - c.depart);
-      if (k < 0 || k > 1) continue;
-      const pos = along(path, k);
-      const px = pos.x * TILE;
-      const py = pos.y * TILE;
-      if (!inView(px, py)) continue;
-      const driver = this.extraAp(`c:${c.id}`, w.player.home, 'comerciante', 34);
-      const dpose = this.marchPose(pos.dx, 0, t / 1000 * 7, 'neutral', px, py, false);
-      items.push({
-        y: py + 12,
-        draw: () => {
-          S.drawSprite(g, S.cart(Math.floor(t / 250) % 4, pos.dx < 0, c.kind === 'regalo' ? '#c98ad0' : '#e3c070'), px, py);
-          drawHuman(g, driver, dpose, px + (pos.dx < 0 ? 10 : -10), py + 12);
-          g.fillStyle = '#5a3a22';
-          g.fillRect(px - 1, py - 78, 2, 26);
-          g.fillStyle = '#e9b44c';
-          g.beginPath();
-          g.moveTo(px + 1, py - 78);
-          g.lineTo(px + 15, py - 73);
-          g.lineTo(px + 1, py - 68);
-          g.fill();
-        },
-      });
-    }
-  }
-
-  private fire(px: number, py: number, t: number, scale = 1): void {
+  /** Hueco de la hoguera ya elegido en cada plaza (lo calcula village.ts). */
+  fireSpots = new Map<number, { x: number; y: number }>();
+  fire(px: number, py: number, t: number, scale = 1): void {
     drawFire(this.g, px, py, t, scale >= 1.15, this.reduceMotion);
   }
 
-  private puff(x: number, y: number, color: string, size: number): void {
+  puff(x: number, y: number, color: string, size: number): void {
     if (this.particles.length > 220) return;
     this.particles.push({ x, y, vx: (Math.random() - 0.5) * 0.15, vy: -0.35 - Math.random() * 0.2, life: 0, max: 140 + Math.random() * 80, r: 3 * size, color });
   }
@@ -1523,416 +1626,25 @@ export class WorldScene {
     }
   }
 
-  /** "!" sobre los encuentros, y resaltado del objetivo enfocado. */
-  private drawMarkers(g: CanvasRenderingContext2D, t: number): void {
-    const life = ensureLife(this.w);
-    // La caja perdida destella de vez en cuando: miel al sol.
-    for (const it of prologueItems(this.w)) {
-      if (it.id !== 'caja' || (!this.reduceMotion && Math.floor(t / 180) % 9 > 2)) continue;
-      const X = Math.round(it.x * TILE + 5);
-      const Y = Math.round(it.y * TILE - 16);
-      g.fillStyle = '#fff6c8';
-      g.fillRect(X, Y - 2, 1, 5);
-      g.fillRect(X - 2, Y, 5, 1);
-      g.fillStyle = '#ffd36a';
-      g.fillRect(X, Y, 1, 1);
-    }
-    for (const e of life.encounters) {
-      if (e.resolved) continue;
-      const bob = this.reduceMotion ? 0 : Math.sin(t / 250) * 2;
-      g.fillStyle = '#f3e8cf';
-      g.strokeStyle = '#2b1e15';
-      g.lineWidth = 1.5;
-      g.beginPath();
-      g.arc(e.x * TILE, Math.round(e.y * TILE - 44 + bob), 5, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
-      g.fillStyle = '#b5562d';
-      g.font = 'bold 8px monospace';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('!', e.x * TILE, Math.round(e.y * TILE - 43.5 + bob));
-    }
-    const f = this.focus ? this.targetPos(this.focus) : undefined;
-    if (f) {
-      g.strokeStyle = 'rgba(255,240,190,0.9)';
-      g.lineWidth = 1.5;
-      g.setLineDash([2, 2]);
-      g.beginPath();
-      g.ellipse(Math.round(f.x * TILE), Math.round(f.y * TILE), 8, 3, 0, 0, Math.PI * 2);
-      g.stroke();
-      g.setLineDash([]);
-    }
-  }
-
-  private drawLabels(g: CanvasRenderingContext2D): void {
-    const w = this.w;
-    const life = ensureLife(w);
-    const me = life.player;
-    g.textAlign = 'center';
-    g.textBaseline = 'bottom';
-    // Nombre de las personas cercanas que ya conoces.
-    for (const [id, e] of this.ents) {
-      if (e.inside || Math.hypot(e.x - me.x, e.y - me.y) > 5) continue;
-      const f = this.folkById.get(id);
-      if (!f || f.lastMet < 0 || id === this.converseId) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE - 33 * (this.apCache.get(id)?.ap.height ?? 1));
-      g.font = '600 12px Georgia, serif';
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(30,25,20,0.7)';
-      g.strokeText(f.name, p.x, p.y);
-      g.fillStyle = '#f6ecd2';
-      g.fillText(f.name, p.x, p.y);
-    }
-    // Lo que se oye al pasar: frases sueltas de quienes charlan cerca (y gritos de quienes discuten).
-    let bubbles = 0;
-    const slot = Math.floor(performance.now() / 5200);
-    for (const [id, e] of this.ents) {
-      if (bubbles >= 2 || e.inside || !e.partner || id > e.partner || Math.hypot(e.x - me.x, e.y - me.y) > 6.5) continue;
-      const a = this.folkById.get(id);
-      const b = this.folkById.get(e.partner);
-      const o = this.ents.get(e.partner);
-      if (!a || !b || !o) continue;
-      const angry = /discute|pelea/.test(e.act);
-      const text = angry ? (slot % 2 ? '«¡Eso es mentira!»' : '«¡No vuelvas a hablarme así!»') : overheard(w, slot % 2 ? a : b, slot % 2 ? b : a, slot + hashOf(id));
-      if (!text || (slot + hashOf(id)) % 3 === 2) continue;
-      bubbles++;
-      const p = this.toScreen(((e.x + o.x) / 2) * TILE, Math.min(e.y, o.y) * TILE - 46);
-      g.font = 'italic 12px Georgia, serif';
-      const wpx = Math.min(240, g.measureText(text).width + 14);
-      g.fillStyle = angry ? 'rgba(120,30,25,0.82)' : 'rgba(30,25,20,0.72)';
-      g.beginPath();
-      g.roundRect(p.x - wpx / 2, p.y - 20, wpx, 20, 8);
-      g.fill();
-      g.fillStyle = '#f6ecd2';
-      g.fillText(text.length > 38 ? `${text.slice(0, 36)}…»` : text, p.x, p.y - 4);
-    }
-    // Nombre del pueblo al acercarse a la plaza.
-    for (const v of this.l.villages) {
-      const d = Math.hypot(v.cx - me.x, v.cy - me.y);
-      if (d > 16) continue;
-      const p = this.toScreen((v.cx + 0.5) * TILE, (v.cy - v.plazaR - 1) * TILE);
-      g.globalAlpha = Math.min(1, (16 - d) / 6);
-      g.font = '700 17px Georgia, serif';
-      g.lineWidth = 4;
-      g.strokeStyle = 'rgba(30,25,20,0.65)';
-      g.strokeText(w.regions[v.regionId].name, p.x, p.y);
-      g.fillStyle = '#f3e3b5';
-      g.fillText(w.regions[v.regionId].name, p.x, p.y);
-      g.globalAlpha = 1;
-    }
-  }
-
-  /** Flechas en el borde de la pantalla hacia encuentros cercanos fuera de la vista. */
-  private drawEdgeArrows(g: CanvasRenderingContext2D, t: number): void {
-    const life = ensureLife(this.w);
-    if (this.waypoint) {
-      const wp = this.waypoint;
-      const p = this.toScreen(wp.x * TILE, wp.y * TILE);
-      const cx = this.vw / 2;
-      const cy = this.vh / 2;
-      const onScreen = p.x > 20 && p.y > 60 && p.x < this.vw - 20 && p.y < this.vh - 20;
-      const a = Math.atan2(p.y - cy, p.x - cx);
-      const x = onScreen ? p.x : cx + Math.cos(a) * (this.vw / 2 - 40);
-      const y = onScreen ? p.y - 30 : cy + Math.sin(a) * (this.vh / 2 - 90);
-      g.save();
-      g.translate(x, y);
-      if (!onScreen) g.rotate(a);
-      g.fillStyle = '#e9b44c';
-      g.strokeStyle = '#2b1e15';
-      g.lineWidth = 2;
-      g.beginPath();
-      if (onScreen) (g.moveTo(0, 10), g.lineTo(-8, -4), g.lineTo(8, -4));
-      else (g.moveTo(16, 0), g.lineTo(-8, -10), g.lineTo(-3, 0), g.lineTo(-8, 10));
-      g.closePath();
-      g.fill();
-      g.stroke();
-      g.restore();
-      const dist = Math.hypot(wp.x - life.player.x, wp.y - life.player.y);
-      g.font = '600 12px system-ui';
-      g.textAlign = 'center';
-      g.fillStyle = '#f6ecd2';
-      g.strokeStyle = 'rgba(30,25,20,0.7)';
-      g.lineWidth = 3;
-      const label = `${wp.label} · ${Math.round(dist * 2)} pasos`;
-      const ly = onScreen ? y - 14 : y + (Math.sin(a) > 0 ? -18 : 26);
-      g.strokeText(label, x, ly);
-      g.fillText(label, x, ly);
-    }
-    for (const e of life.encounters) {
-      if (e.resolved) continue;
-      const p = this.toScreen(e.x * TILE, e.y * TILE);
-      if (p.x > 0 && p.y > 0 && p.x < this.vw && p.y < this.vh) continue;
-      const cx = this.vw / 2;
-      const cy = this.vh / 2;
-      const a = Math.atan2(p.y - cy, p.x - cx);
-      const r = Math.min(this.vw, this.vh) / 2 - 34;
-      const x = cx + Math.cos(a) * r;
-      const y = cy + Math.sin(a) * r * (this.vh / this.vw);
-      g.save();
-      g.translate(x, y);
-      g.rotate(a);
-      g.globalAlpha = 0.6 + Math.sin(t / 300) * 0.3;
-      g.fillStyle = '#f3e8cf';
-      g.beginPath();
-      g.moveTo(12, 0);
-      g.lineTo(-8, -8);
-      g.lineTo(-4, 0);
-      g.lineTo(-8, 8);
-      g.closePath();
-      g.fill();
-      g.restore();
-      g.globalAlpha = 1;
-    }
-  }
-
-  /**
-   * Noche: una capa de oscuridad azulada con huecos donde hay luz (ventanas,
-   * faroles, hogueras, tu farol) y, encima, un halo cálido aditivo.
-   */
-  private drawNight(g: CanvasRenderingContext2D): void {
-    const life = ensureLife(this.w);
-    const d = darkness(life.clock);
-    if (d <= 0.01) return;
-    const dc = this.dark.getContext('2d')!;
-    const W = this.dark.width;
-    const H = this.dark.height;
-    dc.globalCompositeOperation = 'source-over';
-    dc.clearRect(0, 0, W, H);
-    dc.fillStyle = `rgba(8,12,34,${Math.min(0.9, d * 1.38)})`;
-    dc.fillRect(0, 0, W, H);
-    dc.globalCompositeOperation = 'destination-out';
-    const vis: { x: number; y: number; r: number; k: number }[] = [];
-    for (const l of this.lights) {
-      const p = this.toScreen(l.x, l.y);
-      const r = l.r * this.cam.z;
-      if (p.x < -r || p.y < -r || p.x > this.vw + r || p.y > this.vh + r) continue;
-      vis.push({ x: p.x, y: p.y, r, k: l.k });
-      if (vis.length > 140) break;
-    }
-    for (const l of vis) {
-      const x = l.x / 2;
-      const y = l.y / 2;
-      const r = l.r / 2;
-      const grad = dc.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(0,0,0,${0.95 * l.k})`);
-      grad.addColorStop(0.45, `rgba(0,0,0,${0.55 * l.k})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      dc.fillStyle = grad;
-      dc.beginPath();
-      dc.arc(x, y, r, 0, Math.PI * 2);
-      dc.fill();
-    }
-    // Los charcos de luz no son neutros: el fuego tiñe de ámbar lo que ilumina.
-    dc.globalCompositeOperation = 'source-over';
-    for (const l of vis) {
-      const x = l.x / 2;
-      const y = l.y / 2;
-      const r = l.r / 2;
-      const grad = dc.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(255,150,60,${0.1 * l.k * d})`);
-      grad.addColorStop(0.6, `rgba(200,90,40,${0.16 * l.k * d})`);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      dc.fillStyle = grad;
-      dc.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    g.drawImage(this.dark, 0, 0, this.vw, this.vh);
-    // Halo cálido: la luz del fuego tiñe lo que toca.
-    g.globalCompositeOperation = 'lighter';
-    for (const l of vis) {
-      const grad = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
-      grad.addColorStop(0, `rgba(255,150,60,${0.17 * d * l.k})`);
-      grad.addColorStop(1, 'rgba(255,120,40,0)');
-      g.fillStyle = grad;
-      g.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
-    }
-    g.globalCompositeOperation = 'source-over';
-  }
-
-  /** Luz del día: mañana suave y rosada, mediodía limpio, tarde dorada. */
-  private drawGrade(g: CanvasRenderingContext2D, h: number, weather: string): void {
-    const tint = (color: string, a: number, op: GlobalCompositeOperation) => {
-      if (a <= 0.004) return;
-      g.globalCompositeOperation = op;
-      g.fillStyle = color.replace('A', a.toFixed(3));
-      g.fillRect(0, 0, this.vw, this.vh);
-    };
-    const bump = (c: number, wdt: number) => Math.max(0, 1 - Math.abs(h - c) / wdt);
-    const dawn = bump(6.6, 1.8);
-    const dusk = bump(18.9, 2.1);
-    const grey = weather === 'nublado' || weather === 'lluvia' || weather === 'tormenta' || weather === 'niebla' ? 1 : 0;
-    tint('rgba(255,206,196,A)', dawn * 0.32 * (1 - grey * 0.6), 'multiply');
-    tint('rgba(255,236,220,A)', dawn * 0.08, 'screen');
-    tint('rgba(255,150,80,A)', dusk * 0.55 * (1 - grey * 0.45), 'multiply');
-    tint('rgba(255,150,70,A)', dusk * 0.08 * (1 - grey), 'screen');
-    tint('rgba(140,150,170,A)', grey * (weather === 'tormenta' ? 0.6 : 0.26), 'multiply');
-    if (weather === 'despejado' && h > 10 && h < 16) tint('rgba(255,250,235,A)', 0.05, 'screen');
-    g.globalCompositeOperation = 'source-over';
-  }
-
-  private litWindow(x: number, y: number, w: number, h: number, t: number): void {
-    const g = this.g;
-    const flick = this.reduceMotion ? 0 : Math.sin(t / 340) * 0.05 + Math.sin(t / 97) * 0.03;
-    g.fillStyle = `rgba(255,${196 + Math.round(flick * 200)},110,0.95)`;
-    g.fillRect(x, y, w, h);
-    g.fillStyle = 'rgba(255,240,190,0.85)';
-    g.fillRect(x + 1.5, y + h * 0.45, w - 3, h * 0.5);
-    g.fillStyle = 'rgba(90,60,30,0.55)';
-    g.fillRect(x + w / 2 - 0.5, y, 1, h);
-    g.fillRect(x, y + h / 2 - 0.5, w, 1);
-  }
-
-  /** Llama de farol o de antorcha. */
-  private flame(x: number, y: number, t: number): void {
-    drawFlame(this.g, x, y, t, this.reduceMotion);
-  }
-
-  private drawBirds(g: CanvasRenderingContext2D): void {
-    if (!this.birds.length) return;
-    g.strokeStyle = 'rgba(40,36,34,0.8)';
-    g.lineWidth = 1.3;
-    g.beginPath();
-    for (const b of this.birds) {
-      const k = Math.sin(b.ph) * 3;
-      g.moveTo(b.x - 5, b.y - k);
-      g.quadraticCurveTo(b.x - 2, b.y - 2, b.x, b.y);
-      g.quadraticCurveTo(b.x + 2, b.y - 2, b.x + 5, b.y - k);
-    }
-    g.stroke();
-  }
-
-  private drawWeather(g: CanvasRenderingContext2D, weather: string, t: number): void {
-    if (weather === 'despejado' || weather === 'nublado') {
-      if (weather === 'nublado') (g.fillStyle = 'rgba(60,70,80,0.12)'), g.fillRect(0, 0, this.vw, this.vh);
-      return;
-    }
-    if (weather === 'niebla') {
-      const grad = g.createRadialGradient(this.vw / 2, this.vh / 2, 60, this.vw / 2, this.vh / 2, Math.max(this.vw, this.vh) * 0.7);
-      grad.addColorStop(0, 'rgba(220,225,230,0.05)');
-      grad.addColorStop(1, 'rgba(220,225,230,0.65)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, this.vw, this.vh);
-      return;
-    }
-    // Las gotas, copos y hojas se dibujan en el lienzo del mundo (pixel art);
-    // aquí solo queda el tono del cielo y el relámpago.
-    if (weather === 'lluvia' || weather === 'tormenta') {
-      g.fillStyle = weather === 'tormenta' ? 'rgba(20,26,44,0.22)' : 'rgba(40,50,70,0.12)';
-      g.fillRect(0, 0, this.vw, this.vh);
-      if (this.wfx.flash > 0) {
-        g.fillStyle = `rgba(235,240,255,${(this.wfx.flash * 0.55).toFixed(3)})`;
-        g.fillRect(0, 0, this.vw, this.vh);
-      }
-    } else if (weather === 'nieve') {
-      g.fillStyle = 'rgba(200,215,235,0.08)';
-      g.fillRect(0, 0, this.vw, this.vh);
-    }
-    void t;
-  }
-
   // -------------------------------------------------------------------------
-  // Aspecto y postura de las personas
+  // Aspecto y postura de las personas (poses.ts)
   // -------------------------------------------------------------------------
+  // Una variante por combinación de tiempo: volver de la lluvia al sol no obliga a repintar a nadie.
+  dressed = new WeakMap<Appearance, Record<string, Appearance>>();
   /** Nivel de detalle por distancia al jugador (y por zoom). */
-  private lodAt(x: number, y: number): 0 | 1 | 2 {
-    const me = ensureLife(this.w).player;
-    const d = Math.hypot(x - me.x, y - me.y) * (this.cam.z < 0.85 ? 1.6 : 1) * (this.quality === 'baja' ? 1.8 : 1);
-    return d < 10 ? 0 : d < 22 ? 1 : 2;
+  lodAt(x: number, y: number): 0 | 1 | 2 {
+    return lodAt(this, x, y);
   }
-
-  /**
-   * Ropa según el tiempo: con nieve, capa de abrigo con piel; con lluvia,
-   * capa encerada con capucha. Solo para quien no lleva ya una.
-   */
-  private dressed = new WeakMap<Appearance, { key: string; ap: Appearance }>();
-  private dress(ap: Appearance, wet: boolean, cold: boolean): Appearance {
-    if ((!wet && !cold) || ap.age < 6) return ap;
-    const key = `${wet}:${cold}`;
-    const c = this.dressed.get(ap);
-    if (c && c.key === key) return c.ap;
-    const o = ap.outfit;
-    const cloak = o.cloak ? { ...o.cloak, fur: o.cloak.fur || cold, hood: true } : { color: cold ? S.shade(o.topColor, 0.72) : '#5d5446', fur: cold, hood: true, clasp: '#8a7a5a' };
-    const out: Appearance = { ...ap, outfit: { ...o, cloak, hat: wet && o.hat === 'paja' ? undefined : o.hat } };
-    this.dressed.set(ap, { key, ap: out });
-    return out;
+  dress(ap: Appearance, wet: boolean, cold: boolean): Appearance {
+    return dress(this, ap, wet, cold);
   }
-
-  private apOf(f: Folk): Appearance {
-    const key = `${f.age < 16 ? 0 : f.age >= 58 ? 2 : 1}:${f.role}:${f.charId ?? ''}`;
-    const c = this.apCache.get(f.id);
-    if (c && c.key === key) return c.ap;
-    const ap = appearanceOf(this.w, f);
-    this.apCache.set(f.id, { key, ap });
-    return ap;
-  }
-
   /** Aspecto de figurantes (soldados, refugiados, mensajeros, gentío). */
-  private extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance {
-    const key = `${regionId}:${role}`;
-    const c = this.apCache.get(id);
-    if (c && c.key === key) return c.ap;
-    if (this.apCache.size > 1600) this.apCache.clear();
-    const f: Folk = { id, name: id, regionId, role, age, born: 0, house: 0, alive: true, trust: 0.5, fear: 0, gratitude: 0, resentment: 0, honesty: 0.5, memories: [], lastMet: -1 };
-    const ap = appearanceOf(this.w, f);
-    mod?.(ap);
-    this.apCache.set(id, { key, ap });
-    return ap;
+  extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance {
+    return extraAp(this, id, regionId, role, age, mod);
   }
-
-  private playerAp(lantern: boolean): Appearance {
-    const p = ensureLife(this.w).player;
-    const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${JSON.stringify(p.look ?? '')}`;
-    const c = this.apCache.get('@player');
-    if (c && c.key === key) return c.ap;
-    const ap = playerAppearance(p);
-    if (lantern) ap.outfit.item = 'farol';
-    this.apCache.set('@player', { key, ap });
-    return ap;
-  }
-
-  private entPose(id: string, e: Ent, f: Folk | undefined, sec: number, wet: boolean, cold: boolean): Pose {
-    const now = performance.now();
-    const react = e.react && e.react.until > now ? e.react : undefined;
-    let facing = e.facing;
-    let action: Action;
-    if (e.moving) {
-      facing = Math.abs(e.dy) > Math.abs(e.dx) * 1.3 ? (e.dy > 0 ? 'front' : 'back') : 'side';
-      action = 'walk';
-    } else if (id === this.converseId) {
-      action = Math.floor(sec / 1.8) % 3 === 2 ? 'nod' : 'talk';
-    } else if (react?.action) action = react.action;
-    else {
-      action = actionOf(e.act);
-      if (e.partner) {
-        // Dos que charlan: uno habla y gesticula, el otro escucha y asiente.
-        const turn = Math.floor(sec / 2.8 + (id < e.partner ? 0 : 1)) % 2 === 0;
-        action = turn ? (Math.floor(sec / 2.8) % 4 === 1 ? 'point' : 'talk') : Math.floor(sec / 0.9) % 5 === 0 ? 'nod' : 'listen';
-      } else if (action === 'talk') action = 'idle';
-      else if (action === 'idle' && Math.floor(sec / 4 + hash(id) * 9) % 6 === 0) action = 'look';
-    }
-    // Con lluvia, los que no pueden refugiarse se cubren con los brazos.
-    if (wet && !e.moving && (action === 'idle' || action === 'look')) action = 'cross';
-    const expr: Expr = react?.expr ?? (f ? moodOf(this.w, f) : hash(id, 8) < 0.3 ? 'feliz' : 'neutral');
-    return { facing, flip: e.flip, phase: e.anim, action, t: sec + hash(id) * 20, expr, lod: this.lodAt(e.x, e.y), hood: wet, heavy: cold };
-  }
-
-  private playerPose(sec: number, wet: boolean, cold: boolean): Pose {
-    const conv = this.converseId ? this.ents.get(this.converseId) : undefined;
-    const me = ensureLife(this.w).player;
-    let fx = this.facing.x;
-    let fy = this.facing.y;
-    if (conv && !this.playerMoving) (fx = conv.x - me.x), (fy = conv.y - me.y);
-    const side = Math.abs(fx) > 0.45 || Math.abs(fx) > Math.abs(fy) * 0.8;
-    const facing: Facing = side ? 'side' : fy < 0 ? 'back' : 'front';
-    const action: Action = this.playerMoving ? (this.playerRun ? 'run' : 'walk') : conv ? 'listen' : 'idle';
-    return { facing, flip: fx < 0, phase: this.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet, heavy: cold };
-  }
-
   /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */
-  private marchPose(dx: number, dy: number, phase: number, expr: Expr, px: number, py: number, slow: boolean): Pose {
-    const facing: Facing = Math.abs(dy) > Math.abs(dx) * 1.3 ? (dy > 0 ? 'front' : 'back') : 'side';
-    const weather = weatherIn(this.w, playerRegion(this.w));
-    return { facing, flip: dx < 0, phase: slow ? phase * 0.8 : phase, action: 'walk', t: phase, expr, lod: this.lodAt(px / TILE, py / TILE), hood: weather === 'lluvia' || weather === 'tormenta', heavy: weather === 'nieve' };
+  marchPose(dx: number, dy: number, t: number, expr: Expr, px: number, py: number, ap: Appearance): Pose {
+    return marchPose(this, dx, dy, t, expr, px, py, ap);
   }
 }
 

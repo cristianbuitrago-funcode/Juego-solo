@@ -1,10 +1,15 @@
+import { weatherIn } from '../world/geography';
 import { poiDialog, settlementDialog, worldChoices } from './world6';
 import { ACTIONS, answerPetition, freeAgents, hasAuthority } from '../core/api';
 import { ROLES } from '../core/content/roles';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { appearanceOf } from '../render/appearance';
-import { drawPortrait } from '../render/human';
+import { drawPortrait } from '../visual/figure/portrait';
+import { IH, IW, paintInterior, type InteriorKind, type InteriorPerson } from '../visual/env/interiors';
+import { darkness } from '../world/clock';
+import { marketOf } from '../world/economy';
+import type { Action, Expr } from '../visual/figure/types';
 import { moodOf } from '../render/mood';
 import type { Target } from '../render/scene';
 import { ROLE_TITLE } from '../world/folk';
@@ -44,17 +49,81 @@ interface Choice {
   run: () => void;
   hint?: string;
   primary?: boolean;
+  /** Opción de salida (se pinta discreta y sustituye a la ✕). */
+  exit?: boolean;
 }
 
 /** Caja de diálogo al estilo de los juegos de rol. */
 export function dialogue(app: App, title: string, subtitle: string, lines: string[], choices: Choice[], portrait?: HTMLCanvasElement): () => void {
   let close = () => {};
+  // Dentro de un edificio, la cabecera es una viñeta pintada del interior.
+  const room = !portrait && interiorCtx ? interiorCanvas(app, interiorCtx.kind, interiorCtx.regionId) : null;
+  const isExit = (c: Choice) => c.exit ?? /^(Salir|Pensarlo|Seguir sin|Marcharse|Irte|Despedirte|Despedirse|Nada|Dejarlo|Volver|Cerrar|Ahora no|No,? gracias|Otro día|Mejor no)/.test(c.label);
+  const hasExit = choices.some(isExit);
   close = app.modal(() => [
+    room,
     h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, title), subtitle ? h('div', { class: 'tiny' }, subtitle) : null)),
     ...lines.map((l) => h('p', { class: l.startsWith('«') || l.startsWith('—') ? 'quote' : '' }, l)),
-    h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
-  ], { cls: 'dialog' });
+    h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: isExit(c) ? 'btn exit' : `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+  ], { cls: `dialog ${hasExit ? 'has-exit' : ''} ${room ? 'with-room' : ''}` });
   return close;
+}
+
+// ---------------------------------------------------------------------------
+// Interiores: viñeta pintada y animada de la sala, con quien está dentro.
+// ---------------------------------------------------------------------------
+let interiorCtx: { kind: InteriorKind; regionId: number } | null = null;
+const ROOM_KINDS = new Set(['posada', 'forja', 'salon', 'templo', 'almacen', 'hogar']);
+
+function interiorCanvas(app: App, kind: InteriorKind, regionId: number): HTMLCanvasElement {
+  const w = app.w!;
+  const life = ensureLife(w);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const c = h('canvas', { class: 'room', width: String(Math.round(IW * dpr)), height: String(Math.round(IH * dpr)) }) as HTMLCanvasElement;
+  const folk = life.folk.filter((f) => f.alive && f.regionId === regionId && f.age >= 14);
+  const pick = (roles: string[], n: number) => folk.filter((f) => roles.includes(f.role)).slice(0, n);
+  const cast: [string[], number, Action, Expr][] = {
+    posada: [[['posadero'], 1, 'talk', 'feliz'], [['campesino', 'pescador', 'pastor', 'lenador', 'minero'], 2, 'eat', 'neutral'], [['comerciante'], 1, 'listen', 'desconfianza']],
+    forja: [[['artesano', 'carpintero'], 1, 'hammer', 'cansado']],
+    salon: [[['lider'], 1, 'talk', 'confiado'], [['guardia'], 1, 'idle', 'neutral'], [['anciano', 'comerciante'], 1, 'listen', 'preocupado']],
+    templo: [[['anciano', 'sanadora'], 2, 'listen', 'neutral']],
+    almacen: [[['comerciante'], 1, 'carry', 'neutral']],
+    hogar: [],
+  }[kind] as [string[], number, Action, Expr][];
+  const people: InteriorPerson[] = [];
+  for (const [roles, n, action, expr] of cast) for (const f of pick(roles, n)) people.push({ ap: appearanceOf(w, f), action, expr: expr === 'neutral' ? moodOf(w, f) : expr, x: 0, flip: people.length % 2 === 1 });
+  people.forEach((p, i) => (p.x = people.length === 1 ? 0.62 : 0.3 + (i / Math.max(1, people.length - 1)) * 0.6));
+  if (kind === 'posada') {
+    // En la posada se sienta uno a beber: el posadero tras la barra (la barra le tapa de cintura abajo), dos parroquianos a
+    // ambos lados de la mesa, de cara el uno al otro, y alguien de pie junto a los barriles.
+    const seats = [{ x: 0.48, action: 'talk' as Action, flip: false, behind: true }, { x: 0.36, action: 'sit' as Action, flip: false }, { x: 0.62, action: 'sit' as Action, flip: true }, { x: 0.86, action: 'listen' as Action, flip: true }];
+    people.forEach((p, i) => {
+      const s0 = seats[Math.min(i, seats.length - 1)];
+      p.x = s0.x;
+      p.action = s0.action;
+      p.flip = s0.flip;
+      p.fixed = true;
+      p.behind = !!s0.behind;
+      p.drink = s0.action === 'sit'; // los de la mesa beben
+    });
+  }
+  const weather = app.scene?.debugWeather ?? weatherIn(w, regionId);
+  const opts = { night: darkness(life.clock) > 0.3, weather, wealth: Math.max(0, Math.min(1, marketOf(w, regionId).prosperity)), people, t: 0 };
+  const t0 = performance.now();
+  const paint = () => {
+    opts.t = (performance.now() - t0) / 1000;
+    paintInterior(c, kind, opts);
+  };
+  paint();
+  // ~24 fotogramas por segundo mientras el diálogo está abierto: el fuego crepita y la gente respira.
+  let last = 0;
+  const loop = (now: number) => {
+    if (!c.isConnected && now - t0 > 500) return;
+    if (now - last > 40) (last = now), paint();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+  return c;
 }
 
 const folkOf = (w: WorldState, id: string) => ensureLife(w).folk.find((f) => f.id === id);
@@ -147,8 +216,8 @@ function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefine
   if (!f) return undefined;
   const c = document.createElement('canvas');
   c.className = 'portrait';
-  c.width = 176;
-  c.height = 176;
+  // A la densidad real de la pantalla (88 px CSS): a 3× un lienzo fijo se veía borroso.
+  c.width = c.height = Math.round(88 * Math.min(3, Math.max(2, window.devicePixelRatio || 1)));
   const ap = appearanceOf(w, f);
   const expr = moodOf(w, f);
   const t0 = performance.now();
@@ -422,13 +491,22 @@ function petition(app: App, petitionId: string): void {
 // Edificios
 // ---------------------------------------------------------------------------
 function building(app: App, regionId: number, kind: string): void {
+  if (visit(app, kind, regionId)) return;
+  interiorCtx = ROOM_KINDS.has(kind) ? { kind: kind as InteriorKind, regionId } : null;
+  try {
+    buildingInside(app, regionId, kind);
+  } finally {
+    interiorCtx = null;
+  }
+}
+
+function buildingInside(app: App, regionId: number, kind: string): void {
   const w = app.w!;
   const r = w.regions[regionId];
   const home = r.isHome;
   const life = ensureLife(w);
   const id = life.identity!;
   const stand = id.standing[regionId] ?? 0;
-  if (visit(app, kind, regionId)) return;
   switch (kind) {
     case 'hogar':
       if (home && !id.housed) {

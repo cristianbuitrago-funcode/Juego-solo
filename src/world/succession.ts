@@ -254,7 +254,7 @@ export function succeedTo(w: WorldState, key: string, honor: boolean, step?: (w:
   g.self = heirFolk.id;
   g.health = { value: 1, conditions: [], incapacitated: false };
   g.wantsChildren = false;
-  const heirCoins = estate.heirCoins + (heirFolk.p?.coins ?? 0);
+  const heirCoins = Math.round(estate.heirCoins + (heirFolk.p?.coins ?? 0));
   life.identity = heirIdentity(w, oldId, old.name, honor, heirFolk, heirCoins, s.relation, knowledgeTo === 'heredero' || knowledgeTo === `vecino:${heirFolk.id}`);
   if (!(knowledgeTo === 'heredero' || knowledgeTo === `vecino:${heirFolk.id}`)) playerEco(w).notes = {};
   const derivedLook = look ?? lookFor(heirFolk);

@@ -1,3 +1,5 @@
+import { drawInkIcon, drawInkRow, onInkIconReady } from './inkicons';
+import { paintRelief } from './relief';
 import { RESOURCES } from '../../core/content/resources';
 import { regionAt, WORLD_H, WORLD_W } from '../../core/gen/mapgen';
 import { fbm } from '../../core/noise';
@@ -43,6 +45,8 @@ export class MapView {
   private g: CanvasRenderingContext2D;
   private base = document.createElement('canvas');
   private baseCtx: CanvasRenderingContext2D;
+  /** Montañas, bosques, juncos y olas a tinta (solo lo conocido). */
+  private relief = document.createElement('canvas');
   private regionMap = new Int16Array(BW * BH);
   private grain = new Uint8Array(BW * BH);
   private edge = new Uint8Array(BW * BH); // 1 frontera, 2 costa, 3 orilla
@@ -76,7 +80,9 @@ export class MapView {
     this.base.height = BH;
     this.baseCtx = this.base.getContext('2d')!;
     this.bindInput();
-    new ResizeObserver(() => this.resize()).observe(parent);
+    onInkIconReady(() => this.markDirty());
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(parent);
     this.resize();
     const loop = (t: number) => {
       this.frame(t);
@@ -85,8 +91,11 @@ export class MapView {
     this.raf = requestAnimationFrame(loop);
   }
 
+  private ro: ResizeObserver | null = null;
   destroy(): void {
     cancelAnimationFrame(this.raf);
+    this.ro?.disconnect();
+    onInkIconReady(null);
     this.canvas.remove();
   }
 
@@ -198,14 +207,21 @@ export class MapView {
         [r, g, b] = e === 3 ? [178, 196, 196] : [90 * s, 122 * s, 136 * s];
       } else {
         const c = lut[id];
-        const s = 0.88 + gr * 0.2;
+        // Acuarela: el pigmento se acumula en manchas (más contraste de grano).
+        const s = 0.84 + gr * 0.26;
         r = c[0] * s;
         g = c[1] * s;
         b = c[2] * s;
         if (fog[id]) {
+          // Lo desconocido: niebla pintada (nubes de bruma), no un rayado técnico.
           const x = k % BW;
           const y = (k / BW) | 0;
-          if ((x + y) % 7 === 0) (r *= 0.75), (g *= 0.75), (b *= 0.75);
+          const cloud = fbm(x / 22, y / 22, w.seed + 77, 3);
+          const m = Math.min(1, 0.55 + cloud * 0.5);
+          const curl = Math.abs(cloud - 0.5) < 0.025 ? 0.86 : 1; // vetas suaves en la bruma
+          r = (r * (1 - m) + 226 * m) * curl;
+          g = (g * (1 - m) + 222 * m) * curl;
+          b = (b * (1 - m) + 212 * m) * curl;
         }
         if (e === 1) {
           // Entre dueños distintos la frontera se marca más (y cambia si cambia el dueño).
@@ -225,6 +241,7 @@ export class MapView {
       d[o + 3] = 255;
     }
     this.baseCtx.putImageData(this.image, 0, 0);
+    paintRelief(w, (id) => w.regions[id]?.isHome || w.intel[id]?.level > 0, this.relief);
     this.dirty = true;
   }
 
@@ -233,7 +250,8 @@ export class MapView {
   // -------------------------------------------------------------------------
   private resize(): void {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
-    const r = this.parent.getBoundingClientRect();
+    // Tamaño de maquetación (clientWidth/Height): no le afectan las transformaciones de la animación de entrada.
+    const r = { width: this.parent.clientWidth, height: this.parent.clientHeight };
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
     this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
     this.canvas.style.width = `${r.width}px`;
@@ -248,7 +266,7 @@ export class MapView {
 
   /** Encuadra la isla completa (no todo el océano). */
   fit(): void {
-    const r = this.parent.getBoundingClientRect();
+    const r = { width: this.parent.clientWidth, height: this.parent.clientHeight };
     const { x0, y0, x1, y1 } = this.land;
     const pad = 40;
     const z = Math.min(r.width / (x1 - x0 + pad * 2), (r.height - 90) / (y1 - y0 + pad * 2));
@@ -272,7 +290,7 @@ export class MapView {
   focus(regionId: number): void {
     const c = this.w?.regions[regionId]?.center;
     if (!c) return;
-    const r = this.parent.getBoundingClientRect();
+    const r = { height: this.parent.clientHeight };
     // Deja sitio para el panel inferior.
     this.cam.x = c.x;
     this.cam.y = c.y + (r.height * 0.3) / this.cam.z;
@@ -422,6 +440,7 @@ export class MapView {
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'high';
     g.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
+    g.drawImage(this.relief, 0, 0, WORLD_W, WORLD_H);
     this.drawRiver(g);
     this.drawRoutes(g, t);
     this.drawLayer(g, t);
@@ -433,30 +452,85 @@ export class MapView {
     this.drawMissions(g, t);
     this.drawLabels(g, t, animate);
     if (this.player) {
-      const p = this.toScreen(this.player.x, this.player.y);
+      // En un pueblo, la chincheta va junto a su hito (la posición exacta, a esta escala, caía
+      // en mitad de un camino y parecía señalar otra cosa).
+      let p0 = this.toScreen(this.player.x, this.player.y);
+      let snap = 70;
+      for (const r of this.w!.regions) {
+        const c = this.toScreen(r.center.x, r.center.y);
+        const d = Math.hypot(c.x - p0.x, c.y - p0.y);
+        if (d < snap) (snap = d), (p0 = c);
+      }
+      // Encima del hito de un pueblo, la chincheta se aparta a un lado (si no, lo tapa).
+      const onMark = this.w!.regions.some((r) => {
+        const c = this.toScreen(r.center.x, r.center.y);
+        return Math.hypot(c.x - p0.x, c.y - p0.y) < 16;
+      });
+      // En un pueblo, el aro rodea su hito y la chincheta se clava justo encima (apartada a un lado
+      // caía sobre un nudo de caminos y parecía señalar otra cosa).
+      const p = onMark ? { x: p0.x, y: p0.y - 13 } : p0;
       const pulse = animate ? (Math.sin(t / 300) + 1) / 2 : 0.5;
-      g.strokeStyle = `rgba(233,180,76,${0.4 + pulse * 0.5})`;
-      g.lineWidth = 3;
+      // El aro que late en el suelo es el sitio exacto; encima, una chincheta con su
+      // rótulo «Estás aquí» al lado (no encima del nombre del pueblo ni del hito).
+      g.strokeStyle = `rgba(233,180,76,${0.35 + pulse * 0.45})`;
+      g.lineWidth = 2;
       g.beginPath();
-      g.arc(p.x, p.y, 10 + pulse * 6, 0, Math.PI * 2);
+      const rr = (onMark ? 17 : 7) + pulse * 5;
+      g.ellipse(p0.x, p0.y + (onMark ? 2 : 0), rr, rr * (onMark ? 0.62 : 0.45), 0, 0, Math.PI * 2);
       g.stroke();
+      const hy = p.y - 26;
       g.fillStyle = '#e9b44c';
       g.strokeStyle = '#2b1e15';
       g.lineWidth = 2;
       g.beginPath();
-      g.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      g.moveTo(p.x, p.y - 1);
+      g.quadraticCurveTo(p.x - 7, hy + 9, p.x - 7, hy);
+      g.arc(p.x, hy, 7, Math.PI, 0);
+      g.quadraticCurveTo(p.x + 7, hy + 9, p.x, p.y - 1);
+      g.closePath();
       g.fill();
       g.stroke();
-      g.font = '700 12px Georgia, serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'bottom';
-      g.lineWidth = 3;
-      g.strokeStyle = 'rgba(244,233,206,0.9)';
-      g.strokeText('Estás aquí', p.x, p.y - 12);
       g.fillStyle = '#2b1e15';
-      g.fillText('Estás aquí', p.x, p.y - 12);
+      g.beginPath();
+      g.arc(p.x, hy, 2.4, 0, Math.PI * 2);
+      g.fill();
+      g.font = '700 12px Alegreya, Georgia, serif';
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      const tw = g.measureText('Estás aquí').width;
+      // El rótulo va donde no choque con nada: a la derecha, a la izquierda o encima de la
+      // chincheta. Se mira contra el hito, el nombre y la fila de iconos de cada pueblo.
+      const boxes: [number, number, number, number][] = [];
+      for (const r of this.w!.regions) {
+        const c = this.toScreen(r.center.x, r.center.y);
+        boxes.push([c.x - 52, c.y - 62, c.x + 52, c.y + 36]);
+      }
+      const hits = (x0: number, y0: number) => boxes.filter(([a, b, c2, d]) => x0 < c2 && x0 + tw + 8 > a && y0 < d && y0 + 18 > b).length;
+      const spots: [number, number][] = [[p.x + 12, hy], [p.x - 12 - tw, hy], [p.x - tw / 2, hy - 24]];
+      let best = spots[0];
+      let bestN = Infinity;
+      for (const sp of spots) {
+        const n = hits(sp[0] - 4, sp[1] - 9);
+        if (n < bestN) (best = sp), (bestN = n);
+      }
+      const lx = best[0];
+      const ly = best[1];
+      g.fillStyle = 'rgba(244,233,206,0.94)';
+      g.strokeStyle = 'rgba(43,30,21,0.55)';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.roundRect(lx - 4, ly - 9, tw + 8, 18, 9);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#2b1e15';
+      g.fillText('Estás aquí', lx, ly + 0.5);
     }
+    // Marco de pergamino: los bordes del mapa se oscurecen y amarillean.
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    if (!this.frameTex || this.frameTex.width !== Math.round(cw) || this.frameTex.height !== Math.round(ch)) this.frameTex = parchmentFrame(Math.round(cw), Math.round(ch));
+    g.drawImage(this.frameTex, 0, 0, cw, ch);
   }
+  private frameTex: HTMLCanvasElement | null = null;
 
   private drawRiver(g: CanvasRenderingContext2D): void {
     if (this.riverPath.length < 2) return;
@@ -562,14 +636,14 @@ export class MapView {
           g.font = '16px system-ui, sans-serif';
           g.textAlign = 'center';
           g.textBaseline = 'middle';
-          g.fillText(tr.map((x) => ({ comercio: '⚖', fronteras: '⛳', defensa: '🛡', recursos: '📦', alianza: '🤝', paz: '🕊' })[x.kind]).join(''), (a.x + b.x) / 2, (a.y + b.y) / 2);
+          drawInkRow(g, tr.map((x) => ({ comercio: '⚖', fronteras: '⛳', defensa: '🛡', recursos: '📦', alianza: '🤝', paz: '🕊' })[x.kind]), (a.x + b.x) / 2, (a.y + b.y) / 2, 20);
         }
       }
       for (const c of pol.claims) if (known(c.a) && known(c.b)) {
         const a = w.regions[c.a].center;
         const b = w.regions[c.b].center;
         g.font = '14px system-ui, sans-serif';
-        g.fillText('⚑', a.x * 0.4 + b.x * 0.6, a.y * 0.4 + b.y * 0.6);
+        drawInkIcon(g, '⚑', a.x * 0.4 + b.x * 0.6, a.y * 0.4 + b.y * 0.6, 18);
       }
     }
     if (this.layer === 'comercio') {
@@ -623,7 +697,7 @@ export class MapView {
         else if (orgs.length) icons.push('✊');
         if ((pol.rebellions[r.id]?.stage ?? 0) >= 2 && (w.intel[r.id].level >= 2 || r.isHome)) icons.push('🗡');
         if (pol.secrets.some((s) => s.known && !s.public && s.regionId === r.id)) icons.push('🗝');
-        if (icons.length) g.fillText(icons.join(' '), r.center.x + 34, r.center.y - 30);
+        if (icons.length) drawInkRow(g, icons, r.center.x + 34, r.center.y - 30, 22);
       }
     }
   }
@@ -652,16 +726,14 @@ export class MapView {
     for (const [id] of Object.entries(a.ports)) if (known(Number(id))) {
       const c = w.regions[Number(id)].center;
       g.font = '16px system-ui, sans-serif';
-      g.fillText('⚓', c.x - 30, c.y + 26);
+      drawInkIcon(g, '⚓', c.x - 30, c.y + 26, 20);
     }
     for (const s of a.settlements) {
       if (!known(s.regionId)) continue;
       const x = s.x * 2;
       const y = s.y * 2;
       if (s.state !== 'vivo') {
-        g.font = '14px system-ui, sans-serif';
-        g.fillStyle = '#5a4a3a';
-        g.fillText('⌂', x, y);
+        drawInkIcon(g, '🏚', x, y, 16);
         continue;
       }
       const size = 3 + TIER_ORDER.indexOf(s.tier) * 2;
@@ -672,18 +744,18 @@ export class MapView {
       g.rect(x - size, y - size, size * 2, size * 2);
       g.fill();
       g.stroke();
-      g.font = '600 11px Georgia, serif';
+      g.font = '600 11px Alegreya, Georgia, serif';
       g.fillStyle = '#2b1e15';
       g.fillText(s.name, x, y + size + 9);
     }
     for (const p of a.pois) if (p.found !== undefined) {
       g.font = '13px system-ui, sans-serif';
-      g.fillText({ ruinas: '🏚', monumento: '🗿', batalla: '⚔', cueva: '🕳', oasis: '🌴', pecio: '⛵', cantera: '⛏' }[p.kind], p.x * 2, p.y * 2);
+      drawInkIcon(g, { ruinas: '🏚', monumento: '🗿', batalla: '⚔', cueva: '🕳', oasis: '🌴', pecio: '⛵', cantera: '⛏' }[p.kind], p.x * 2, p.y * 2, 18);
     }
     // Nombres de los estados (capa «Estados»).
     if (this.layer === 'estados' && w.life?.society) for (const st of statesOf(w)) if (st.regions.length > 1 && known(st.capital)) {
       const c = w.regions[st.capital].center;
-      g.font = '700 15px Georgia, serif';
+      g.font = '700 15px Alegreya, Georgia, serif';
       g.lineWidth = 4;
       g.strokeStyle = 'rgba(244,233,206,0.9)';
       g.strokeText(st.name, c.x, c.y + 44);
@@ -801,7 +873,7 @@ export class MapView {
       g.font = '600 11px system-ui, sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(m.kind === 'observar' ? '👁' : m.kind === 'espiar' ? '👂' : m.kind === 'investigar' ? '🔎' : m.kind === 'sabotaje' ? '🔥' : '✉', p.x, p.y + 1);
+      drawInkIcon(g, m.kind === 'observar' ? '👁' : m.kind === 'espiar' ? '👂' : m.kind === 'investigar' ? '🔎' : m.kind === 'sabotaje' ? '🔥' : '✉', p.x, p.y, 14, false);
     }
   }
 
@@ -840,12 +912,31 @@ export class MapView {
         g.lineTo(p.x - 8, p.y + 9);
         g.lineTo(p.x - 11, p.y - 2);
         g.closePath();
-      } else g.arc(p.x, p.y, 6, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
+        g.fill();
+        g.stroke();
+      } else {
+        // Un pueblo: dos casitas con tejado (o una sombra de casa si aún no lo conoces).
+        for (const [dx, s0] of [[-4, 0.85], [4, 1]] as const) {
+          const hx = p.x + dx;
+          const sz = 6 * s0;
+          g.beginPath();
+          g.rect(hx - sz * 0.75, p.y - sz * 0.2, sz * 1.5, sz * 1.1);
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          g.moveTo(hx - sz, p.y - sz * 0.15);
+          g.lineTo(hx, p.y - sz * 1.15);
+          g.lineTo(hx + sz, p.y - sz * 0.15);
+          g.closePath();
+          g.fillStyle = intel.level === 0 ? '#7a746a' : '#b0583a';
+          g.fill();
+          g.stroke();
+          g.fillStyle = intel.level === 0 ? '#9a948a' : '#f3e6c4';
+        }
+      }
       // Nombre.
       const name = intel.level === 0 ? '¿?' : r.name;
-      g.font = `${r.isHome ? 700 : 600} ${r.isHome ? 15 : 14}px Georgia, 'Times New Roman', serif`;
+      g.font = `${r.isHome ? 700 : 600} ${r.isHome ? 15 : 14}px Alegreya, Georgia, serif`;
       g.textAlign = 'center';
       g.textBaseline = 'top';
       // Evita que las etiquetas se pisen: prueba debajo, más abajo y encima.
@@ -873,12 +964,57 @@ export class MapView {
       if (r.flags.guerra && intel.level > 0) icons.includes('⚔') || icons.push('⚔');
       if (w.petitions.some((x) => x.regionId === r.id)) icons.push('❗');
       if (w.rumors.some((x) => x.known && x.about === r.id && !x.investigated && w.day - x.day < 6)) icons.push('💬');
-      if (icons.length) {
-        g.font = '14px system-ui, sans-serif';
-        g.textBaseline = 'middle';
-        g.fillText(icons.join(' '), p.x, p.y - 22);
-      }
+      if (icons.length) drawInkRow(g, icons, p.x, p.y - 24, 16);
     }
   }
+}
+
+/** Bordes de pergamino envejecido (se pinta una vez por tamaño de pantalla). */
+function parchmentFrame(W: number, H: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d')!;
+  const v = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.72);
+  v.addColorStop(0, 'rgba(60,40,20,0)');
+  v.addColorStop(0.75, 'rgba(70,46,22,0.18)');
+  v.addColorStop(1, 'rgba(48,30,14,0.55)');
+  g.fillStyle = v;
+  g.fillRect(0, 0, W, H);
+  // Filete doble tinta y oro.
+  g.strokeStyle = 'rgba(43,30,21,0.55)';
+  g.lineWidth = 2;
+  g.strokeRect(7, 7, W - 14, H - 14);
+  g.strokeStyle = 'rgba(201,160,82,0.7)';
+  g.lineWidth = 1;
+  g.strokeRect(11, 11, W - 22, H - 22);
+  // Rosa de los vientos en una esquina.
+  const x = W - 46;
+  const y = H - 96;
+  g.save();
+  g.translate(x, y);
+  g.globalAlpha = 0.75;
+  g.strokeStyle = 'rgba(43,30,21,0.8)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.arc(0, 0, 20, 0, Math.PI * 2);
+  g.stroke();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+    const L = i % 2 ? 13 : 26;
+    g.fillStyle = i % 2 ? 'rgba(201,160,82,0.9)' : i === 0 ? 'rgba(160,50,30,0.95)' : 'rgba(43,30,21,0.85)';
+    g.beginPath();
+    g.moveTo(Math.cos(a) * L, Math.sin(a) * L);
+    g.lineTo(Math.cos(a + 0.3) * 4, Math.sin(a + 0.3) * 4);
+    g.lineTo(Math.cos(a - 0.3) * 4, Math.sin(a - 0.3) * 4);
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = 'rgba(43,30,21,0.9)';
+  g.font = '700 11px Alegreya, Georgia, serif';
+  g.textAlign = 'center';
+  g.fillText('N', 0, -30);
+  g.restore();
+  return c;
 }
 

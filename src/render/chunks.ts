@@ -4,6 +4,67 @@ import type { Season } from '../world/clock';
 import type { Layout } from '../world/layout';
 import { idx, inside } from '../world/terrain';
 import { T, TH, TILE, TW } from '../world/types';
+import { geoOf } from '../world/geography';
+import { VQ } from '../visual/quality';
+import { materialTexture, MT, type Material } from '../visual/env/materials';
+
+/** Material de detalle de cada tipo de tesela (0 = ninguno). */
+const MATS: Material[] = ['hierba', 'hierba', 'pradera', 'bosque', 'surcos', 'camino', 'arcilla', 'adoquin', 'arena', 'sal', 'roca', 'barro', 'tablas'];
+const MAT_OF: Partial<Record<number, number>> = { [T.Grass]: 1, [T.Meadow]: 2, [T.Forest]: 3, [T.Field]: 4, [T.Road]: 5, [T.Clay]: 6, [T.Plaza]: 7, [T.Sand]: 8, [T.Salt]: 9, [T.Rock]: 10, [T.Mountain]: 10, [T.Marsh]: 11, [T.Bridge]: 12 };
+/** Muestras alrededor de un punto para saber si hay orilla cerca (desplazamiento x, y y peso). */
+const SHORE: [number, number, number][] = [[3, 0, 1], [-3, 0, 1], [0, 3, 1], [0, -3, 1], [6, 0, 0.6], [-6, 0, 0.6], [0, 6, 0.6], [0, -6, 0.6], [10, 0, 0.3], [-10, 0, 0.3], [0, 10, 0.3], [0, -10, 0.3]];
+
+/** Ruido de valor suave (0..1), determinista. */
+function hash2(x: number, y: number): number {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+/**
+ * Amplía la máscara de nieve (suave, a media resolución) al tamaño final y allí la vuelve casi
+ * binaria: montón opaco o suelo pisado con un polvillo, con un borde corto y limpio.
+ */
+const edgeCanvases: (HTMLCanvasElement | undefined)[] = [];
+function snowEdge(mask: HTMLCanvasElement, BP: number, W: number, center = 0.44, slot = 0): HTMLCanvasElement {
+  const have = edgeCanvases[slot];
+  const c = have && have.width === W ? have : (edgeCanvases[slot] = Object.assign(document.createElement('canvas'), { width: W, height: W }));
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.clearRect(0, 0, W, W);
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  // Un desenfoque del tamaño de una muestra antes del umbral: la ampliación bilineal sola dejaba el
+  // contorno en escalera (cada muestra de la máscara son varios píxeles finales).
+  const k = W / BP;
+  g.filter = `blur(${(k * 0.75).toFixed(2)}px)`;
+  g.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+  g.filter = 'none';
+  const im = g.getImageData(0, 0, W, W);
+  const d = im.data;
+  for (let i = 3; i < d.length; i += 4) {
+    // (por bytes: 0,08 se guarda como 20/255 = 0,078, y comparar con 0,08 dejaba los claros
+    // de tierra fuera de la región nevada)
+    if (d[i] < 15) continue; // fuera de la región nevada (o su borde): se queda como está
+    const a = d[i] / 255;
+    const t = Math.max(0, Math.min(1, ((a - 0.08) / 0.92 - center) / 0.12));
+    d[i] = Math.round(255 * (0.1 + t * t * (3 - 2 * t) * 0.87));
+  }
+  g.putImageData(im, 0, 0);
+  return c;
+}
+
+function vnoise(x: number, y: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(x0, y0);
+  const b = hash2(x0 + 1, y0);
+  const c = hash2(x0, y0 + 1);
+  const d = hash2(x0 + 1, y0 + 1);
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+}
 
 /**
  * Suelo del mundo dibujado por fragmentos (24×24 teselas) que se guardan en
@@ -13,25 +74,10 @@ import { T, TH, TILE, TW } from '../world/types';
  */
 export const CHUNK = 24;
 
-/** Ruido fino para dar textura al suelo (64×64, se repite). */
-const NOISE = (() => {
-  const n = new Uint8Array(64 * 64);
-  let s = 1234567;
-  for (let i = 0; i < n.length; i++) {
-    s = (s * 1103515245 + 12345) >>> 0;
-    n[i] = (s >>> 24) % 17;
-  }
-  // Suavizado ligero para que no parezca nieve de televisor.
-  const m = new Uint8Array(n.length);
-  for (let y = 0; y < 64; y++)
-    for (let x = 0; x < 64; x++) {
-      let sum = 0;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sum += n[((y + dy) & 63) * 64 + ((x + dx) & 63)];
-      m[y * 64 + x] = Math.round(sum / 9);
-    }
-  return m;
-})();
 const CPX = CHUNK * TILE;
+/** Margen de cada lienzo de suelo (px de mundo), igual a una muestra de la capa base. */
+export const PAD = 2;
+const phase = (x: number, res: number, off: number) => (((x * res) % off) + off) % off;
 
 export interface StaticObject {
   x: number; // píxeles de mundo (pies)
@@ -56,7 +102,6 @@ function hsl(h: number, s: number, l: number): [number, number, number] {
   return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
 }
 
-const rgb = (c: [number, number, number], k = 1) => `rgb(${Math.round(c[0] * k)},${Math.round(c[1] * k)},${Math.round(c[2] * k)})`;
 
 export class ChunkCache {
   private chunks = new Map<string, ChunkEntry>();
@@ -67,9 +112,13 @@ export class ChunkCache {
     this.grass = w.regions.map((r) => {
       const hue = (r.isHome ? PLAYER_CULTURE : CULTURES.find((c) => c.id === r.culture) ?? PLAYER_CULTURE).hue;
       const shift = ((hue % 60) - 30) * 0.12;
-      // Verde vivo de pixel art; una tierra degradada amarillea.
-      return hsl(96 + shift - (r.ecology < 0.5 ? 14 : 0), Math.max(26, Math.min(58, 48 + (r.ecology - 0.6) * 30)), 47);
+      // Verde natural, algo apagado; una tierra degradada amarillea.
+      return hsl(88 + shift - (r.ecology < 0.5 ? 16 : 0), Math.max(22, Math.min(44, 36 + (r.ecology - 0.6) * 26)), 40);
     });
+  }
+
+  private nearPost(tx: number, ty: number): boolean {
+    return this.l.posts.some((p) => Math.abs(p.x - tx) < 7 && Math.abs(p.y - ty) < 7);
   }
 
   private nearVillage(tx: number, ty: number): boolean {
@@ -80,177 +129,381 @@ export class ChunkCache {
     this.w = w;
   }
 
-  /** Clave del estado visual de un fragmento: estación y campos con hambre. */
+  /** Clave común del estado visual (la estación); cada fragmento añade el de sus propias regiones. */
   stateKey(season: Season): string {
-    const hungry = this.w.regions.map((r) => (r.flags.hambre ? 1 : 0) + (r.ecology < 0.42 ? 2 : 0)).join('');
-    return `${season}:${hungry}`;
+    // Un invierno largo en cualquier región nieva en todas las tierras: va en la clave común.
+    return season + (season === 'invierno' && this.w.regions.some((r) => r.flags.invierno) ? '*' : '');
+  }
+
+  /** Fragmentos pintados desde el arranque (la escena lo usa para no pintar dos en un fotograma). */
+  paints = 0;
+  /** Regiones donde está nevando ahora (lo decide la escena con el tiempo de cada región). */
+  snowing = new Set<number>();
+  private regionsIn = new Map<string, number[]>();
+  /** Regiones que tocan un fragmento: solo su hambre o su abandono obligan a repintarlo. */
+  private localKey(cx: number, cy: number): string {
+    const id = `${cx},${cy}`;
+    let regs = this.regionsIn.get(id);
+    if (!regs) {
+      const set = new Set<number>();
+      const reg = this.l.terrain.region;
+      for (let ty = cy * CHUNK; ty < Math.min(TH, cy * CHUNK + CHUNK); ty += 2) for (let tx = cx * CHUNK; tx < Math.min(TW, cx * CHUNK + CHUNK); tx += 2) set.add(reg[idx(tx, ty)]);
+      regs = [...set].filter((r) => r >= 0);
+      this.regionsIn.set(id, regs);
+    }
+    let k = '';
+    for (const r of regs) {
+      const R = this.w.regions[r];
+      k += (R.flags.hambre ? 1 : 0) + (R.ecology < 0.42 ? 2 : 0) + (R.flags.invierno ? 4 : 0) + (this.snowing.has(r) ? 8 : 0);
+    }
+    return k;
+  }
+
+  has(cx: number, cy: number, stateKey: string): boolean {
+    const hit = this.chunks.get(`${cx},${cy}`);
+    return !!hit && hit.key === `${stateKey}:${this.localKey(cx, cy)}@${VQ().terrainRes}`;
+  }
+
+  /**
+   * Precarga en los ratos libres: pinta como mucho un fragmento vecino que
+   * falte (el más cercano a donde va la cámara), para que al cruzar una
+   * frontera de fragmento no haya que pintar varios de golpe.
+   */
+  prewarm(cx: number, cy: number, dirX: number, dirY: number, season: Season, stateKey: string): boolean {
+    const cand: [number, number, number][] = [];
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || y < 0 || x * CHUNK >= TW || y * CHUNK >= TH) continue;
+        if (this.has(x, y, stateKey)) continue;
+        cand.push([x, y, Math.hypot(dx, dy) - (dx * dirX + dy * dirY) * 0.8]);
+      }
+    if (!cand.length && !this.job) return false;
+    cand.sort((a, b) => a[2] - b[2]);
+    const res = VQ().terrainRes;
+    if (!this.job && cand.length) {
+      const [x, y] = cand[0];
+      const id = `${x},${y}`;
+      const canvas = document.createElement('canvas');
+      this.job = { id, key: `${stateKey}:${this.localKey(x, y)}@${res}`, canvas, steps: this.paintSteps(canvas, x, y, season, res) };
+    }
+    // Unos 4 ms de trabajo por fotograma como mucho.
+    const job = this.job!;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 4) {
+      if (job.steps.next().done) {
+        this.job = null;
+        this.paints++;
+        this.chunks.delete(job.id);
+        this.chunks.set(job.id, { key: job.key, canvas: job.canvas });
+        this.trim();
+        break;
+      }
+    }
+    return true;
+  }
+
+  private job: { id: string; key: string; canvas: HTMLCanvasElement; steps: Generator<void> } | null = null;
+  /** Cuántos fragmentos caben: los que se ven más un anillo de precarga (lo fija la escena según la pantalla). */
+  capacity = 12;
+  private trim(): void {
+    while (this.chunks.size > this.capacity) this.chunks.delete(this.chunks.keys().next().value!);
   }
 
   get(cx: number, cy: number, season: Season, stateKey: string): HTMLCanvasElement {
     const id = `${cx},${cy}`;
+    const res = VQ().terrainRes;
+    const key = `${stateKey}:${this.localKey(cx, cy)}@${res}`;
     const hit = this.chunks.get(id);
-    if (hit && hit.key === stateKey) return hit.canvas;
-    const canvas = hit?.canvas ?? document.createElement('canvas');
-    canvas.width = CPX;
-    canvas.height = CPX;
-    this.paint(canvas, cx, cy, season);
-    this.chunks.set(id, { key: stateKey, canvas });
-    if (this.chunks.size > 36) {
-      const first = this.chunks.keys().next().value!;
-      if (first !== id) this.chunks.delete(first);
+    if (hit && hit.key === key) {
+      // Recién usado: al final de la cola.
+      this.chunks.delete(id);
+      this.chunks.set(id, hit);
+      return hit.canvas;
     }
+    // Si la precarga lo estaba pintando, se termina ahora.
+    if (this.job && this.job.id === id && this.job.key === key) {
+      const job = this.job;
+      this.job = null;
+      while (!job.steps.next().done);
+      this.paints++;
+      this.chunks.delete(id);
+      this.chunks.set(id, { key, canvas: job.canvas });
+      this.trim();
+      return job.canvas;
+    }
+    const canvas = hit?.canvas ?? document.createElement('canvas');
+    this.paints++;
+    this.paint(canvas, cx, cy, season, res);
+    this.chunks.delete(id);
+    this.chunks.set(id, { key, canvas });
+    this.trim();
     return canvas;
   }
 
   /**
-   * Pinta un fragmento en pixel art. Cada píxel toma el color de su tesela,
-   * pero el límite entre teselas se desplaza con ruido: los bordes entre
-   * hierba, tierra, agua o roca quedan dentados y orgánicos, sin cuadrícula.
-   * Cada material tiene su textura (matas de hierba, guijarros, adoquines,
-   * reflejos del agua, surcos, grietas) con 3–4 tonos por color, y el
-   * relieve se marca en escalones de luz.
+   * Pinta un fragmento de suelo. Primero el color continuo (una pasada por
+   * píxel de mundo): cada material con su tono, manchas de color a dos
+   * escalas, el relieve sombreado con luz del noroeste, orillas húmedas y
+   * espuma, y bordes orgánicos entre materiales. Después, a la resolución
+   * del nivel gráfico, el detalle de cada material (briznas, guijarros,
+   * adoquines, grietas, surcos, tablones) solo donde ese material está.
    */
-  private paint(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season): void {
-    const g = canvas.getContext('2d')!;
-    const { tiles, region, variant, elev } = this.l.terrain;
-    const N = CHUNK + 2;
-    const col = new Float32Array(N * N * 3);
-    const typ = new Uint8Array(N * N);
-    const lit = new Float32Array(N * N);
-    const high = new Uint8Array(N * N);
-    const tx0 = cx * CHUNK - 1;
-    const ty0 = cy * CHUNK - 1;
-    for (let j = 0; j < N; j++)
-      for (let i = 0; i < N; i++) {
-        const tx = Math.max(0, Math.min(TW - 1, tx0 + i));
-        const ty = Math.max(0, Math.min(TH - 1, ty0 + j));
-        const c = this.tileColor(tx, ty, season);
-        const k = idx(tx, ty);
-        const t = tiles[k];
-        let l = 1;
-        if (t !== T.Deep && t !== T.Sea && t !== T.River) {
-          const ex = elev[idx(Math.max(0, tx - 1), ty)] - elev[idx(Math.min(TW - 1, tx + 1), ty)];
-          const ey = elev[idx(tx, Math.max(0, ty - 1))] - elev[idx(tx, Math.min(TH - 1, ty + 1))];
-          const raw = (ex + ey) * (t === T.Mountain || t === T.Rock ? 0.022 : 0.012);
-          l = raw > 0.05 ? 1.07 : raw < -0.05 ? 0.9 : 1;
-        }
-        const o = j * N + i;
-        col[o * 3] = c[0];
-        col[o * 3 + 1] = c[1];
-        col[o * 3 + 2] = c[2];
-        typ[o] = t;
-        lit[o] = l;
-        high[o] = t === T.Mountain && elev[k] > 200 ? 1 : 0;
-      }
-    const img = g.createImageData(CPX, CPX);
+  private paint(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season, res: number): void {
+    for (const _ of this.paintSteps(canvas, cx, cy, season, res)) void _;
+  }
+
+  /**
+   * El pintado, en pasos: cede el control cada pocas filas y tras cada material.
+   * Así la precarga reparte el trabajo entre fotogramas (unos milisegundos en
+   * cada uno) en vez de congelar uno entero. Cada pintado usa sus propios
+   * lienzos de trabajo, de modo que un fragmento urgente puede pintarse de una
+   * vez aunque haya otro a medias.
+   */
+  private *paintSteps(canvas: HTMLCanvasElement, cx: number, cy: number, season: Season, res: number): Generator<void> {
+    const { tiles, elev, region } = this.l.terrain;
+    // La capa base es suave (manchas, relieve, orillas): se calcula a media
+    // resolución (una muestra cada 2 px de mundo) y se amplía con suavizado,
+    // que además funde los bordes entre materiales. Cuatro veces menos trabajo.
+    // Una muestra de margen por cada lado (tomada del fragmento vecino): al ampliar
+    // con suavizado, el borde se interpola igual a ambos lados y no hay costura.
+    const BN = CPX / 2;
+    const BP = BN + 2;
+    const base = Object.assign(document.createElement('canvas'), { width: BP, height: BP });
+    const bg = base.getContext('2d', { willReadFrequently: true })!;
+    const img = bg.createImageData(BP, BP);
     const d = img.data;
-    const isWater = (t: number) => t === T.Sea || t === T.Deep || t === T.River;
+    const mats = new Uint8Array(BP * BP);
+    // Nieve por región (no por fragmento): su borde sigue al de las regiones, ondulado.
+    const snowReg = this.w.regions.map((_, i) => this.snowyRegion(i, season));
+    const anySnow = snowReg.some(Boolean);
+    const snowA = anySnow ? new Uint8Array(BP * BP) : null;
     const wx0 = cx * CPX;
     const wy0 = cy * CPX;
-    // Tesela (en la rejilla con margen) que "posee" un píxel de mundo, con borde dentado.
-    const owner = (wx: number, wy: number): number => {
-      const jx = (NOISE[(((wy >> 2) + 11) & 63) * 64 + (((wx >> 2) + 37) & 63)] - 8) * 1.1 + (NOISE[((wy + 3) & 63) * 64 + ((wx + 29) & 63)] - 8) * 0.35;
-      const jy = (NOISE[(((wy >> 2) + 41) & 63) * 64 + (((wx >> 2) + 5) & 63)] - 8) * 1.1 + (NOISE[((wy + 17) & 63) * 64 + ((wx + 3) & 63)] - 8) * 0.35;
-      const i = Math.floor((wx + jx) / TILE) - tx0;
-      const j = Math.floor((wy + jy) / TILE) - ty0;
-      return Math.max(0, Math.min(N - 1, j)) * N + Math.max(0, Math.min(N - 1, i));
+    const tileAt = (wx: number, wy: number) => tiles[idx(Math.max(0, Math.min(TW - 1, Math.floor(wx / TILE))), Math.max(0, Math.min(TH - 1, Math.floor(wy / TILE))))];
+    // Tesela que «posee» un punto, con el borde ondulado por ruido suave.
+    let otx = 0;
+    let oty = 0;
+    const ownerTile = (wx: number, wy: number) => {
+      const jx = (vnoise(wx / 29 + 3.1, wy / 29) - 0.5) * 17 + (vnoise(wx / 9, wy / 9 + 7.7) - 0.5) * 5;
+      const jy = (vnoise(wx / 29, wy / 29 + 9.4) - 0.5) * 17 + (vnoise(wx / 9 + 4.2, wy / 9) - 0.5) * 5;
+      otx = Math.max(0, Math.min(TW - 1, Math.floor((wx + jx) / TILE)));
+      oty = Math.max(0, Math.min(TH - 1, Math.floor((wy + jy) / TILE)));
     };
-    for (let py = 0; py < CPX; py++) {
-      const wy = wy0 + py;
-      for (let px = 0; px < CPX; px++) {
-        const wx = wx0 + px;
-        const o = owner(wx, wy);
-        const t = typ[o];
-        let r = col[o * 3];
-        let gg = col[o * 3 + 1];
-        let b = col[o * 3 + 2];
-        const h = (Math.imul(wx, 73856093) ^ Math.imul(wy, 19349663) ^ (wx * wy)) >>> 0;
-        const v = h & 255;
-        const n = NOISE[((wy >> 2) & 63) * 64 + ((wx >> 2) & 63)]; // manchas grandes 0..16
-        let k = n < 6 ? 0.94 : n > 11 ? 1.05 : 1; // manchas de color
-        let cool = 0; // desplazamiento a violeta de las sombras
-        switch (t) {
-          case T.Grass:
-          case T.Meadow:
-          case T.Forest:
-            if (v < (t === T.Forest ? 34 : 20)) (k *= 0.8), (cool = 1);
-            else if (v > 247) k *= 1.14;
-            break;
-          case T.Road:
-          case T.Clay:
-            if (v < 16) (k *= 0.8), (cool = 1);
-            else if (v > 242) k *= 1.12;
-            break;
-          case T.Sand:
-          case T.Salt:
-            if (v < 10) k *= 0.88;
-            else if (v > 236) k *= 1.08;
-            break;
-          case T.Plaza: {
-            // Adoquines de 6×5 en hileras alternas.
-            const row = Math.floor(wy / 5);
-            const off = (row & 1) * 3;
-            const sx = (wx + off) % 6;
-            const sy = wy % 5;
-            const stone = ((Math.imul(Math.floor((wx + off) / 6), 2654435761) ^ Math.imul(row, 40503)) >>> 0) & 7;
-            if (sx === 0 || sy === 0) (k = 0.74), (cool = 1);
-            else if (sx === 1 && sy === 1) k = 1.12;
-            else k = 0.94 + stone * 0.018;
-            break;
+    // ¿Hay agua cerca de cada tesela? (para no consultar 12 teselas por muestra lejos de la costa)
+    const tx0 = Math.max(0, cx * CHUNK - 1);
+    const ty0 = Math.max(0, cy * CHUNK - 1);
+    let anyWater = false;
+    for (let ty = ty0; ty < Math.min(TH, ty0 + CHUNK + 2) && !anyWater; ty++) for (let tx = tx0; tx < Math.min(TW, tx0 + CHUNK + 2); tx++) if (tiles[idx(tx, ty)] === T.Sea || tiles[idx(tx, ty)] === T.Deep || tiles[idx(tx, ty)] === T.River) (anyWater = true);
+    const elevAt = (wx: number, wy: number) => {
+      const fx = wx / TILE - 0.5;
+      const fy = wy / TILE - 0.5;
+      const x0 = Math.max(0, Math.min(TW - 2, Math.floor(fx)));
+      const y0 = Math.max(0, Math.min(TH - 2, Math.floor(fy)));
+      const ax = Math.max(0, Math.min(1, fx - x0));
+      const ay = Math.max(0, Math.min(1, fy - y0));
+      const e00 = elev[idx(x0, y0)];
+      const e10 = elev[idx(x0 + 1, y0)];
+      const e01 = elev[idx(x0, y0 + 1)];
+      const e11 = elev[idx(x0 + 1, y0 + 1)];
+      return (e00 * (1 - ax) + e10 * ax) * (1 - ay) + (e01 * (1 - ax) + e11 * ax) * ay;
+    };
+    const colCache = new Map<number, [number, number, number]>();
+    const colorOf = (tx: number, ty: number) => {
+      const k = idx(tx, ty);
+      let c = colCache.get(k);
+      if (!c) colCache.set(k, (c = this.tileColor(tx, ty, season)));
+      return c;
+    };
+    const isWater = (t: number) => t === T.Sea || t === T.Deep || t === T.River;
+    for (let py = 0; py < BP; py++) {
+      if ((py & 15) === 15) yield;
+      const wy = wy0 + (py - 1) * 2 + 1;
+      for (let px = 0; px < BP; px++) {
+        const wx = wx0 + (px - 1) * 2 + 1;
+        ownerTile(wx, wy);
+        const k = idx(otx, oty);
+        const t = tiles[k];
+        const c = colorOf(otx, oty);
+        let r = c[0];
+        let g = c[1];
+        let b = c[2];
+        const n1 = vnoise(wx / 70, wy / 70);
+        const n2 = vnoise(wx / 17 + 11, wy / 17 + 5);
+        const q = (py * BP + px) * 4;
+        if (isWater(t)) {
+          // Profundidad: más clara y turquesa cerca de la orilla.
+          let near = 0;
+          for (const [dx, dy, w] of SHORE) if (!isWater(tileAt(wx + dx, wy + dy))) near = Math.max(near, w);
+          const deep = t === T.Deep ? 1 : 0;
+          r = r * (1 - near * 0.15) + 90 * near * 0.6;
+          g = g * (1 - near * 0.1) + 160 * near * 0.5;
+          b = b * (1 - near * 0.05) + 170 * near * 0.4;
+          const wave = 0.94 + n2 * 0.1 - deep * 0.04;
+          r *= wave;
+          g *= wave;
+          b *= wave;
+          if (near > 0.95) (r = 214), (g = 230), (b = 228); // espuma
+          mats[py * BP + px] = 0;
+        } else {
+          // Manchas de color: zonas más amarillas y secas, otras más frescas y frías.
+          const warm = (n1 - 0.5) * 0.22;
+          const fine = (n2 - 0.5) * 0.12;
+          const k2 = 1 + fine;
+          r = r * k2 * (1 + warm * 0.9);
+          g = g * k2 * (1 + warm * 0.25);
+          b = b * k2 * (1 - warm * 0.8);
+          // Relieve: luz del noroeste.
+          const e = elevAt(wx, wy);
+          const ex = elevAt(wx + 6, wy) - e;
+          const ey = elevAt(wx, wy + 6) - e;
+          const steep = t === T.Mountain || t === T.Rock ? 0.05 : 0.028;
+          const shade = Math.max(-0.28, Math.min(0.22, -(ex + ey) * steep));
+          if (shade > 0) (r += (255 - r) * shade * 0.6), (g += (255 - g) * shade * 0.55), (b += (255 - b) * shade * 0.35);
+          else (r *= 1 + shade), (g *= 1 + shade * 0.95), (b *= 1 + shade * 0.7);
+          // Orilla húmeda.
+          let wet = 0;
+          if (anyWater) for (const [dx, dy, w] of SHORE) if (isWater(tileAt(wx + dx, wy + dy))) wet = Math.max(wet, w);
+          if (wet > 0) (r *= 1 - wet * 0.22), (g *= 1 - wet * 0.18), (b *= 1 - wet * 0.08);
+          // Desgaste de las plazas: más oscuras y sucias en manchas grandes.
+          if (t === T.Plaza) {
+            const wear = vnoise(wx / 40 + 5, wy / 40 + 2);
+            const dk = 0.9 + wear * 0.14;
+            (r *= dk), (g *= dk), (b *= dk * 0.98);
           }
-          case T.Bridge:
-            if (wx % 4 === 0) (k = 0.72), (cool = 1);
-            else if (wx % 4 === 1) k = 1.1;
-            break;
-          case T.Field:
-            if (wy % 4 === 0) (k *= 0.78), (cool = 1);
-            else if (wy % 4 === 1) k *= 1.06;
-            break;
-          case T.Mountain:
-          case T.Rock:
-            if (v < 22) (k *= 0.76), (cool = 1);
-            else if (v > 238) k *= 1.12;
-            if (high[o]) (r = 228), (gg = 234), (b = 242), (k = v < 30 ? 0.86 : 1);
-            break;
-          case T.Marsh:
-            if (n < 5) (r = 78), (gg = 120), (b = 128);
-            else if (v < 24) k *= 0.82;
-            break;
-          case T.Sea:
-          case T.Deep:
-          case T.River: {
-            // Reflejos: rayas cortas horizontales.
-            const band = (wy + (n >> 2)) % (t === T.River ? 7 : 9);
-            if (band === 0 && (v & 7) < 5) k = 1.16;
-            else if (band === 1 && (v & 7) < 3) k = 1.07;
-            else if (n < 5) k = 0.92;
-            // Espuma donde toca tierra; orilla mojada al otro lado.
-            if (!isWater(typ[owner(wx, wy - 2)]) || !isWater(typ[owner(wx, wy + 2)]) || !isWater(typ[owner(wx - 2, wy)]) || !isWater(typ[owner(wx + 2, wy)])) (r = 214), (gg = 232), (b = 236), (k = v < 60 ? 0.94 : 1);
-            break;
+          mats[py * BP + px] = MAT_OF[t] ?? 0;
+          const rg = region[k];
+          if (snowA && rg >= 0 && snowReg[rg]) {
+            // Más fina en caminos y plazas (pisada), con claros donde el viento la barre.
+            const trod = t === T.Road || t === T.Plaza || t === T.Bridge;
+            // Manto con bordes definidos, no un velo: en el campo, nieve casi entera; en calles y
+            // plazas, zonas pisadas (se ve el adoquín) y montones limpios, con un borde corto entre ambos.
+            // (la misma fórmula a ambos lados del borde de la calle, solo con el umbral corrido:
+            // si no, el cambio de tesela dejaba escalones del tamaño de una casilla)
+            // Ruido en ejes girados y en tres octavas: el ruido de valor sobre la rejilla, cortado
+            // por un umbral, dibujaba escalones en ángulo recto.
+            const rx = wx * 0.8 + wy * 0.6;
+            const ry = wy * 0.8 - wx * 0.6;
+            const v = vnoise(rx / 23 + 13, ry / 23 + 7) * 0.55 + vnoise(ry / 9 + 3, rx / 9 + 9) * 0.3 + vnoise(rx / 3.5 + 1, ry / 3.5 + 5) * 0.15 + (trod ? 0 : 0.22);
+            // Casi binaria: o montón de nieve opaco o adoquín pisado limpio; a medias, el adoquín
+            // asomaba borroso bajo un velo y se leía como baja resolución.
+            // Aquí se guarda suave (0..1 en una franja ancha); el umbral que la deja casi binaria
+            // se aplica después de ampliarla, a resolución final (si no, el borde salía en escalera).
+            const e = Math.max(0, Math.min(1, (v - 0.37) / 0.2));
+            const a = 0.08 + e * 0.92; // (0 queda para «fuera de la región nevada»)
+            snowA[py * BP + px] = Math.round(255 * a);
           }
         }
-        if (!isWater(t) && t !== T.Plaza && t !== T.Bridge) {
-          k *= lit[o];
-          if (isWater(typ[owner(wx, wy - 2)]) || isWater(typ[owner(wx, wy + 2)]) || isWater(typ[owner(wx - 2, wy)]) || isWater(typ[owner(wx + 2, wy)])) (k *= 0.84), (cool = 1);
-        }
-        const q = (py * CPX + px) * 4;
-        d[q] = r * k - cool * 8;
-        d[q + 1] = gg * k - cool * 4;
-        d[q + 2] = b * k + cool * 10;
+        d[q] = r;
+        d[q + 1] = g;
+        d[q + 2] = b;
         d[q + 3] = 255;
       }
     }
-    g.putImageData(img, 0, 0);
-    for (let j = 0; j < CHUNK; j++)
-      for (let i = 0; i < CHUNK; i++) {
-        const tx = cx * CHUNK + i;
-        const ty = cy * CHUNK + j;
-        if (!inside(tx, ty)) continue;
-        const k = idx(tx, ty);
-        const reg = region[k];
-        const c = this.tileColor(tx, ty, season);
-        this.detail(g, tiles[k], i * TILE, j * TILE, variant[k], season, c, k, tx, ty, elev[k], reg >= 0 && this.w.regions[reg].flags.hambre ? 1 : 0);
+    // Bordes de plaza y de camino: una sombra suave donde el empedrado se
+    // encuentra con la hierba (bordillo), en vez de un corte de papel.
+    const PL = MAT_OF[T.Plaza]!;
+    for (let py = 1; py < BP - 1; py++)
+      for (let px = 1; px < BP - 1; px++) {
+        const i = py * BP + px;
+        if (mats[i] !== PL) continue;
+        if (mats[i - 1] !== PL || mats[i + 1] !== PL || mats[i - BP] !== PL || mats[i + BP] !== PL) {
+          const q = i * 4;
+          d[q] *= 0.8;
+          d[q + 1] *= 0.8;
+          d[q + 2] *= 0.82;
+        }
       }
+    bg.putImageData(img, 0, 0);
+    // El lienzo cubre el fragmento más PAD píxeles de mundo por cada lado (contenido
+    // real del vecino): se dibuja a escala exacta y solapado, sin estirar, sin costuras.
+    const W = Math.round((CPX + PAD * 2) * res);
+    canvas.width = W;
+    canvas.height = W;
+    const fg = canvas.getContext('2d')!;
+    fg.imageSmoothingEnabled = true;
+    fg.imageSmoothingQuality = 'high';
+    fg.drawImage(base, 0, 0, BP, BP, 0, 0, W, W);
+    // Detalle de cada material, recortado a donde está.
+    const present = new Set<number>();
+    for (let i = 0; i < mats.length; i += 3) if (mats[i]) present.add(mats[i]);
+    const tmp = document.createElement('canvas');
+    tmp.width = W;
+    tmp.height = W;
+    const tg = tmp.getContext('2d')!;
+    const mask = Object.assign(document.createElement('canvas'), { width: BP, height: BP });
+    const mg = mask.getContext('2d', { willReadFrequently: true })!;
+    const mimg = mg.createImageData(BP, BP);
+    tg.imageSmoothingEnabled = true;
+    for (const m of present) {
+      yield;
+      const name = MATS[m];
+      const md = mimg.data;
+      for (let i = 0; i < mats.length; i++) md[i * 4 + 3] = mats[i] === m ? 255 : 0;
+      mg.putImageData(mimg, 0, 0);
+      const texc = materialTexture(name, res, season);
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      const pat = tg.createPattern(texc, 'repeat')!;
+      const off = MT * res;
+      pat.setTransform(new DOMMatrix().translate(-phase(wx0 - PAD, res, off), -phase(wy0 - PAD, res, off)));
+      tg.fillStyle = pat;
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      // (desenfocada una muestra: ampliada tal cual, la orilla de cada material salía en escalera)
+      tg.filter = `blur(${((W / BP) * 0.6).toFixed(2)}px)`;
+      tg.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+      tg.filter = 'none';
+      fg.globalAlpha = 1;
+      fg.drawImage(tmp, 0, 0);
+      fg.globalAlpha = 1;
+    }
+    if (snowA) {
+      yield;
+      // Manto de nieve (una sola pasada), con su textura de ventisqueros.
+      const md = mimg.data;
+      for (let i = 0; i < snowA.length; i++) md[i * 4 + 3] = snowA[i];
+      mg.putImageData(mimg, 0, 0);
+      const off = MT * res;
+      // Donde asoma la tierra entre la nieve, está empapada: más oscura y fría (antes era el mismo
+      // camino beis de verano, plano).
+      // (solo dentro de la región nevada: un fragmento puede tocar también otra sin nieve)
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      tg.fillStyle = 'rgb(165,150,142)'; // (más oscuro, el adoquín mojado salía casi negro)
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(snowEdge(mask, BP, W, -1, 2), 0, 0);
+      fg.globalCompositeOperation = 'multiply';
+      fg.drawImage(tmp, 0, 0);
+      fg.globalCompositeOperation = 'source-over';
+      // Un ribete de nieve sucia y fundida (aguanieve gris) alrededor del manto.
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      tg.fillStyle = 'rgba(150,152,160,0.75)';
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(snowEdge(mask, BP, W, 0.3, 1), 0, 0);
+      fg.drawImage(tmp, 0, 0);
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      tg.fillStyle = 'rgba(234,240,248,0.9)';
+      tg.fillRect(0, 0, W, W);
+      const sp = tg.createPattern(materialTexture('nieve', res, season), 'repeat')!;
+      sp.setTransform(new DOMMatrix().translate(-phase(wx0 - PAD, res, off), -phase(wy0 - PAD, res, off)));
+      tg.fillStyle = sp;
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(snowEdge(mask, BP, W), 0, 0);
+      fg.drawImage(tmp, 0, 0);
+    }
+  }
+
+  /** ¿Hay nieve en el suelo de esta región? Tierras frías en invierno, inviernos largos, o nevando ahora. */
+  snowyRegion(reg: number, season: Season): boolean {
+    if (this.snowing.has(reg)) return true;
+    return season === 'invierno' && (geoOf(this.w, reg).climate === 'frio' || this.w.regions.some((r) => r.flags.invierno));
   }
 
   private tileColor(tx: number, ty: number, season: Season): [number, number, number] {
@@ -259,130 +512,62 @@ export class ChunkCache {
     const t = tiles[k];
     const reg = region[k];
     const r = reg >= 0 ? this.w.regions[reg] : undefined;
-    const jitter = 1; // la variación viene del ruido por píxel, no por tesela (sin cuadros)
     let base: [number, number, number];
     switch (t) {
       case T.Deep:
-        base = [44, 80, 102];
+        base = [28, 66, 92];
         break;
       case T.Sea:
-        base = [62, 112, 136];
+        base = [40, 98, 122];
         break;
       case T.River:
-        base = [76, 132, 158];
+        base = [52, 112, 132];
         break;
       case T.Sand:
-        base = [222, 205, 156];
+        base = [214, 196, 150];
         break;
       case T.Salt:
-        base = [232, 228, 216];
+        base = [226, 222, 210];
         break;
       case T.Clay:
-        base = [181, 118, 80];
+        base = [170, 112, 78];
         break;
       case T.Rock:
-        base = [150, 144, 132];
+        base = [138, 132, 124];
         break;
       case T.Mountain:
-        base = [118, 112, 104];
+        base = [112, 106, 102];
         break;
       case T.Marsh:
-        base = [104, 132, 96];
+        base = [88, 112, 82];
         break;
       case T.Road:
-        base = [182, 156, 112];
+        base = [168, 142, 104];
         break;
       case T.Bridge:
-        base = [132, 100, 64];
+        base = [128, 96, 62];
         break;
       case T.Plaza:
-        base = [196, 182, 150];
+        base = [170, 160, 140];
         break;
       case T.Forest:
-        base = r ? (this.grass[reg].map((c) => c * 0.7) as [number, number, number]) : [80, 120, 70];
+        base = r ? (this.grass[reg].map((c) => c * 0.66) as [number, number, number]) : [70, 104, 60];
         break;
       case T.Meadow:
-        base = r ? (this.grass[reg].map((c, n) => c * (n === 1 ? 1.06 : 1.02)) as [number, number, number]) : [160, 185, 110];
+        base = r ? (this.grass[reg].map((c, n) => c * (n === 1 ? 1.05 : 1.03)) as [number, number, number]) : [150, 172, 100];
         break;
       case T.Field:
         base = fieldColor(season, !!r?.flags.hambre);
         break;
       default:
-        base = r ? this.grass[reg] : [143, 178, 106];
+        base = r ? this.grass[reg] : [120, 150, 88];
     }
     const greenish = t === T.Grass || t === T.Meadow || t === T.Forest;
-    if (season === 'otoño' && greenish) base = [base[0] * 1.12, base[1] * 0.97, base[2] * 0.78];
-    if (season === 'invierno' && greenish) base = [base[0] * 0.9 + 22, base[1] * 0.88 + 20, base[2] * 0.9 + 28];
-    if (r && r.ecology < 0.42 && greenish) base = [base[0] * 1.05 + 12, base[1] * 0.9, base[2] * 0.86];
-    return [base[0] * jitter, base[1] * jitter, base[2] * jitter];
-  }
-
-  private detail(g: CanvasRenderingContext2D, t: number, px: number, py: number, v: number, season: Season, base: [number, number, number], k: number, tx: number, ty: number, e: number, hungry: number): void {
-    void tx;
-    void ty;
-    void e;
-    const P = (x: number, y: number, c: string, w = 1, h = 1) => ((g.fillStyle = c), g.fillRect(px + x, py + y, w, h));
-    switch (t) {
-      case T.Grass:
-      case T.Meadow: {
-        // Matas de hierba en forma de «v» y, en primavera, florecillas.
-        const dark = rgb(base, 0.74);
-        const light = rgb(base, 1.12);
-        for (let n = 0; n < (t === T.Meadow ? 3 : 2); n++) {
-          const x = (v * (n * 5 + 3)) % 13;
-          const y = (v * (n * 3 + 7)) % 12 + 2;
-          P(x, y, dark);
-          P(x + 2, y, dark);
-          P(x + 1, y + 1, dark);
-          P(x + 1, y - 1, light);
-        }
-        if ((season === 'primavera' || season === 'verano') && v % 7 === 0) {
-          const fc = ['#f3e27a', '#f0b8cf', '#ffffff', '#b8a0e8'][v % 4];
-          const x = (v * 3) % 13;
-          const y = (v * 5) % 12 + 2;
-          P(x, y, fc);
-          P(x + 1, y + 1, rgb(base, 0.7));
-        }
-        if (season === 'otoño' && v % 5 === 0) P((v * 7) % 14, (v * 3) % 14, ['#d9733a', '#e8b03a', '#b8462a'][v % 3]);
-        break;
-      }
-      case T.Forest:
-        P(v % 12, (v >> 3) % 12, rgb(base, 0.7), 3, 1);
-        P((v * 3) % 13, (v * 7) % 13, season === 'otoño' ? '#c9702a' : rgb(base, 1.15));
-        break;
-      case T.Field: {
-        if (hungry) {
-          P(v % 12, (v >> 2) % 12, '#7c8a4a', 2, 2);
-          P((v * 5) % 12, (v * 3) % 12, '#9a8a5a');
-        } else if (season === 'verano' || season === 'otoño') {
-          const c1 = season === 'verano' ? '#e6c45a' : '#d2a24a';
-          const c2 = season === 'verano' ? '#b8963a' : '#a87a32';
-          for (let y = 1; y < TILE; y += 4)
-            for (let x = 1; x < TILE; x += 3) {
-              P(x, y, c1, 1, 2);
-              P(x, y + 2, c2);
-            }
-        } else if (season === 'primavera') {
-          for (let y = 1; y < TILE; y += 4)
-            for (let x = 2; x < TILE; x += 4) {
-              P(x, y, '#7fb24f');
-              P(x + 1, y, '#5f923a');
-            }
-        }
-        break;
-      }
-      case T.Bridge:
-        P(0, 0, '#4a3420', TILE, 1);
-        P(0, TILE - 1, '#4a3420', TILE, 1);
-        break;
-      case T.Road:
-        if (v % 3 === 0) P(v % 13, (v >> 3) % 13, '#d8c49a', 2, 1), P(v % 13, ((v >> 3) % 13) + 1, '#8a6e48', 2, 1);
-        break;
-      case T.Sand:
-        if (v % 9 === 0) P(v % 12, 6, '#f6efe0'), P((v % 12) + 1, 7, '#c8b080');
-        break;
-    }
-    void k;
+    if (season === 'primavera' && greenish) base = [base[0] * 0.96, base[1] * 1.04, base[2] * 0.95];
+    if (season === 'otoño' && greenish) base = [base[0] * 1.16, base[1] * 0.96, base[2] * 0.72];
+    if (season === 'invierno' && greenish) base = [base[0] * 0.86 + 20, base[1] * 0.84 + 18, base[2] * 0.9 + 26];
+    if (r && r.ecology < 0.42 && greenish) base = [base[0] * 1.06 + 12, base[1] * 0.9, base[2] * 0.82];
+    return base;
   }
 
   /** Objetos estáticos (árboles, rocas, montañas, juncos, mojones) de un fragmento. */
@@ -411,8 +596,15 @@ export class ChunkCache {
         const v2 = (v * 7) & 255;
         const kindOf = (): StaticObject['tree'] =>
           nearWater && v2 < 120 ? 'sauce' : res === 'hierro' || res === 'ambar' ? (v2 % 3 ? 'pino' : 'roble') : res === 'hierbas' ? (v2 % 4 === 0 ? 'abedul' : 'roble') : v2 % 6 === 0 ? 'abedul' : v2 % 9 === 0 ? 'pino' : 'roble';
-        if (t === T.Forest && p < 0.24) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
-        else if ((t === T.Grass || t === T.Meadow) && p < 0.018) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
+        // Bosque con claros: la densidad sigue un ruido amplio (bosquetes espesos y calveros con luz).
+        const grove = vnoise(tx / 7 + 31, ty / 7 + 17);
+        const dens = grove < 0.33 ? 0.02 : grove < 0.5 ? 0.08 : 0.15;
+        // Junto a los puestos fronterizos el monte está talado: se ve quién guarda el paso.
+        const cleared = this.nearPost(tx, ty);
+        if (cleared && p < 0.2) continue;
+        if (t === T.Forest && p < dens) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: kindOf() });
+        else if (t === T.Forest && grove < 0.33 && p > 0.82) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
+        else if ((t === T.Grass || t === T.Meadow) && p < 0.018 && !cleared) out.push({ x: ox, y: oy, kind: 'arbol', v, region: reg, tree: this.nearVillage(tx, ty) ? 'frutal' : kindOf() });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.965) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });
         else if ((t === T.Grass || t === T.Meadow) && p > 0.9) out.push({ x: ox, y: oy, kind: v % 3 ? 'hierba' : 'flores', v, region: reg });
         else if (t === T.Forest && p > 0.9) out.push({ x: ox, y: oy, kind: 'arbusto', v, region: reg });

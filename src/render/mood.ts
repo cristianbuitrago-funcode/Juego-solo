@@ -1,6 +1,6 @@
 import type { WorldState } from '../core/types';
 import type { Folk } from '../world/types';
-import type { Action, Expr } from './human';
+import type { Action, Expr } from '../visual/figure/types';
 import { emotionOf, trait } from '../world/society';
 
 /**
@@ -48,8 +48,9 @@ export function moodOf(w: WorldState, f: Folk): Expr {
 
 /** Lo que hace el cuerpo según la actividad de la rutina (en palabras). */
 export function actionOf(activity: string): Action {
-  if (/forja|martill|pica/.test(activity)) return 'hammer';
-  if (/campo|siembra|cosecha|taller|remedios|ayuda a su/.test(activity)) return 'work';
+  // En el taller y la forja se martillea (antes «taller» caía en la azada: herreros con azadas).
+  if (/forja|martill|pica|taller/.test(activity)) return 'hammer';
+  if (/campo|siembra|cosecha|remedios|ayuda a su/.test(activity)) return 'work';
   if (/redes|pesca/.test(activity)) return 'fish';
   if (/cola|cuenta sus|vacío|no ha abierto/.test(activity)) return 'cross';
   if (/charla|discute|pelea|historias|tratos|recibe|pide pan|celebra|sirve/.test(activity)) return 'talk';

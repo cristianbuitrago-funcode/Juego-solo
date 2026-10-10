@@ -12,7 +12,7 @@ import type { Avatar, Folk } from '../world/types';
 export type HairStyle = 'corto' | 'rapado' | 'largo' | 'coleta' | 'trenza' | 'mono' | 'rizado' | 'calvo' | 'melena';
 export type Beard = 'ninguna' | 'sombra' | 'corta' | 'larga' | 'bigote' | 'perilla';
 export type Hat = 'paja' | 'gorro' | 'piel' | 'capucha' | 'panuelo' | 'pluma' | 'casco' | 'corona' | 'turbante' | 'impermeable' | 'boina' | undefined;
-export type Item = 'azada' | 'martillo' | 'cana' | 'cayado' | 'cesta' | 'lanza' | 'saco' | 'baston' | 'arco' | 'farol' | 'libro' | 'red' | undefined;
+export type Item = 'azada' | 'martillo' | 'cana' | 'cayado' | 'cesta' | 'lanza' | 'saco' | 'baston' | 'arco' | 'farol' | 'libro' | 'red' | 'jarra' | undefined;
 
 export interface Outfit {
   top: 'camisa' | 'tunica' | 'jubon' | 'abrigo' | 'tunicaLarga' | 'acolchado';
@@ -62,6 +62,10 @@ export interface Appearance {
   mouthW: number;
   ears: number;
   freckles: boolean;
+  /** Ojos caídos (−1) o rasgados hacia arriba (1); apertura (0,5 entornados … 0,74 redondos); rubor propio. */
+  eyeTilt?: number;
+  eyeOpen?: number;
+  cheeks?: number;
   wrinkles: number; // 0..1
   stoop: number; // encorvamiento de la vejez
   outfit: Outfit;
@@ -163,7 +167,8 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   const child = f.role === 'nino' || f.age < 14;
   const old = f.age >= 60;
   const skin = SKINS[r() < 0.75 ? P.skins[Math.floor(r() * P.skins.length)] : Math.floor(r() * SKINS.length)];
-  const hairColor = old ? pick(r, ['#d8d4cc', '#bdb8b0', '#e8e4dc', '#9a948c']) : pick(r, HAIRS);
+  // Las canas llegan poco a poco: sal y pimienta desde los cuarenta y tantos.
+  const hairColor = old ? pick(r, ['#d8d4cc', '#bdb8b0', '#e8e4dc', '#9a948c']) : mixHex(pick(r, HAIRS), '#c4beb4', Math.max(0, Math.min(0.6, (f.age - 42) / 28)));
   const hairStyles: HairStyle[] = fem ? ['largo', 'coleta', 'trenza', 'mono', 'melena', 'rizado'] : ['corto', 'rapado', 'rizado', 'corto', 'melena', old ? 'calvo' : 'corto'];
   const beard: Beard = fem || child ? 'ninguna' : pick(r, old ? ['larga', 'corta', 'bigote', 'ninguna'] : ['ninguna', 'ninguna', 'sombra', 'corta', 'bigote', 'perilla', 'larga']);
 
@@ -251,7 +256,8 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
       break;
     case 'anciano':
       o.shawl = pick(r, ['#7a6a5a', '#5a4a4a', '#8a7a6a']);
-      o.item = 'baston';
+      // No toda la gente mayor lleva bastón (con todos, la calle se llenaba de palos).
+      o.item = r() < 0.55 ? 'baston' : pick(r, ['cesta', 'libro', undefined] as const);
       break;
     case 'lider':
       o.top = 'tunicaLarga';
@@ -307,8 +313,9 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
   }
   const ap: Appearance = {
     seed: seedOf(f.id),
-    height: child ? 0.6 + Math.min(1, f.age / 14) * 0.18 : (fem ? 0.95 : 1) * (0.96 + r() * 0.08) * (old ? 0.97 : 1),
-    build: child ? 0.92 : 0.88 + r() * 0.28 + (f.role === 'artesano' || f.role === 'guardia' ? 0.06 : 0),
+    // Siluetas variadas: hay gente baja, alta, flaca y corpulenta; el adolescente aún no ha acabado de crecer.
+    height: child ? 0.6 + Math.min(1, f.age / 14) * 0.18 : (fem ? 0.95 : 1) * (0.89 + r() * 0.2) * (old ? 0.96 : 1) * (f.age < 18 ? 0.88 + (f.age - 14) * 0.03 : 1),
+    build: child ? 0.92 : f.age < 18 ? 0.86 : 0.82 + r() * r() * 0.55 + (f.role === 'artesano' || f.role === 'guardia' ? 0.1 : 0) + (f.age > 40 ? 0.04 : 0),
     fem,
     age: f.age,
     skin,
@@ -316,18 +323,23 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
     lips: shade(skin, 0.78),
     hair: { style: child && fem ? pick(r, ['coleta', 'trenza', 'largo'] as const) : old && !fem && r() < 0.4 ? 'calvo' : pick(r, hairStyles), color: hairColor },
     beard,
-    jaw: fem ? 0.86 + r() * 0.12 : 0.95 + r() * 0.2,
-    faceLen: 0.94 + r() * 0.12,
-    eye: { size: 0.9 + r() * 0.25 + (child ? 0.2 : 0), color: pick(r, EYES), spacing: 0.92 + r() * 0.16 },
+    // Caras distintas de verdad: mandíbulas finas y anchas, rostros cortos y largos.
+    jaw: fem ? 0.8 + r() * 0.22 : 0.88 + r() * 0.37,
+    faceLen: 0.86 + r() * 0.28,
+    eye: { size: 0.86 + r() * 0.3 + (child ? 0.2 : 0), color: pick(r, EYES), spacing: 0.86 + r() * 0.26 },
     brow: { thick: (fem ? 0.7 : 1) * (0.8 + r() * 0.5), color: old ? '#cfcac0' : shade(hairColor, 0.85), tilt: (r() - 0.5) * 0.3 },
     nose: r() * 2,
     mouthW: 0.85 + r() * 0.3,
     ears: 0.9 + r() * 0.25,
     freckles: r() < 0.15,
-    wrinkles: old ? 0.5 + (f.age - 60) / 40 : f.age > 45 ? 0.25 : 0,
+    wrinkles: old ? 0.5 + (f.age - 60) / 40 : f.age > 40 ? 0.12 + (f.age - 40) / 80 : 0,
     stoop: old ? Math.min(1, (f.age - 58) / 25) : 0,
     outfit: o,
     important: !!f.charId,
+    // (al final: así no cambia el resto de rasgos ya repartidos a cada vecino)
+    eyeTilt: (r() - 0.5) * 2,
+    eyeOpen: 0.5 + r() * 0.24,
+    cheeks: r() * r() * 0.3,
   };
   return ap;
 }
