@@ -133,8 +133,18 @@ type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide
  * queda dentro de un mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al
  * jugador. Si pasa, se le lleva al sitio libre más cercano.
  */
+/** Alguien colocado en la escena; si camina hacia un sitio, `tx`/`ty`/`path` son su destino visual. */
+export interface Placed {
+  x: number;
+  y: number;
+  moving: boolean;
+  tx?: number;
+  ty?: number;
+  path?: unknown[];
+}
+
 export function settlePeople(
-  people: { x: number; y: number; moving: boolean }[],
+  people: Placed[],
   me: { x: number; y: number },
   furniture: Pick<Furniture, 'solidAt' | 'unstick' | 'blocksPerson'>,
   passable: (x: number, y: number) => boolean,
@@ -153,7 +163,7 @@ export function settlePeople(
     if (e.moving && !inside) {
       // Quien pasa de largo no salta de sitio: se abre un poco de lado mientras cruza por
       // detrás de alguien (o de un farol), para no quedar «sentado» en su cabeza.
-      const hit = others.find((o) => o !== e && overlaps(o.x, o.y, e.x, e.y, 0.65)) ?? (furniture.blocksPerson(e.x, e.y) ? { x: e.x - 0.01, y: e.y } : null);
+      const hit = (overlaps(me.x, me.y, e.x, e.y, 0.8) ? me : null) ?? others.find((o) => o !== e && overlaps(o.x, o.y, e.x, e.y, 0.65)) ?? (furniture.blocksPerson(e.x, e.y) ? { x: e.x - 0.01, y: e.y } : null);
       if (hit) {
         const nx = e.x + (e.x >= hit.x ? 1 : -1) * 1.6 * dt; // 1,6 casillas por segundo
         if (passable(nx, e.y) && !furniture.solidAt(nx, e.y)) e.x = nx;
@@ -168,9 +178,9 @@ export function settlePeople(
     const hidden = furniture.blocksPerson(e.x, e.y);
     if (inside || onMe || onOther || hidden) {
       furniture.unstick(e, false, free);
-      // Y ese es ahora su sitio: si no, volvía andando al de antes (otra vez detrás del jugador).
-      const t = e as { tx?: number; ty?: number; path?: unknown[] };
-      if (t.tx !== undefined && t.ty !== undefined) (t.tx = e.x), (t.ty = e.y), t.path && (t.path.length = 0);
+      // Y ese es ahora su sitio en la escena (el destino visual, no la rutina): si no, volvía andando
+      // al de antes, otra vez detrás del jugador.
+      if (e.tx !== undefined) (e.tx = e.x), (e.ty = e.y), e.path && (e.path.length = 0);
     }
   }
 }

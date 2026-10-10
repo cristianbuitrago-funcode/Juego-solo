@@ -432,7 +432,9 @@ export function paintCape(g: CanvasRenderingContext2D, ap: Appearance, B: Body, 
   const c = wetten(cl.color, wet);
   const T = B.torso;
   const S = B.shoulder;
-  const L = T + B.leg * 0.62;
+  // De espaldas, a la altura de la rodilla: hasta el suelo tapaba las piernas y la figura se leía
+  // como una capa colgada de un palo.
+  const L = T + B.leg * (facing === 'back' ? 0.45 : 0.62);
   const side = facing === 'side';
   const pts = side ? [-S * 0.3, -T - 0.2, S * 0.1, -T, -S * 0.2, L * 0.45 - T, -S * 0.9, L - T, -S * 1.5, L - T - 0.5, -S * 0.85, -T * 0.4] : [-S * 1.05, -T + 0.2, S * 1.05, -T + 0.2, S * 1.35, L - T, S * 0.4, L - T + 0.4, -S * 0.4, L - T + 0.4, -S * 1.35, L - T];
   blob(g, pts, cloth(g, -S * 1.3, S * 1.3, -T, L - T, facing === 'back' ? c : shd(c, 0.18)), 0.35);

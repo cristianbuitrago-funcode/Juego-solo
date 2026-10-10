@@ -768,7 +768,10 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         for (let k = 0; k < 18; k++) {
           const bx = x0 + 20 + R() * 28;
           const by = base - 5 - R() * 4;
-          ell(g, bx, by, 1.6 + R(), 1 + R() * 0.6, R() < 0.55 ? '#2a1a14' : R() < 0.5 ? '#ff9a3a' : '#ffd070');
+          // Casi todas encendidas, con algún trozo apagado entre ellas.
+          const lit2 = R();
+          ell(g, bx, by, 1.6 + R(), 1 + R() * 0.6, lit2 < 0.25 ? '#3a2018' : lit2 < 0.7 ? '#ff8a2a' : '#ffd070');
+          if (lit2 >= 0.25) ell(g, bx - 0.3, by - 0.3, 0.7, 0.45, 'rgba(255,245,200,0.8)');
         }
         // Herramientas colgadas en la pared del fondo.
         g.strokeStyle = '#4a4a4e';
