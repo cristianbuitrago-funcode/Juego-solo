@@ -466,14 +466,17 @@ export class MapView {
         const c = this.toScreen(r.center.x, r.center.y);
         return Math.hypot(c.x - p0.x, c.y - p0.y) < 16;
       });
-      const p = onMark ? { x: p0.x + 18, y: p0.y + 2 } : p0;
+      // En un pueblo, el aro rodea su hito y la chincheta se clava justo encima (apartada a un lado
+      // caía sobre un nudo de caminos y parecía señalar otra cosa).
+      const p = onMark ? { x: p0.x, y: p0.y - 13 } : p0;
       const pulse = animate ? (Math.sin(t / 300) + 1) / 2 : 0.5;
       // El aro que late en el suelo es el sitio exacto; encima, una chincheta con su
       // rótulo «Estás aquí» al lado (no encima del nombre del pueblo ni del hito).
       g.strokeStyle = `rgba(233,180,76,${0.35 + pulse * 0.45})`;
       g.lineWidth = 2;
       g.beginPath();
-      g.ellipse(p.x, p.y, 7 + pulse * 5, (7 + pulse * 5) * 0.45, 0, 0, Math.PI * 2);
+      const rr = (onMark ? 17 : 7) + pulse * 5;
+      g.ellipse(p0.x, p0.y + (onMark ? 2 : 0), rr, rr * (onMark ? 0.62 : 0.45), 0, 0, Math.PI * 2);
       g.stroke();
       const hy = p.y - 26;
       g.fillStyle = '#e9b44c';

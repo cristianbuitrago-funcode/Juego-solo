@@ -36,6 +36,8 @@ export interface OverlayHost {
   folkById: Map<string, Folk>;
   apCache: Map<string, { key: string; ap: Appearance }>;
   toScreen(x: number, y: number): { x: number; y: number };
+  /** Alto de la franja del HUD (px CSS): los rótulos no se meten debajo. */
+  hudBand: number;
   targetPos(t: Target): { x: number; y: number } | undefined;
 }
 
@@ -167,6 +169,7 @@ export function drawLabels(s: OverlayHost, g: CanvasRenderingContext2D): void {
     const d = Math.hypot(v.cx - me.x, v.cy - me.y);
     if (d > 16) continue;
     const p = s.toScreen((v.cx + 0.5) * TILE, (v.cy - v.plazaR - 1) * TILE);
+    p.y = Math.max(p.y, s.hudBand + 24); // (bajo el reloj no se leía)
     g.globalAlpha = Math.min(1, (16 - d) / 6);
     g.font = '700 17px Alegreya, Georgia, serif';
     g.lineWidth = 4;

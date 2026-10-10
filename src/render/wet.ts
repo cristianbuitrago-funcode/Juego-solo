@@ -25,11 +25,10 @@ export function drawWet(s: WetHost, g: CanvasRenderingContext2D, x0: number, y0:
       const rx = 4 + ((hh * 31) % 1) * 7;
       // Charco sin contorno: forma irregular (dos óvalos), oscuro por dentro y
       // con el cielo reflejado en una franja; un brillo fino en el borde.
-      g.fillStyle = 'rgba(40,52,70,0.42)';
-      g.beginPath();
-      g.ellipse(cx, cy, rx, rx * 0.34, 0, 0, Math.PI * 2);
-      g.ellipse(cx + rx * 0.45, cy + rx * 0.1, rx * 0.6, rx * 0.26, 0, 0, Math.PI * 2);
-      g.fill();
+      // (con borde que se funde en la tierra mojada: relleno liso y canto duro se leían como losas)
+      const pd = puddleSprite();
+      g.drawImage(pd, cx - rx, cy - rx * 0.34, rx * 2, rx * 0.68);
+      g.drawImage(pd, cx + rx * 0.45 - rx * 0.6, cy + rx * 0.1 - rx * 0.26, rx * 1.2, rx * 0.52);
       g.fillStyle = 'rgba(176,192,214,0.32)';
       g.beginPath();
       g.ellipse(cx - rx * 0.1, cy - rx * 0.06, rx * 0.7, rx * 0.12, 0, 0, Math.PI * 2);
@@ -50,4 +49,20 @@ export function drawWet(s: WetHost, g: CanvasRenderingContext2D, x0: number, y0:
         g.stroke();
       }
     }
+}
+
+let puddle: HTMLCanvasElement | null = null;
+/** Mancha de agua: oscura en el centro y que se funde hacia el borde (una vez, y se escala). */
+function puddleSprite(): HTMLCanvasElement {
+  if (puddle) return puddle;
+  const c = Object.assign(document.createElement('canvas'), { width: 64, height: 64 });
+  const g = c.getContext('2d')!;
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(34,46,64,0.55)');
+  gr.addColorStop(0.62, 'rgba(40,52,70,0.42)');
+  gr.addColorStop(0.85, 'rgba(46,56,70,0.18)');
+  gr.addColorStop(1, 'rgba(50,58,70,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  return (puddle = c);
 }

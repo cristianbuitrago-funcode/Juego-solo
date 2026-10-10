@@ -233,6 +233,7 @@ export class WorldScene {
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
   pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
     this.keepVisible(x, y - 26); // la cara, para la regla del HUD
+    this.faces.push(x, y);
     const g = this.g;
     const sun = this.sun;
     this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
@@ -256,6 +257,13 @@ export class WorldScene {
   keepVisible(x: number, y: number): void {
     this.heads.push(x, y);
   }
+  private faces: number[] = [];
+  /** ¿Hay la cara de alguien (píxeles de mundo) dentro del rectángulo, con el pie por detrás de `footY`? */
+  faceBehind(x0: number, y0: number, x1: number, y1: number, footY: number): boolean {
+    const f = this.faces;
+    for (let i = 0; i < f.length; i += 2) if (f[i] > x0 && f[i] < x1 && f[i + 1] - 26 > y0 && f[i + 1] - 26 < y1 && f[i + 1] < footY) return true;
+    return false;
+  }
   private hudShift = 0;
   private hudRule(): void {
     // Zona segura: cuántos píxeles de pantalla habría que bajar la escena para que ninguna cara quede
@@ -268,7 +276,10 @@ export class WorldScene {
       }
     const want = hudShiftFor(ys, this.hudBand, this.hudShift);
     // (histéresis: sube rápido y baja despacio, para que no tiemble cuando alguien entra y sale)
-    this.hudShift += (want - this.hudShift) * (want > this.hudShift ? 0.2 : 0.03);
+    // (por tiempo, no por fotograma: a 30 fps no debe ir el doble de lento que a 60)
+    const dt = Math.min(0.1, this.realDt || 1 / 60);
+    const k = 1 - Math.pow(1 - (want > this.hudShift ? 0.2 : 0.03), dt * 60);
+    this.hudShift += (want - this.hudShift) * k;
   }
 
   /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
@@ -1198,6 +1209,7 @@ export class WorldScene {
     this.shadowQ = [];
     this.groundQ = [];
     this.heads.length = 0;
+    this.faces.length = 0;
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
@@ -1343,12 +1355,20 @@ export class WorldScene {
           g.lineTo(hx + dir * 4, hy - 0.2);
           g.stroke();
           g.globalCompositeOperation = 'lighter';
+          // Pavesas: suben derivando y se apagan, como trazos cortos (en columna y redondas se leían
+          // como luciérnagas).
+          g.lineCap = 'round';
+          g.lineWidth = 0.8;
           for (let i = 0; i < 4; i++) {
-            const u = (pose.t * 0.7 + i / 4) % 1;
-            g.fillStyle = `rgba(255,${170 + i * 20},80,${(1 - u).toFixed(2)})`;
+            const u = (pose.t * 0.55 + hash(`${i}`, 3)) % 1;
+            const drift = (hash(`${i}`, 5) - 0.5) * 14 * u + Math.sin(u * 5 + i * 2) * 1.5;
+            const x = hx + (hash(`${i}`, 7) - 0.5) * 6 + drift;
+            const y = hy - 2 - u * 15;
+            g.strokeStyle = `rgba(255,${150 + i * 20},60,${(0.9 * (1 - u) * (1 - u)).toFixed(2)})`;
             g.beginPath();
-            g.arc(hx + Math.sin(u * 6 + i * 2) * 3, hy - 3 - u * 16, 0.9 * (1 - u * 0.5), 0, Math.PI * 2);
-            g.fill();
+            g.moveTo(x, y);
+            g.lineTo(x - drift * 0.08, y + 1.4);
+            g.stroke();
           }
           if (c > 0.8 && c < 0.97) {
             const k = (c - 0.8) / 0.17;
@@ -1429,7 +1449,8 @@ export class WorldScene {
     // Si el follaje tapa al protagonista, se le sigue viendo en transparencia (no se pierde nunca).
     if (this.playerHidden) {
       g.save();
-      g.globalAlpha = 0.5;
+      // (a 0,5 la copa de un cerezo en flor lo dejaba lavado de rosa)
+      g.globalAlpha = 0.8;
       drawFigure(g, pap, ppose, me.x * TILE, me.y * TILE);
       g.restore();
     }

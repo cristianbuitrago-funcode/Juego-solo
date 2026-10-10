@@ -37,6 +37,7 @@ export function coversHead(front: Box, back: Box): boolean {
  * ahora (si no, la cámara se paraba a medio camino y dejaba media cara tapada).
  */
 export const HUD_SHIFT_MAX = 70;
+export const HUD_RAMP = 24;
 export function hudShiftFor(ys: readonly number[], band: number, shift: number): number {
   if (band <= 0) return 0;
   const line = band + 6;
@@ -47,7 +48,9 @@ export function hudShiftFor(ys: readonly number[], band: number, shift: number):
     // de la pantalla está cortado por el marco, como siempre; contarlo era perseguir la cola: al
     // bajar entraban caras nuevas por arriba y el desplazamiento se iba siempre al tope.
     if (y0 < 0 || y0 >= line) continue;
-    want = Math.max(want, line - y0);
+    // En rampa: quien asoma justo por el borde pide poco y su peso crece mientras entra. Sin rampa,
+    // al pasar de y0 = -1 a 0 la cámara saltaba de 0 a todo el tope de golpe.
+    want = Math.max(want, (line - y0) * Math.min(1, y0 / HUD_RAMP));
   }
   return Math.min(HUD_SHIFT_MAX, want);
 }

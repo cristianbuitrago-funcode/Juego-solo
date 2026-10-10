@@ -32,7 +32,12 @@ function snowEdge(mask: HTMLCanvasElement, BP: number, W: number, center = 0.44,
   g.clearRect(0, 0, W, W);
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = 'high';
+  // Un desenfoque del tamaño de una muestra antes del umbral: la ampliación bilineal sola dejaba el
+  // contorno en escalera (cada muestra de la máscara son varios píxeles finales).
+  const k = W / BP;
+  g.filter = `blur(${(k * 0.75).toFixed(2)}px)`;
   g.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+  g.filter = 'none';
   const im = g.getImageData(0, 0, W, W);
   const d = im.data;
   for (let i = 3; i < d.length; i += 4) {
@@ -446,7 +451,10 @@ export class ChunkCache {
       tg.fillStyle = pat;
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
+      // (desenfocada una muestra: ampliada tal cual, la orilla de cada material salía en escalera)
+      tg.filter = `blur(${((W / BP) * 0.6).toFixed(2)}px)`;
       tg.drawImage(mask, 0, 0, BP, BP, 0, 0, W, W);
+      tg.filter = 'none';
       fg.globalAlpha = 1;
       fg.drawImage(tmp, 0, 0);
       fg.globalAlpha = 1;
@@ -463,7 +471,7 @@ export class ChunkCache {
       // (solo dentro de la región nevada: un fragmento puede tocar también otra sin nieve)
       tg.globalCompositeOperation = 'source-over';
       tg.clearRect(0, 0, W, W);
-      tg.fillStyle = 'rgb(150,135,128)';
+      tg.fillStyle = 'rgb(165,150,142)'; // (más oscuro, el adoquín mojado salía casi negro)
       tg.fillRect(0, 0, W, W);
       tg.globalCompositeOperation = 'destination-in';
       tg.drawImage(snowEdge(mask, BP, W, -1, 2), 0, 0);

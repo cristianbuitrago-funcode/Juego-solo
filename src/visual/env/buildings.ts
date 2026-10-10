@@ -777,7 +777,13 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         fg.addColorStop(1, 'rgba(120,30,10,0)');
         g.fillStyle = fg;
         g.fillRect(x0 + 14, base - 34, 40, 34);
-        // Lecho de brasas: carbón oscuro y ascuas que brillan entre los trozos.
+        // Lecho de brasas: una cama de carbón oscuro sobre el hogar y ascuas que brillan entre los trozos.
+        g.fillStyle = '#241612';
+        g.beginPath();
+        g.moveTo(x0 + 17, base - 2);
+        g.quadraticCurveTo(x0 + 34, base - 12, x0 + 51, base - 2);
+        g.closePath();
+        g.fill();
         for (let k = 0; k < 18; k++) {
           const bx = x0 + 20 + R() * 28;
           const by = base - 5 - R() * 4;

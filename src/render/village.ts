@@ -49,6 +49,7 @@ export interface VillageHost {
   weatherHere(): string;
   fire(px: number, py: number, t: number, scale?: number): void;
   keepVisible(x: number, y: number): void;
+  faceBehind(x0: number, y0: number, x1: number, y1: number, footY: number): boolean;
   dress(ap: Appearance, wet: boolean, cold: boolean): Appearance;
   extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance;
   lodAt(x: number, y: number): 0 | 1 | 2;
@@ -221,7 +222,17 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const stBack = cap(stallTex(open, tint, i, open ? goods : undefined, 'back'));
     const stFront = cap(stallTex(open, tint, i, open ? goods : undefined, 'front'));
     items.push({ y: s.y * TILE + STALL_BACK_DY, draw: () => put(g, stBack, s.x * TILE, s.y * TILE) });
-    items.push({ y: s.y * TILE, draw: () => put(g, stFront, s.x * TILE, s.y * TILE), box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay * 0.6, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
+    // Si alguien pasa por detrás y el toldo o el mostrador le tapan la cara, se vuelven translúcidos
+    // (como las copas de los árboles): si no, de quien pasaba solo se veían las piernas.
+    const fx = s.x * TILE - stx.ax;
+    const fy = s.y * TILE - stx.ay;
+    const drawFront = () => {
+      const behind = sc.faceBehind(fx, fy, fx + stx.w, s.y * TILE, s.y * TILE + STALL_BACK_DY + 1) /* (detrás de quien atiende, que sí va bajo el toldo) */;
+      if (behind) g.globalAlpha = 0.5;
+      put(g, stFront, s.x * TILE, s.y * TILE);
+      g.globalAlpha = 1;
+    };
+    items.push({ y: s.y * TILE, draw: drawFront, box: { x0: s.x * TILE - stx.ax, y0: s.y * TILE - stx.ay * 0.6, x1: s.x * TILE - stx.ax + stx.w, y1: s.y * TILE - 2 } });
     // Puesto abierto y de día: alguien lo atiende detrás del mostrador, pregona y despacha.
     const hh = hourOf(life.clock);
     if (open && hh >= 7 && hh < 19.5 && inView(s.x * TILE, s.y * TILE)) {
@@ -331,7 +342,9 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const py = spot.y * TILE;
     sc.lights.push({ x: px, y: py - 8, r: 70, k: 1 });
     items.push({ y: py, draw: () => sc.fire(px, py, t, 1.2) });
-    sc.keepVisible(px, py - 30); // las llamas no quedan bajo el HUD
+    // Las llamas no quedan bajo el HUD: se guarda la base del fuego (un punto alto, por encima de
+    // las llamas, salía de la pantalla a zoom alto y la regla lo descartaba).
+    sc.keepVisible(px, py - 4);
     if (!sc.reduceMotion && Math.random() < 0.05) sc.puff(px, py - 26, 'rgba(120,110,100,', 1);
   }
 }

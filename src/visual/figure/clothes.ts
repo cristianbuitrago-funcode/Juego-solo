@@ -191,7 +191,7 @@ export function paintTorso(g: CanvasRenderingContext2D, ap: Appearance, B: Body,
   // Delantal.
   if (o.apron && !back) {
     const a = wetten(o.apron, wet);
-    blob(g, side ? [S * 0.3, -T * 0.6, S * 0.55, -T * 0.55, Hp * 0.75, B.thigh * 0.7, Hp * 0.25, B.thigh * 0.75] : [-S * 0.55, -T * 0.7, S * 0.55, -T * 0.7, Hp * 0.85, B.thigh * 0.85, -Hp * 0.85, B.thigh * 0.85], cloth(g, -S, S, -T, B.thigh, a), 0.2);
+    blob(g, side ? [-S * 0.05, -T * 0.68, S * 0.62, -T * 0.6, Hp * 0.95, B.thigh * 0.8, Hp * 0.1, B.thigh * 0.85] /* de perfil, un peto que se ve (antes, una tira) */ : [-S * 0.55, -T * 0.7, S * 0.55, -T * 0.7, Hp * 0.85, B.thigh * 0.85, -Hp * 0.85, B.thigh * 0.85], cloth(g, -S, S, -T, B.thigh, a), 0.2);
     g.strokeStyle = shd(a, 0.3);
     g.lineWidth = T * 0.04;
     g.beginPath();
