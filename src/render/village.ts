@@ -48,6 +48,7 @@ export interface VillageHost {
   puff(x: number, y: number, color: string, size: number): void;
   weatherHere(): string;
   fire(px: number, py: number, t: number, scale?: number): void;
+  keepVisible(x: number, y: number): void;
   dress(ap: Appearance, wet: boolean, cold: boolean): Appearance;
   extraAp(id: string, regionId: number, role: FolkRole, age: number, mod?: (ap: Appearance) => void): Appearance;
   lodAt(x: number, y: number): 0 | 1 | 2;
@@ -236,10 +237,9 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       // En la mitad de los puestos abiertos, alguien compra: delante del mostrador, de espaldas,
       // señalando el género (si el jugador no está justo ahí).
       // De perfil, en una esquina del mostrador y mirando al género (de espaldas no se leía el gesto).
-      const side = hash(id, 12) < 0.5 ? -1 : 1;
-      const cx = s.x + side * 1.05;
-      const cy = s.y + 0.55;
-      if (hash(id, w.day) < 0.5 && !(Math.abs(me.x - cx) < 1.2 && Math.abs(me.y - cy) < 1.6)) {
+      const spot = buyerSpot(regionId, i, s, w.day);
+      if (spot && !(Math.abs(me.x - spot.x) < 1.2 && Math.abs(me.y - spot.y) < 1.6)) {
+        const { x: cx, y: cy, side } = spot;
         const cid = `c:${regionId}:${i}:${w.day}`;
         const cap = sc.dress(sc.extraAp(cid, regionId, hash(cid) < 0.5 ? 'campesino' : 'artesano', 18 + Math.floor(hash(cid, 3) * 50)), wet, cold);
         const cbeat = Math.floor(vsec / 1.7 + hash(cid) * 5);
@@ -331,8 +331,20 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
     const py = spot.y * TILE;
     sc.lights.push({ x: px, y: py - 8, r: 70, k: 1 });
     items.push({ y: py, draw: () => sc.fire(px, py, t, 1.2) });
+    sc.keepVisible(px, py - 30); // las llamas no quedan bajo el HUD
     if (!sc.reduceMotion && Math.random() < 0.05) sc.puff(px, py - 26, 'rgba(120,110,100,', 1);
   }
+}
+
+/**
+ * Dónde compra alguien hoy en el puesto `i` (o null si hoy nadie): de perfil, en una esquina del
+ * mostrador. La escena lo reserva como sitio fijo para que nadie se le meta encima.
+ */
+export function buyerSpot(regionId: number, i: number, s: { x: number; y: number }, day: number): { x: number; y: number; side: number } | null {
+  const id = `v:${regionId}:${i}`;
+  if (hash(id, day) >= 0.5) return null;
+  const side = hash(id, 12) < 0.5 ? -1 : 1;
+  return { x: s.x + side * 1.05, y: s.y + 0.55, side };
 }
 
 /**

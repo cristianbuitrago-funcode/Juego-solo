@@ -34,7 +34,8 @@ import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
 import { moveAnimals, type Animal } from './animals';
 import { drawBirds, moveBirds, type Bird } from './birds';
 import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
-import { villageDrawables } from './village';
+import { buyerSpot, villageDrawables } from './village';
+import { hudShiftFor } from './screenbox';
 import { drawWet } from './wet';
 
 /**
@@ -231,7 +232,7 @@ export class WorldScene {
 
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
   pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
-    this.heads.push(x, y - 26); // la cara, para la regla del HUD
+    this.keepVisible(x, y - 26); // la cara, para la regla del HUD
     const g = this.g;
     const sun = this.sun;
     this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
@@ -240,21 +241,32 @@ export class WorldScene {
 
   /**
    * Zona segura del HUD: si una cara cae bajo la franja del HUD (alto `hudBand`, en píxeles CSS),
-   * el HUD se vuelve translúcido mientras dure, en vez de taparla. La app fija `hudBand`.
+   * la cámara sube lo justo (suave y con tope) para que no quede tapada. La app fija `hudBand`.
    */
   hudBand = 0;
   private heads: number[] = [];
+  private smithAps = new WeakMap<Appearance, Appearance>();
+  private smithAp(ap: Appearance): Appearance {
+    if (ap.outfit.apron === '#6a4a30') return ap;
+    let c = this.smithAps.get(ap);
+    if (!c) this.smithAps.set(ap, (c = { ...ap, outfit: { ...ap.outfit, apron: '#6a4a30', sleeves: 'remangadas' } }));
+    return c;
+  }
+  /** Un punto (píxeles de mundo) que el HUD no debe tapar: caras, la hoguera… */
+  keepVisible(x: number, y: number): void {
+    this.heads.push(x, y);
+  }
   private hudShift = 0;
   private hudRule(): void {
     // Zona segura: cuántos píxeles de pantalla habría que bajar la escena para que ninguna cara quede
     // bajo la franja del HUD. La cámara sube ese tanto (suave y con tope) en vez de taparlas.
-    let need = 0;
+    const ys: number[] = [];
     if (this.hudBand > 0)
       for (let i = 0; i < this.heads.length; i += 2) {
         const p = this.toScreen(this.heads[i], this.heads[i + 1]);
-        if (p.x > 8 && p.x < this.vw - 8 && p.y > -30 && p.y < this.hudBand + 6) need = Math.max(need, this.hudBand + 6 - p.y);
+        if (p.x > 8 && p.x < this.vw - 8) ys.push(p.y);
       }
-    const want = Math.min(70, need);
+    const want = hudShiftFor(ys, this.hudBand, this.hudShift);
     // (histéresis: sube rápido y baja despacio, para que no tiemble cuando alguien entra y sale)
     this.hudShift += (want - this.hudShift) * (want > this.hudShift ? 0.2 : 0.03);
   }
@@ -959,7 +971,7 @@ export class WorldScene {
    * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
    * pasa, se le lleva al sitio libre más cercano.
    */
-  private vendorSpots = new Map<number, { x: number; y: number }[]>();
+  private vendorSpots = new Map<number, { day: number; spots: { x: number; y: number }[] }>();
   private settle(dt: number): void {
     const people: Ent[] = [];
     for (const e of this.ents.values()) if (!e.inside) people.push(e);
@@ -970,9 +982,19 @@ export class WorldScene {
     const vendors: { x: number; y: number }[] = [];
     for (const v of this.l.villages) {
       if (Math.abs(v.cx - me.x) >= 40 || Math.abs(v.cy - me.y) >= 40) continue;
-      let spots = this.vendorSpots.get(v.regionId);
-      if (!spots) this.vendorSpots.set(v.regionId, (spots = v.stalls.slice(0, 6).filter((st) => stallShown(v, st)).map(vendorSpot)));
-      for (const sp of spots) vendors.push(sp);
+      // (con quien compra hoy en cada puesto: también es un sitio fijo)
+      let c = this.vendorSpots.get(v.regionId);
+      if (!c || c.day !== this.w.day) {
+        const spots: { x: number; y: number }[] = [];
+        v.stalls.slice(0, 6).forEach((st, i) => {
+          if (!stallShown(v, st)) return;
+          spots.push(vendorSpot(st));
+          const b = buyerSpot(v.regionId, i, st, this.w.day);
+          if (b) spots.push(b);
+        });
+        this.vendorSpots.set(v.regionId, (c = { day: this.w.day, spots }));
+      }
+      for (const sp of c.spots) vendors.push(sp);
     }
     settlePeople(people, me, this.furniture, (x, y) => passable(this.w, this.l, x, y), vendors, dt);
   }
@@ -1277,7 +1299,8 @@ export class WorldScene {
         const smith = anvils.find((a) => Math.abs(a.x - e.x) < 4 && Math.abs(a.y - e.y) < 2)!;
         pose.flip = smith.x < e.x;
       }
-      this.pushPerson(items, ap, pose, e.x * TILE, e.y * TILE);
+      // Quien golpea el yunque lleva el mandil de cuero del oficio, sea cual sea su papel en el pueblo.
+      this.pushPerson(items, pose.action === 'hammer' ? this.smithAp(ap) : ap, pose, e.x * TILE, e.y * TILE);
       if (pose.action === 'hammer') {
         anvils.push(e);
         // El yunque delante, donde cae el martillo.
@@ -1288,6 +1311,8 @@ export class WorldScene {
         // La pieza al rojo sobre el yunque y, en cada golpe, un abanico de chispas.
         const c = (pose.t * 1.3 + ap.seed * 0.1) % 1;
         const strike = Math.floor(pose.t * 1.3 + ap.seed * 0.1);
+        // La pieza al rojo alumbra al herrero y al yunque (más en cada golpe).
+        this.lights.push({ x: ax, y: ay - 14, r: 34, k: c > 0.8 && c < 0.97 ? 0.75 : 0.5 });
         items.push({ y: ay, draw: () => {
           put(g, an, ax, ay);
           if (this.low) return;
@@ -1295,22 +1320,41 @@ export class WorldScene {
           const hy = ay - 14;
           g.save();
           g.globalCompositeOperation = 'lighter';
-          // Pieza al rojo (brillo y núcleo claro) y un par de pavesas que suben siempre.
-          g.fillStyle = 'rgba(255,110,30,0.55)';
+          // Pieza al rojo: una barra fina que va del rojo oscuro (lado de las tenazas) al amarillo
+          // de la punta, con un halo pequeño; y unas pavesas que suben siempre.
+          const dir = pose.flip ? 1 : -1;
+          // (de día también: un resplandor que tiñe la cara del yunque y la mano del herrero)
+          const glow = g.createRadialGradient(hx, hy, 0, hx, hy, 15);
+          glow.addColorStop(0, 'rgba(255,140,40,0.5)');
+          glow.addColorStop(0.35, 'rgba(255,110,30,0.18)');
+          glow.addColorStop(1, 'rgba(255,90,20,0)');
+          g.fillStyle = glow;
+          g.fillRect(hx - 15, hy - 15, 30, 30);
+          g.globalCompositeOperation = 'source-over';
+          const bar = g.createLinearGradient(hx - dir * 5, hy, hx + dir * 4, hy);
+          bar.addColorStop(0, '#5a1a0c');
+          bar.addColorStop(0.45, '#d4401a');
+          bar.addColorStop(1, '#ffe08a');
+          g.strokeStyle = bar;
+          g.lineCap = 'round';
+          g.lineWidth = 1.8;
           g.beginPath();
-          g.ellipse(hx, hy, 6, 2.6, 0, 0, Math.PI * 2);
-          g.fill();
-          g.fillStyle = 'rgba(255,200,90,0.95)';
-          g.fillRect(hx - 3.5, hy - 1, 7, 2);
-          for (let i = 0; i < 3; i++) {
-            const u = (pose.t * 0.7 + i / 3) % 1;
-            g.fillStyle = `rgba(255,${170 + i * 25},80,${(1 - u).toFixed(2)})`;
-            g.fillRect(hx + Math.sin(u * 6 + i * 2) * 3, hy - 3 - u * 14, 1.1, 1.1);
+          g.moveTo(hx - dir * 5, hy + 0.4);
+          g.lineTo(hx + dir * 4, hy - 0.2);
+          g.stroke();
+          g.globalCompositeOperation = 'lighter';
+          for (let i = 0; i < 4; i++) {
+            const u = (pose.t * 0.7 + i / 4) % 1;
+            g.fillStyle = `rgba(255,${170 + i * 20},80,${(1 - u).toFixed(2)})`;
+            g.beginPath();
+            g.arc(hx + Math.sin(u * 6 + i * 2) * 3, hy - 3 - u * 16, 0.9 * (1 - u * 0.5), 0, Math.PI * 2);
+            g.fill();
           }
           if (c > 0.8 && c < 0.97) {
             const k = (c - 0.8) / 0.17;
-            g.lineWidth = 0.8;
-            for (let i = 0; i < 7; i++) {
+            g.lineWidth = 1.2;
+            g.lineCap = 'round';
+            for (let i = 0; i < 9; i++) {
               const a = -Math.PI * (0.1 + 0.8 * hash(`${strike}`, i)) ;
               const r0 = 2 + k * (6 + hash(`${strike}`, i + 9) * 10);
               const x = hx + Math.cos(a) * r0;
@@ -1318,7 +1362,7 @@ export class WorldScene {
               g.strokeStyle = `rgba(255,${190 + i * 8},90,${(1 - k).toFixed(2)})`;
               g.beginPath();
               g.moveTo(x, y);
-              g.lineTo(x - Math.cos(a) * 2.2, y - Math.sin(a) * 2.2);
+              g.lineTo(x - Math.cos(a) * 3.2, y - Math.sin(a) * 3.2);
               g.stroke();
             }
           }

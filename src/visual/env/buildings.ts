@@ -755,13 +755,20 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         g.quadraticCurveTo(x0 + 34, base - 39.5, x0 + 55, base - 24);
         g.lineTo(x0 + 55, base);
         g.stroke();
-        g.strokeStyle = alpha('#3a1e14', 0.6);
-        g.lineWidth = 0.6;
-        for (let k = 0; k < 9; k++) {
-          const a = Math.PI + (k / 8) * Math.PI;
+        // Juntas de las dovelas, dentro del propio arco (antes salían hacia fuera y se leían como pinchos).
+        g.strokeStyle = alpha('#3a1e14', 0.55);
+        g.lineWidth = 0.5;
+        for (let k = 1; k < 8; k++) {
+          const u = k / 8;
+          // Punto de la curva del arco (Bézier cuadrática) y su normal.
+          const px = (1 - u) * (1 - u) * (x0 + 13) + 2 * u * (1 - u) * (x0 + 34) + u * u * (x0 + 55);
+          const py = (1 - u) * (1 - u) * (base - 24) + 2 * u * (1 - u) * (base - 39.5) + u * u * (base - 24);
+          const tx = 2 * (1 - u) * 21 + 2 * u * 21;
+          const ty = 2 * (1 - u) * -15.5 + 2 * u * 15.5;
+          const n = Math.hypot(tx, ty);
           g.beginPath();
-          g.moveTo(x0 + 34 + Math.cos(a) * 19, base - 24 + Math.sin(a) * 13);
-          g.lineTo(x0 + 34 + Math.cos(a) * 22, base - 24 + Math.sin(a) * 15.5);
+          g.moveTo(px - (ty / n) * 1.2, py + (tx / n) * 1.2);
+          g.lineTo(px + (ty / n) * 1.2, py - (tx / n) * 1.2);
           g.stroke();
         }
         const fg = g.createRadialGradient(x0 + 34, base - 8, 1, x0 + 34, base - 8, 18);
@@ -776,8 +783,21 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
           const by = base - 5 - R() * 4;
           // Casi todas encendidas, con algún trozo apagado entre ellas.
           const lit2 = R();
-          ell(g, bx, by, 1.6 + R(), 1 + R() * 0.6, lit2 < 0.25 ? '#3a2018' : lit2 < 0.7 ? '#ff8a2a' : '#ffd070');
-          if (lit2 >= 0.25) ell(g, bx - 0.3, by - 0.3, 0.7, 0.45, 'rgba(255,245,200,0.8)');
+          // Trozos de carbón con aristas (no bolas): un cuadrilátero irregular girado.
+          const rr = 1.4 + R() * 0.9;
+          const a0 = R() * Math.PI;
+          g.fillStyle = lit2 < 0.25 ? '#3a2018' : lit2 < 0.7 ? '#e0701e' : '#ffc860';
+          g.beginPath();
+          for (let q = 0; q < 4; q++) {
+            const a = a0 + q * (Math.PI / 2) + (R() - 0.5) * 0.6;
+            const d = rr * (0.7 + R() * 0.4);
+            g.lineTo(bx + Math.cos(a) * d, by + Math.sin(a) * d * 0.65);
+          }
+          g.fill();
+          if (lit2 >= 0.25) {
+            g.fillStyle = 'rgba(255,240,190,0.75)';
+            g.fillRect(bx - 0.5, by - 0.4, 1, 0.6);
+          }
         }
         // Herramientas colgadas en la pared del fondo.
         g.strokeStyle = '#4a4a4e';

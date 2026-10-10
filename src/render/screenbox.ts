@@ -29,3 +29,22 @@ export function coversHead(front: Box, back: Box): boolean {
   const headY1 = back.y0 + (back.y1 - back.y0) * 0.33;
   return front.x0 < back.x1 && front.x1 > back.x0 && front.y0 < headY1 && front.y1 > back.y0;
 }
+
+/**
+ * Zona segura del HUD: cuánto debe bajar la escena (píxeles de pantalla) para que ninguna cara
+ * quede bajo la franja del HUD (`band` de alto). `ys` son las caras en pantalla tal como se ven
+ * ahora, con la escena ya bajada `shift`: se mide contra la posición sin bajar, no contra la de
+ * ahora (si no, la cámara se paraba a medio camino y dejaba media cara tapada).
+ */
+export const HUD_SHIFT_MAX = 70;
+export function hudShiftFor(ys: readonly number[], band: number, shift: number): number {
+  if (band <= 0) return 0;
+  const line = band + 6;
+  let want = 0;
+  for (const y of ys) {
+    if (y < -30) continue; // fuera de la pantalla por arriba: no cuenta
+    const y0 = y - shift;
+    if (y0 < line) want = Math.max(want, line - y0);
+  }
+  return Math.min(HUD_SHIFT_MAX, want);
+}

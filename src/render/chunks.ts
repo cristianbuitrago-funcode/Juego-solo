@@ -24,9 +24,10 @@ function hash2(x: number, y: number): number {
  * Amplía la máscara de nieve (suave, a media resolución) al tamaño final y allí la vuelve casi
  * binaria: montón opaco o suelo pisado con un polvillo, con un borde corto y limpio.
  */
-let edgeCanvas: HTMLCanvasElement | null = null;
-function snowEdge(mask: HTMLCanvasElement, BP: number, W: number): HTMLCanvasElement {
-  const c = edgeCanvas && edgeCanvas.width === W ? edgeCanvas : (edgeCanvas = Object.assign(document.createElement('canvas'), { width: W, height: W }));
+const edgeCanvases: (HTMLCanvasElement | undefined)[] = [];
+function snowEdge(mask: HTMLCanvasElement, BP: number, W: number, center = 0.44, slot = 0): HTMLCanvasElement {
+  const have = edgeCanvases[slot];
+  const c = have && have.width === W ? have : (edgeCanvases[slot] = Object.assign(document.createElement('canvas'), { width: W, height: W }));
   const g = c.getContext('2d', { willReadFrequently: true })!;
   g.clearRect(0, 0, W, W);
   g.imageSmoothingEnabled = true;
@@ -35,9 +36,11 @@ function snowEdge(mask: HTMLCanvasElement, BP: number, W: number): HTMLCanvasEle
   const im = g.getImageData(0, 0, W, W);
   const d = im.data;
   for (let i = 3; i < d.length; i += 4) {
+    // (por bytes: 0,08 se guarda como 20/255 = 0,078, y comparar con 0,08 dejaba los claros
+    // de tierra fuera de la región nevada)
+    if (d[i] < 15) continue; // fuera de la región nevada (o su borde): se queda como está
     const a = d[i] / 255;
-    if (a < 0.08) continue; // fuera de la región nevada (o su borde): se queda como está
-    const t = Math.max(0, Math.min(1, ((a - 0.08) / 0.92 - 0.44) / 0.12));
+    const t = Math.max(0, Math.min(1, ((a - 0.08) / 0.92 - center) / 0.12));
     d[i] = Math.round(255 * (0.1 + t * t * (3 - 2 * t) * 0.87));
   }
   g.putImageData(im, 0, 0);
@@ -455,6 +458,26 @@ export class ChunkCache {
       for (let i = 0; i < snowA.length; i++) md[i * 4 + 3] = snowA[i];
       mg.putImageData(mimg, 0, 0);
       const off = MT * res;
+      // Donde asoma la tierra entre la nieve, está empapada: más oscura y fría (antes era el mismo
+      // camino beis de verano, plano).
+      // (solo dentro de la región nevada: un fragmento puede tocar también otra sin nieve)
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      tg.fillStyle = 'rgb(150,135,128)';
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(snowEdge(mask, BP, W, -1, 2), 0, 0);
+      fg.globalCompositeOperation = 'multiply';
+      fg.drawImage(tmp, 0, 0);
+      fg.globalCompositeOperation = 'source-over';
+      // Un ribete de nieve sucia y fundida (aguanieve gris) alrededor del manto.
+      tg.globalCompositeOperation = 'source-over';
+      tg.clearRect(0, 0, W, W);
+      tg.fillStyle = 'rgba(150,152,160,0.75)';
+      tg.fillRect(0, 0, W, W);
+      tg.globalCompositeOperation = 'destination-in';
+      tg.drawImage(snowEdge(mask, BP, W, 0.3, 1), 0, 0);
+      fg.drawImage(tmp, 0, 0);
       tg.globalCompositeOperation = 'source-over';
       tg.clearRect(0, 0, W, W);
       tg.fillStyle = 'rgba(234,240,248,0.9)';

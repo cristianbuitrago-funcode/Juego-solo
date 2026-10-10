@@ -314,27 +314,33 @@ export function propTex(kind: PropKind, v = 0): Tex {
  * 'back' (postes y toldo, detrás de la persona) y 'front' (mostrador y género, delante).
  */
 /** Cuánto sube el puesto dibujado (la tela de arriba del toldo), en píxeles de mundo desde su pie. */
-export const STALL_TOP_PX = 35 + (25 + 3) * 0.8;
+// (las mismas cifras con que se dibuja: pie a 35 px del origen, escala 0,8, toldo subido 25 y
+// su tela 3 más arriba; así la altura que usan la colocación y las pruebas no puede desfasarse)
+const STALL_FOOT = 35;
+const STALL_SCALE = 0.8;
+const STALL_LIFT = 25;
+const STALL_CLOTH = 3;
+export const STALL_TOP_PX = STALL_FOOT + (STALL_LIFT + STALL_CLOTH) * STALL_SCALE;
 
 export function stallTex(full: boolean, color: string, v = 0, goods?: string[], part: 'all' | 'back' | 'front' = 'all'): Tex {
   // El toldo va por encima de la cabeza de quien atiende (postes largos) y se dibuja en la capa de
   // delante: así es un techo sobre la persona y no una cortina detrás de ella.
   return tex(`stall4:${part}:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 38, 60, 19, 57, (g) => {
-    g.translate(-19, -35);
-    g.scale(0.8, 0.8);
-    const A = -25; // cuánto sube el toldo (en unidades de antes de escalar)
+    g.translate(-19, -STALL_FOOT);
+    g.scale(STALL_SCALE, STALL_SCALE);
+    const A = -STALL_LIFT; // cuánto sube el toldo (en unidades de antes de escalar)
     const back = part !== 'front';
     const front = part !== 'back';
     if (back) post(g, 4, 14 + A, 3, 29 - A);
     if (back) post(g, 39, 14 + A, 3, 29 - A);
     if (front) {
       // Tela de arriba del toldo (lo que se ve desde lo alto), tensa entre los postes.
-      g.fillStyle = vgrad(g, -3 + A, 4 + A, [[0, lit(color, 0.22)], [1, color]]);
+      g.fillStyle = vgrad(g, -STALL_CLOTH + A, 4 + A, [[0, lit(color, 0.22)], [1, color]]);
       g.beginPath();
       g.moveTo(1.2, 4 + A);
       g.lineTo(44.8, 4 + A);
-      g.lineTo(40, -3 + A);
-      g.lineTo(6, -3 + A);
+      g.lineTo(40, -STALL_CLOTH + A);
+      g.lineTo(6, -STALL_CLOTH + A);
       g.closePath();
       g.fill();
       g.strokeStyle = shd(color, 0.35);
