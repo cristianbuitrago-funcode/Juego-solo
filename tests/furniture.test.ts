@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createWorld } from '../src/core/gen/worldgen';
-import { getLayout } from '../src/world/layout';
+import { getLayout, stallShown, vendorSpot } from '../src/world/layout';
 import { passable } from '../src/world/path';
 import { Furniture, settlePeople } from '../src/render/furniture';
 
@@ -85,9 +85,13 @@ describe('en pantalla', () => {
           const d = 1.5 + (i % 4) * 0.9;
           people.push({ x: v.cx + 0.5 + Math.cos(a) * d, y: v.cy + 0.5 + Math.sin(a) * d * 0.8, moving: false });
         }
-        for (let k = 0; k < 4; k++) settlePeople(people, me, f, ok);
-        // Lo alto de la plaza, con la altura de su huella.
+        // Quien atiende cada puesto montado: fijo, nadie debe taparle la cara.
+        const vendors = v.stalls.filter((st) => stallShown(v, st)).map(vendorSpot);
+        for (let k = 0; k < 4; k++) settlePeople(people, me, f, ok, vendors);
+        // Lo alto de la plaza (props y puestos), con la altura de su huella.
         const tall = v.props.filter((p) => FOOT[p.kind]?.tall).map((p) => objectBox(p.x, p.y, FOOT[p.kind].wide ?? 0.5, FOOT[p.kind].tall!));
+        for (const st of v.stalls) if (stallShown(v, st)) tall.push(objectBox(st.x, st.y, FOOT.puesto.wide!, FOOT.puesto.tall!));
+        for (const vd of vendors) for (const p of people) if (ok(p.x, p.y)) expect(coversHead(figureBox(p.x, p.y), figureBox(vd.x, vd.y)), `${seed} ${v.regionId} cara del comerciante tapada`).toBe(false);
         for (const p of people) {
           if (!ok(p.x, p.y)) continue;
           const pb = figureBox(p.x, p.y);

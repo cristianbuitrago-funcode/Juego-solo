@@ -314,18 +314,33 @@ export function propTex(kind: PropKind, v = 0): Tex {
  * 'back' (postes y toldo, detrás de la persona) y 'front' (mostrador y género, delante).
  */
 export function stallTex(full: boolean, color: string, v = 0, goods?: string[], part: 'all' | 'back' | 'front' = 'all'): Tex {
-  // El toldo va alto (postes largos): quien atiende detrás se ve de cara bajo los flecos.
-  return tex(`stall3:${part}:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 38, 48, 19, 45, (g) => {
+  // El toldo va por encima de la cabeza de quien atiende (postes largos) y se dibuja en la capa de
+  // delante: así es un techo sobre la persona y no una cortina detrás de ella.
+  return tex(`stall4:${part}:${full}:${color}:${v % 3}:${goods?.join(',') ?? ''}`, 38, 60, 19, 57, (g) => {
     g.translate(-19, -35);
     g.scale(0.8, 0.8);
-    const A = -12.5; // cuánto sube el toldo (en unidades de antes de escalar)
+    const A = -25; // cuánto sube el toldo (en unidades de antes de escalar)
     const back = part !== 'front';
     const front = part !== 'back';
     if (back) post(g, 4, 14 + A, 3, 29 - A);
     if (back) post(g, 39, 14 + A, 3, 29 - A);
+    if (front) {
+      // Tela de arriba del toldo (lo que se ve desde lo alto), tensa entre los postes.
+      g.fillStyle = vgrad(g, -3 + A, 4 + A, [[0, lit(color, 0.22)], [1, color]]);
+      g.beginPath();
+      g.moveTo(1.2, 4 + A);
+      g.lineTo(44.8, 4 + A);
+      g.lineTo(40, -3 + A);
+      g.lineTo(6, -3 + A);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = shd(color, 0.35);
+      g.lineWidth = 0.5;
+      g.stroke();
+    }
     if (front) plank(g, 2, 28, 42, 12, '#9a7048');
     // Toldo a rayas con caída y volumen.
-    for (let i = 0; back && i < 6; i++) {
+    for (let i = 0; front && i < 6; i++) {
       const c = i % 2 ? color : '#efe6d4';
       g.fillStyle = vgrad(g, 4 + A, 16 + A, [[0, lit(c, 0.15)], [1, shd(c, 0.2)]]);
       g.beginPath();

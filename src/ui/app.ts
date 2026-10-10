@@ -138,6 +138,8 @@ export class App {
     this.scene.reduceMotion = this.settings.reduceMotion;
     this.scene.setQuality(this.settings.quality);
     this.hud = h('header', { class: 'hud' });
+    // La franja que ocupa el HUD (para que la escena sepa cuándo hay una cara debajo).
+    new ResizeObserver(() => this.scene && this.hud && (this.scene.hudBand = this.hud.offsetHeight)).observe(this.hud);
     this.whisperBox = h('div', { class: 'whispers' });
     this.prompt = h('div', { class: 'prompt' });
     this.stage.append(

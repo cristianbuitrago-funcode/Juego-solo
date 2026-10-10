@@ -732,6 +732,12 @@ export function keyTex(kind: string, st: Style, extra = '', wealth = 0.5): Tex {
         const top = base - 46;
         side(top, '#7a7266');
         stoneBase(g, R, x0, top, W, 46);
+        // El fuego tiñe la piedra de alrededor de la boca.
+        const tint = g.createRadialGradient(x0 + 34, base - 10, 6, x0 + 34, base - 10, 44);
+        tint.addColorStop(0, 'rgba(255,150,60,0.42)');
+        tint.addColorStop(1, 'rgba(255,120,40,0)');
+        g.fillStyle = tint;
+        g.fillRect(x0, top, W, 46);
         // Boca de la fragua: arco de ladrillo, fondo de hollín, lecho de brasas con ascuas,
         // herramientas colgadas y el fuelle (antes, un rectángulo negro con un degradado).
         g.fillStyle = '#1e1814';

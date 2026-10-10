@@ -231,10 +231,28 @@ export class WorldScene {
 
   /** Una persona en la escena: su sombra (en la pasada de sombras) y su figura (ordenada en profundidad). */
   pushPerson(items: Drawable[], ap: Appearance, pose: Pose, x: number, y: number): void {
+    this.heads.push(x, y - 26); // la cara, para la regla del HUD
     const g = this.g;
     const sun = this.sun;
     this.shadowQ.push(() => drawFigureShadow(g, ap, x, y, pose.lod === 2 ? null : sun, pose.action === 'sit' || pose.action === 'sleep'));
     items.push({ y, draw: () => drawFigure(g, ap, pose, x, y) });
+  }
+
+  /**
+   * Zona segura del HUD: si una cara cae bajo la franja del HUD (alto `hudBand`, en píxeles CSS),
+   * el HUD se vuelve translúcido mientras dure, en vez de taparla. La app fija `hudBand`.
+   */
+  hudBand = 0;
+  private heads: number[] = [];
+  private underHud = false;
+  private hudRule(): void {
+    let under = false;
+    if (this.hudBand > 0)
+      for (let i = 0; i < this.heads.length && !under; i += 2) {
+        const p = this.toScreen(this.heads[i], this.heads[i + 1]);
+        if (p.x > 0 && p.x < this.vw && p.y > -10 && p.y < this.hudBand) under = true;
+      }
+    if (under !== this.underHud) this.parent.classList.toggle('under-hud', (this.underHud = under));
   }
 
   /** Solo para revisar escenas (pruebas visuales): fuerza el tiempo que se ve. No toca la simulación. */
@@ -1153,6 +1171,7 @@ export class WorldScene {
     this.sun = sunAt(hourOf(life.clock), this.weatherHere());
     this.shadowQ = [];
     this.groundQ = [];
+    this.heads.length = 0;
     const x0 = this.cam.x - this.vw / 2 / z;
     const y0 = this.cam.y - this.vh / 2 / z;
     const x1 = this.cam.x + this.vw / 2 / z;
@@ -1333,6 +1352,7 @@ export class WorldScene {
     this.playerHidden = false;
     this.hiddenBy = '';
     for (const it of items) it.draw();
+    this.hudRule();
     if (this.playerHidden) this.hiddenBy = 'árbol';
     // ¿Lo tapa algo dibujado después (una casa o un edificio que está delante)? Primero el
     // rectángulo y, si el sprite lo sabe, sus píxeles: el aire junto al tejado no tapa.

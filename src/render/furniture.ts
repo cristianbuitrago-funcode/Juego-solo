@@ -79,7 +79,9 @@ export class Furniture {
     // `tall`: cuánto sube el objeto en teselas; `wide`: media anchura de lo que tapa (la copa de un árbol, el farol).
     for (const c of this.near(x, y)) {
       // (más media anchura de cuerpo: lo que cuenta es si se solapan en pantalla, ver screenbox.ts)
-      if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6) + FIGURE_HALF) return true;
+      // (desde el pie del dibujo, que es lo que decide quién se dibuja delante)
+      const fy = c.foot ?? c.y;
+      if (c.tall && fy > y && fy - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6) + FIGURE_HALF) return true;
       // Y al revés: plantado justo delante de un puesto, taparía a quien atiende detrás.
       if (front && c.front && c.y < y && y - c.y < c.front && Math.abs(c.x - x) < c.rx + 0.4) return true;
     }
@@ -106,7 +108,7 @@ export class Furniture {
       if (Math.abs(x - v.cx) > reach || Math.abs(y - v.cy) > reach) continue;
       let list = this.solids.get(v);
       if (!list) {
-        const at = (x: number, y: number, f: Footprint): Solid => ({ x, y: y - f.dy, rx: f.rx, ry: f.ry, tall: f.tall, wide: f.wide, front: f.front });
+        const at = (x: number, y: number, f: Footprint): Solid => ({ x, y: y - f.dy, foot: y, rx: f.rx, ry: f.ry, tall: f.tall, wide: f.wide, front: f.front });
         list = [];
         for (const p of v.props) if (FOOT[p.kind]) list.push(at(p.x, p.y, FOOT[p.kind]));
         for (const st of v.stalls) if (stallShown(v, st)) list.push(at(st.x, st.y, FOOT.puesto));
@@ -128,7 +130,7 @@ export class Furniture {
   }
 }
 
-type Solid = { x: number; y: number; rx: number; ry: number; tall?: number; wide?: number; front?: number };
+type Solid = { x: number; y: number; foot?: number; rx: number; ry: number; tall?: number; wide?: number; front?: number };
 
 /**
  * Último paso de colocación de la gente de la escena, después de todos los empujes: nadie se

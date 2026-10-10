@@ -235,13 +235,15 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
       sc.pushPerson(items, ap, pose, vs.x * TILE, vs.y * TILE);
       // En la mitad de los puestos abiertos, alguien compra: delante del mostrador, de espaldas,
       // señalando el género (si el jugador no está justo ahí).
-      const cx = s.x + (hash(id, 12) < 0.5 ? -0.55 : 0.55);
-      const cy = s.y + 1.05;
+      // De perfil, en una esquina del mostrador y mirando al género (de espaldas no se leía el gesto).
+      const side = hash(id, 12) < 0.5 ? -1 : 1;
+      const cx = s.x + side * 1.05;
+      const cy = s.y + 0.55;
       if (hash(id, w.day) < 0.5 && !(Math.abs(me.x - cx) < 1.2 && Math.abs(me.y - cy) < 1.6)) {
         const cid = `c:${regionId}:${i}:${w.day}`;
         const cap = sc.dress(sc.extraAp(cid, regionId, hash(cid) < 0.5 ? 'campesino' : 'artesano', 18 + Math.floor(hash(cid, 3) * 50)), wet, cold);
         const cbeat = Math.floor(vsec / 1.7 + hash(cid) * 5);
-        const cpose: Pose = { facing: 'back', flip: false, phase: 0, action: cbeat % 3 === 0 ? 'point' : 'talk', t: vsec + i * 1.7, expr: 'neutral', lod: sc.lodAt(cx, cy), hood: wet || (cold && hash(cid, 9) < 0.5), heavy: cold, wet };
+        const cpose: Pose = { facing: 'side', flip: side > 0, phase: 0, action: cbeat % 3 === 0 ? 'point' : 'talk', t: vsec + i * 1.7, expr: 'neutral', lod: sc.lodAt(cx, cy), hood: wet || (cold && hash(cid, 9) < 0.5), heavy: cold, wet };
         sc.pushPerson(items, cap, cpose, cx * TILE, cy * TILE);
       }
     }
