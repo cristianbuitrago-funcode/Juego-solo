@@ -30,7 +30,8 @@ export const FOOT: Readonly<Record<string, Footprint>> = {
   heno: { rx: 0.95, ry: 0.42, dy: 0.25 },
   lenya: { rx: 0.9, ry: 0.3, dy: 0.15 },
   // Puestos del mercado y adornos de la plaza.
-  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05, front: 1.7 },
+  // (alto: quien queda justo detrás se mete visualmente entre postes y toldo)
+  puesto: { rx: 1.25, ry: 0.55, dy: 0.45, keep: 1.05, front: 1.7, tall: 1.7, wide: 1.35 },
   arbol: { rx: 0.75, ry: 0.4, dy: 0.1, tall: 3.2, wide: 1.5 },
   jardinera: { rx: 0.85, ry: 0.3, dy: 0.1 },
   mesa: { rx: 1.15, ry: 0.4, dy: 0.1 },

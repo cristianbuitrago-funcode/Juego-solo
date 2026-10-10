@@ -241,7 +241,7 @@ export function villageDrawables(sc: VillageHost, regionId: number, items: Drawa
         const cid = `c:${regionId}:${i}:${w.day}`;
         const cap = sc.dress(sc.extraAp(cid, regionId, hash(cid) < 0.5 ? 'campesino' : 'artesano', 18 + Math.floor(hash(cid, 3) * 50)), wet, cold);
         const cbeat = Math.floor(vsec / 1.7 + hash(cid) * 5);
-        const cpose: Pose = { facing: 'back', flip: false, phase: 0, action: cbeat % 3 === 0 ? 'point' : 'talk', t: vsec + i * 1.7, expr: 'neutral', lod: sc.lodAt(cx, cy), hood: cold && hash(cid, 9) < 0.5, heavy: cold, wet };
+        const cpose: Pose = { facing: 'back', flip: false, phase: 0, action: cbeat % 3 === 0 ? 'point' : 'talk', t: vsec + i * 1.7, expr: 'neutral', lod: sc.lodAt(cx, cy), hood: wet || (cold && hash(cid, 9) < 0.5), heavy: cold, wet };
         sc.pushPerson(items, cap, cpose, cx * TILE, cy * TILE);
       }
     }

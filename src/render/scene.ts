@@ -333,6 +333,7 @@ export class WorldScene {
   setWorld(w: WorldState): void {
     this.w = w;
     this.furniture.clear();
+    this.vendorSpots.clear();
     this.chunks.setWorld(w);
   }
 
@@ -936,14 +937,21 @@ export class WorldScene {
    * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
    * pasa, se le lleva al sitio libre más cercano.
    */
+  private vendorSpots = new Map<number, { x: number; y: number }[]>();
   private settle(dt: number): void {
     const people: Ent[] = [];
     for (const e of this.ents.values()) if (!e.inside) people.push(e);
     for (const e of this.extras.values()) people.push(e);
     // Quien atiende cada puesto montado (se dibuja detrás del mostrador, ver village.ts).
     const me = ensureLife(this.w).player;
+    // (los puestos no se mueven: sus sitios se calculan una vez por pueblo, no en cada fotograma)
     const vendors: { x: number; y: number }[] = [];
-    for (const v of this.l.villages) if (Math.abs(v.cx - me.x) < 40 && Math.abs(v.cy - me.y) < 40) for (const st of v.stalls.slice(0, 6)) if (stallShown(v, st)) vendors.push(vendorSpot(st));
+    for (const v of this.l.villages) {
+      if (Math.abs(v.cx - me.x) >= 40 || Math.abs(v.cy - me.y) >= 40) continue;
+      let spots = this.vendorSpots.get(v.regionId);
+      if (!spots) this.vendorSpots.set(v.regionId, (spots = v.stalls.slice(0, 6).filter((st) => stallShown(v, st)).map(vendorSpot)));
+      for (const sp of spots) vendors.push(sp);
+    }
     settlePeople(people, me, this.furniture, (x, y) => passable(this.w, this.l, x, y), vendors, dt);
   }
 

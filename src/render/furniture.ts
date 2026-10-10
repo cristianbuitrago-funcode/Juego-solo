@@ -3,6 +3,7 @@ import { stallShown, type Layout } from '../world/layout';
 import { passable } from '../world/path';
 import { plazaLook, type PlazaLook } from '../visual/env/plaza';
 import { FOOT, keepOf, type Footprint } from './footprints';
+import { FIGURE_HALF } from './screenbox';
 
 /**
  * El mobiliario de los pueblos como obstáculo fino para el jugador (elipses en
@@ -45,7 +46,7 @@ export class Furniture {
     const clear = (x: number, y: number) => !this.solidAt(x, y) && (!wide || (!this.solidAt(x - 0.35, y) && !this.solidAt(x + 0.35, y) && !this.solidAt(x, y - 0.3) && !this.hiddenAt(x, y))) && (!extra || extra(x, y));
     if (clear(me.x, me.y)) return;
     const ok = (x: number, y: number) => clear(x, y) && passable(this.w(), this.l(), x, y);
-    for (let r = 0.25; r <= (wide ? 5 : 3); r += 0.25)
+    for (let r = 0.25; r <= (wide ? 5 : 4.5); r += 0.25)
       for (let k = 0; k < 12; k++) {
         // Empieza por abajo (hacia la cámara) y gira a ambos lados.
         const a = Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
@@ -77,7 +78,8 @@ export class Furniture {
   hiddenAt(x: number, y: number, front = true): boolean {
     // `tall`: cuánto sube el objeto en teselas; `wide`: media anchura de lo que tapa (la copa de un árbol, el farol).
     for (const c of this.near(x, y)) {
-      if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6)) return true;
+      // (más media anchura de cuerpo: lo que cuenta es si se solapan en pantalla, ver screenbox.ts)
+      if (c.tall && c.y > y && c.y - y < c.tall && Math.abs(c.x - x) < (c.wide ?? 0.6) + FIGURE_HALF) return true;
       // Y al revés: plantado justo delante de un puesto, taparía a quien atiende detrás.
       if (front && c.front && c.y < y && y - c.y < c.front && Math.abs(c.x - x) < c.rx + 0.4) return true;
     }

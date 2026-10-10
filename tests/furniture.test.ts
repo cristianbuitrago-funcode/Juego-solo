@@ -66,3 +66,37 @@ describe('colocación final de la gente', () => {
     }
   });
 });
+
+describe('en pantalla', () => {
+  it('tras colocarse, nadie queda con la cabeza tapada por un farol, un cartel, un puesto u otra persona', async () => {
+    const { figureBox, objectBox, coversHead } = await import('../src/render/screenbox');
+    const { FOOT } = await import('../src/render/footprints');
+    for (const seed of [4242, 7, 90210]) {
+      const w = createWorld(seed);
+      const l = getLayout(w);
+      const f = new Furniture(() => w, () => l);
+      const ok = (x: number, y: number) => passable(w, l, x, y);
+      for (const v of l.villages) {
+        const me = { x: v.cx + 0.5, y: v.cy + v.plazaR - 0.5 };
+        f.unstick(me, true);
+        const people: { x: number; y: number; moving: boolean }[] = [];
+        for (let i = 0; i < 10; i++) {
+          const a = i * 2.17;
+          const d = 1.5 + (i % 4) * 0.9;
+          people.push({ x: v.cx + 0.5 + Math.cos(a) * d, y: v.cy + 0.5 + Math.sin(a) * d * 0.8, moving: false });
+        }
+        for (let k = 0; k < 4; k++) settlePeople(people, me, f, ok);
+        // Lo alto de la plaza, con la altura de su huella.
+        const tall = v.props.filter((p) => FOOT[p.kind]?.tall).map((p) => objectBox(p.x, p.y, FOOT[p.kind].wide ?? 0.5, FOOT[p.kind].tall!));
+        for (const p of people) {
+          if (!ok(p.x, p.y)) continue;
+          const pb = figureBox(p.x, p.y);
+          const at = `${seed} ${v.regionId} ${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+          for (const o of tall) expect(coversHead(o, pb), `${at} tapado por un objeto`).toBe(false);
+          for (const q of people) if (q !== p) expect(coversHead(figureBox(q.x, q.y), pb), `${at} tapado por otra persona`).toBe(false);
+          expect(coversHead(figureBox(me.x, me.y), pb), `${at} tapado por el jugador`).toBe(false);
+        }
+      }
+    }
+  });
+});
