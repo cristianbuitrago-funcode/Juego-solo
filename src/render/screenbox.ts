@@ -42,9 +42,12 @@ export function hudShiftFor(ys: readonly number[], band: number, shift: number):
   const line = band + 6;
   let want = 0;
   for (const y of ys) {
-    if (y < -30) continue; // fuera de la pantalla por arriba: no cuenta
     const y0 = y - shift;
-    if (y0 < line) want = Math.max(want, line - y0);
+    // Solo cuentan las caras que se verían sin bajar la escena. Quien queda por encima del borde
+    // de la pantalla está cortado por el marco, como siempre; contarlo era perseguir la cola: al
+    // bajar entraban caras nuevas por arriba y el desplazamiento se iba siempre al tope.
+    if (y0 < 0 || y0 >= line) continue;
+    want = Math.max(want, line - y0);
   }
   return Math.min(HUD_SHIFT_MAX, want);
 }

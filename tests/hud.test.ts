@@ -13,8 +13,10 @@ describe('zona segura del HUD', () => {
   it('sin caras en la franja no baja; con tope', () => {
     expect(hudShiftFor([300, 500], 100, 0)).toBe(0);
     expect(hudShiftFor([], 100, 30)).toBe(0);
-    expect(hudShiftFor([-10], 100, 0)).toBe(70);
-    expect(hudShiftFor([-80], 100, 0)).toBe(0);
+    expect(hudShiftFor([2], 100, 0)).toBe(70);
+    // Por encima del borde (cortada por el marco) no cuenta, ni aunque la bajada la meta en la franja.
+    expect(hudShiftFor([-10], 100, 0)).toBe(0);
+    expect(hudShiftFor([30], 100, 60)).toBe(0);
     expect(hudShiftFor([50], 0, 0)).toBe(0);
   });
 });
