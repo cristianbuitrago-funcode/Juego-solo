@@ -727,7 +727,17 @@ function beard(g: CanvasRenderingContext2D, ap: Appearance, B: Body, facing: Fac
       break;
     case 'perilla':
       mustache();
-      fill([sx(-W * 0.22), H * 0.36, sx(0), H * 0.34, sx(W * 0.22), H * 0.36, sx(W * 0.12), chin + H * 0.06, sx(0), chin + H * 0.1, sx(-W * 0.12), chin + H * 0.06]);
+      // Sobre la barbilla, con un hueco de piel bajo el labio y pelo marcado: pegada a la boca,
+      // pequeña y roja, se leía como una lengua fuera.
+      fill([sx(-W * 0.3), H * 0.41, sx(0), H * 0.4, sx(W * 0.3), H * 0.41, sx(W * 0.2), chin + H * 0.08, sx(0), chin + H * 0.16, sx(-W * 0.2), chin + H * 0.08]);
+      g.strokeStyle = alpha(shd(c, 0.4), 0.55);
+      g.lineWidth = H * 0.016;
+      for (let i = -1; i <= 1; i++) {
+        g.beginPath();
+        g.moveTo(sx(i * W * 0.14), H * 0.43);
+        g.lineTo(sx(i * W * 0.07), chin + H * 0.12);
+        g.stroke();
+      }
       break;
     case 'corta':
       fill([sx(-W * 0.95), H * 0.05, sx(-W * 0.85), H * 0.3, sx(-W * 0.5), chin * 0.95, sx(0), chin + H * 0.08, sx(W * 0.5), chin * 0.95, sx(W * 0.85), H * 0.3, sx(W * 0.95), H * 0.05, sx(W * 0.6), H * 0.22, sx(W * 0.3), H * 0.37, sx(0), H * 0.4, sx(-W * 0.3), H * 0.37, sx(-W * 0.6), H * 0.22]);

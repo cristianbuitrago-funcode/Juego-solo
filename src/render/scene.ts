@@ -1373,7 +1373,8 @@ export class WorldScene {
     // Gentío de las ciudades grandes.
     for (const [id, e] of this.extras) {
       if (!inView(e.x * TILE, e.y * TILE)) continue;
-      const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'pastor', 'comerciante'];
+      // (sin pastores: en el gentío de una ciudad, tanto cayado se leía como una procesión)
+      const roles: FolkRole[] = ['campesino', 'comerciante', 'artesano', 'campesino', 'anciano', 'nino', 'artesano', 'comerciante'];
       const ap = this.dress(this.extraAp(id, e.regionId, roles[Math.floor(hash(id, 4) * roles.length)], 14 + Math.floor(hash(id, 5) * 50)), wet, cold);
       e.stride = strideOf(ap, false);
       const pose = entPose(this, id, e, undefined, sec, wet, cold);

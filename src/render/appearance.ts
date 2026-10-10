@@ -256,7 +256,8 @@ export function appearanceOf(w: WorldState, f: Folk): Appearance {
       break;
     case 'anciano':
       o.shawl = pick(r, ['#7a6a5a', '#5a4a4a', '#8a7a6a']);
-      o.item = 'baston';
+      // No toda la gente mayor lleva bastón (con todos, la calle se llenaba de palos).
+      o.item = r() < 0.55 ? 'baston' : pick(r, ['cesta', 'libro', undefined] as const);
       break;
     case 'lider':
       o.top = 'tunicaLarga';
