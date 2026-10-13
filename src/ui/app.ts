@@ -545,12 +545,14 @@ export class App {
       'lobo:asalto': `¡Los lobos bajan a ${town} a por el ganado!`,
       'lobo:ahuyentados': info?.by === 'jugador' ? 'Te plantas ante los lobos y la manada huye al monte.' : `La guardia de ${town} sale a su encuentro y ahuyenta a los lobos.`,
       'lobo:presa': `Los lobos se han llevado ${prey} de ${town}. Nadie llegó a tiempo.`,
+      'lobo:mordisco': 'Un lobo sale de la oscuridad y te muerde la pierna antes de que puedas reaccionar. Se aparta, pero no se va.',
+      'lobo:esquiva': 'Un lobo se te lanza encima. Lo ves venir y te apartas: sus dientes se cierran en el aire.',
       'oso:mira': 'Un oso se ha parado a mirarte. Mejor no acercarse más.',
       'oso:carga': '¡El oso arremete unos pasos y se frena en seco! Es un aviso: retrocede.',
       'oso:zarpazo': 'Te avisó y no hiciste caso. El zarpazo te tira al suelo: tienes una herida que tardará en cerrar.',
       'oso:esquiva': 'El oso se te echa encima de verdad. Te apartas en el último instante y el zarpazo solo te rasga la capa.',
     }[key];
-    if (text) this.whisper(text, what === 'carga' || what === 'asalto' || what === 'zarpazo' || what === 'esquiva');
+    if (text) this.whisper(text, what === 'carga' || what === 'asalto' || what === 'zarpazo' || what === 'esquiva' || what === 'mordisco');
   }
 
   private cineTimer = 0;

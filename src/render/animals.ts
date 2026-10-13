@@ -37,6 +37,8 @@ export interface Animal {
   cool?: number;
   /** El oso ya te avisó con una carga en este encuentro: si insistes, ataca de verdad. */
   warned?: boolean;
+  /** Lobo de noche: segundos que lleva acechándote (al rato se lanza a morder). */
+  stalkT?: number;
   /** Ya avisó de esto en este encuentro (no repetir el mensaje). */
   told?: string;
   /** Lobos de noche: la res del pueblo a la que van, y su guarida para volver. */
@@ -50,7 +52,7 @@ export interface Animal {
 
 export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede' | 'acecha' | 'asalta' | 'vuelve' | 'ataca';
 /** Lo que el jugador debería saber de una fiera (la app lo convierte en un aviso). */
-export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados' | 'zarpazo' | 'esquiva';
+export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados' | 'zarpazo' | 'esquiva' | 'mordisco';
 export interface WildInfo {
   regionId?: number;
   prey?: S.AnimalKind;
@@ -181,6 +183,20 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
   a.cool = Math.max(0, (a.cool ?? 0) - dt);
   if (dp > 14) (a.told = undefined), (a.warned = false); // lejos: el próximo encuentro empieza de nuevo
   if (kind === 'lobo') {
+    // Se lanza a morder: corre hasta ti; al alcanzarte muerde (o lo esquivas) y se aparta.
+    if (a.mood === 'ataca') {
+      step(me.x, me.y, 5.2, 'avance');
+      if (Math.hypot(me.x - a.x, me.y - a.y) < 0.9) {
+        swipe(s, 'lobo');
+        a.cool = 10;
+        a.stalkT = 0;
+        const t = away(-dx / dp, -dy / dp, 6);
+        a.mood = 'huye';
+        a.tx = t.x;
+        a.ty = t.y;
+      } else if (!night || dp > 9) a.mood = 'acecha';
+      return true;
+    }
     if (a.mood === 'huye') {
       if (step(a.tx, a.ty, 3.6, 'avance') || dp > 12) {
         a.mood = 'calma';
@@ -201,6 +217,13 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
     }
     if (night && dp < 11) {
       a.mood = 'acecha';
+      // Al rato de seguirte, uno se lanza a morder (cada lobo a su ritmo: no todos a la vez).
+      // Dentro de un pueblo no se atreven.
+      a.stalkT = (a.stalkT ?? 0) + dt;
+      if (a.stalkT > 6 + ((a.v * 2.3) % 5) && (a.cool ?? 0) <= 0 && !inTown(s, me)) {
+        a.mood = 'ataca';
+        return true;
+      }
       // Se acerca despacio hasta unas 5 casillas y ahí se queda, mirándote.
       if (dp > 5.5) step(a.x + (dx / dp) * (dp - 5), a.y + (dy / dp) * (dp - 5), 1.3, 'avance');
       else step(a.x, a.y, 0, 'jugador');
@@ -214,6 +237,7 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
       return true;
     }
     a.mood = 'calma';
+    a.stalkT = 0;
     return false;
   }
   // Oso.
@@ -227,7 +251,7 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
   if (a.mood === 'ataca') {
     step(me.x, me.y, 5, 'avance');
     if (Math.hypot(me.x - a.x, me.y - a.y) < 1) {
-      bearSwipe(s);
+      swipe(s, 'oso');
       a.mood = 'retrocede';
       a.cool = 12;
       a.warned = false;
@@ -283,18 +307,24 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
  * El zarpazo del oso. La agilidad (y saber pelear) da opción a apartarse a tiempo; si no, una
  * herida de verdad (la salud del protagonista: generations.ts), menos grave cuanta más defensa.
  */
-function bearSwipe(s: Pick<AnimalsHost, 'w' | 'onWild'>): void {
+function swipe(s: Pick<AnimalsHost, 'w' | 'onWild'>, kind: 'oso' | 'lobo'): void {
   const id = s.w.life?.identity;
   if (!id) return;
-  const dodge = Math.min(0.6, Math.max(0.05, 0.15 + (statOf(id, 'agilidad') - STAT_BASE) * 0.05 + levelOf(id, 'combate') * 0.03));
+  // (al lobo, más pequeño y más rápido, se le esquiva algo peor; su mordisco hace menos daño)
+  const dodge = Math.min(0.6, Math.max(0.05, (kind === 'oso' ? 0.15 : 0.12) + (statOf(id, 'agilidad') - STAT_BASE) * 0.05 + levelOf(id, 'combate') * 0.03));
   if (Math.random() < dodge) {
-    s.onWild?.('oso', 'esquiva');
+    s.onWild?.(kind, 'esquiva');
     return;
   }
-  const sev = (0.3 + Math.random() * 0.3) * Math.max(0.5, 1 - (statOf(id, 'defensa') - STAT_BASE) * 0.07);
-  injure(s.w, sev, 'el zarpazo de un oso');
-  id.needs.fatigue = Math.min(1, id.needs.fatigue + 0.2);
-  s.onWild?.('oso', 'zarpazo');
+  const sev = (kind === 'oso' ? 0.3 + Math.random() * 0.3 : 0.15 + Math.random() * 0.2) * Math.max(0.5, 1 - (statOf(id, 'defensa') - STAT_BASE) * 0.07);
+  injure(s.w, sev, kind === 'oso' ? 'el zarpazo de un oso' : 'el mordisco de un lobo');
+  id.needs.fatigue = Math.min(1, id.needs.fatigue + (kind === 'oso' ? 0.2 : 0.1));
+  s.onWild?.(kind, kind === 'oso' ? 'zarpazo' : 'mordisco');
+}
+
+/** ¿Está en un pueblo (cerca de la plaza o de las casas)? Ahí las fieras no se atreven. */
+function inTown(s: Pick<AnimalsHost, 'l'>, p: { x: number; y: number }): boolean {
+  return s.l.villages.some((v) => Math.hypot(v.cx + 0.5 - p.x, v.cy + 0.5 - p.y) < v.plazaR + 20);
 }
 
 /**

@@ -61,7 +61,8 @@ describe('fieras frente al jugador', () => {
     const host = { w, l, furniture };
     const a = make('lobo');
     const me = { x: spot.x - 9, y: spot.y };
-    for (let i = 0; i < 60; i++) reactWild(host, a, me, 0.1, true);
+    // (4 s: antes de que se atreva a morder)
+    for (let i = 0; i < 40; i++) reactWild(host, a, me, 0.1, true);
     const d = Math.hypot(a.x - me.x, a.y - me.y);
     expect(a.mood).toBe('acecha');
     expect(d).toBeGreaterThan(4.5);
@@ -122,6 +123,37 @@ describe('fieras frente al jugador', () => {
       expect(healthOf(w).value).toBeLessThan(before);
       expect(healthOf(w).conditions.some((c) => c.why === 'el zarpazo de un oso')).toBe(true);
       expect(a.mood).toBe('retrocede');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('de noche, tras acecharte un rato, un lobo se lanza a morder; en el pueblo no se atreve', () => {
+    ensureLife(w);
+    const said: WildEvent[] = [];
+    const host = { w, l, furniture, onWild: (_k: string, e: WildEvent) => said.push(e) };
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.99); // sin esquivar
+    try {
+      const a = make('lobo');
+      const before = healthOf(w).value;
+      const me = { x: spot.x - 6, y: spot.y };
+      for (let i = 0; i < 200 && !said.includes('mordisco'); i++) reactWild(host, a, me, 0.1, true);
+      expect(said).toContain('mordisco');
+      expect(healthOf(w).conditions.some((c) => c.why === 'el mordisco de un lobo')).toBe(true);
+      expect(healthOf(w).value).toBeLessThan(before);
+      expect(a.mood).toBe('huye');
+      // En la plaza de un pueblo: acecha, pero no muerde.
+      const v = l.villages[0];
+      const town = { x: v.cx + 0.5, y: v.cy + 0.5 };
+      const b: Animal = { ...make('lobo'), x: town.x + 6, y: town.y, hx: town.x + 6, hy: town.y, tx: town.x + 6, ty: town.y };
+      said.length = 0;
+      for (let i = 0; i < 200; i++) reactWild(host, b, town, 0.1, true);
+      expect(said).not.toContain('mordisco');
+      // De día, ni se acerca.
+      const c = make('lobo');
+      said.length = 0;
+      for (let i = 0; i < 200; i++) reactWild(host, c, me, 0.1, false);
+      expect(said).not.toContain('mordisco');
     } finally {
       spy.mockRestore();
     }
