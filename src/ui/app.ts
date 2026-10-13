@@ -547,8 +547,10 @@ export class App {
       'lobo:presa': `Los lobos se han llevado ${prey} de ${town}. Nadie llegó a tiempo.`,
       'oso:mira': 'Un oso se ha parado a mirarte. Mejor no acercarse más.',
       'oso:carga': '¡El oso arremete unos pasos y se frena en seco! Es un aviso: retrocede.',
+      'oso:zarpazo': 'Te avisó y no hiciste caso. El zarpazo te tira al suelo: tienes una herida que tardará en cerrar.',
+      'oso:esquiva': 'El oso se te echa encima de verdad. Te apartas en el último instante y el zarpazo solo te rasga la capa.',
     }[key];
-    if (text) this.whisper(text, what === 'carga' || what === 'asalto');
+    if (text) this.whisper(text, what === 'carga' || what === 'asalto' || what === 'zarpazo' || what === 'esquiva');
   }
 
   private cineTimer = 0;

@@ -6,6 +6,9 @@ import { findPath, passable } from '../world/path';
 import { geoOf } from '../world/geography';
 import { idx } from '../world/terrain';
 import { T } from '../world/types';
+import { injure } from '../world/generations';
+import { levelOf } from '../world/identity';
+import { STAT_BASE, statOf } from '../world/stats';
 import { ANIMAL_HALF } from '../visual/env/animals';
 import type { Furniture } from './furniture';
 import { hash } from './poses';
@@ -32,6 +35,8 @@ export interface Animal {
   mood?: WildMood;
   /** Segundos que faltan para que el oso pueda volver a cargar. */
   cool?: number;
+  /** El oso ya te avisó con una carga en este encuentro: si insistes, ataca de verdad. */
+  warned?: boolean;
   /** Ya avisó de esto en este encuentro (no repetir el mensaje). */
   told?: string;
   /** Lobos de noche: la res del pueblo a la que van, y su guarida para volver. */
@@ -43,9 +48,9 @@ export interface Animal {
   stuck?: number;
 }
 
-export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede' | 'acecha' | 'asalta' | 'vuelve';
+export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede' | 'acecha' | 'asalta' | 'vuelve' | 'ataca';
 /** Lo que el jugador debería saber de una fiera (la app lo convierte en un aviso). */
-export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados';
+export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados' | 'zarpazo' | 'esquiva';
 export interface WildInfo {
   regionId?: number;
   prey?: S.AnimalKind;
@@ -174,7 +179,7 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
     return { x: a.x, y: a.y };
   };
   a.cool = Math.max(0, (a.cool ?? 0) - dt);
-  if (dp > 14) a.told = undefined; // lejos: el próximo encuentro se vuelve a contar
+  if (dp > 14) (a.told = undefined), (a.warned = false); // lejos: el próximo encuentro empieza de nuevo
   if (kind === 'lobo') {
     if (a.mood === 'huye') {
       if (step(a.tx, a.ty, 3.6, 'avance') || dp > 12) {
@@ -212,6 +217,29 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
     return false;
   }
   // Oso.
+  // Si ya te avisó y vuelves a acercarte, ataca de verdad: arremete hasta alcanzarte.
+  const attack = () => {
+    a.mood = 'ataca';
+    a.tx = me.x;
+    a.ty = me.y;
+    return true;
+  };
+  if (a.mood === 'ataca') {
+    step(me.x, me.y, 5, 'avance');
+    if (Math.hypot(me.x - a.x, me.y - a.y) < 1) {
+      bearSwipe(s);
+      a.mood = 'retrocede';
+      a.cool = 12;
+      a.warned = false;
+      const t = away(-dx / dp, -dy / dp, 7);
+      a.tx = t.x;
+      a.ty = t.y;
+    }
+    return true;
+  }
+  // (la carga de aviso le deja a una casilla de ti: solo cuenta como insistir si te le echas encima
+  // cuando ya se está retirando, pasado un segundo y medio)
+  if (a.warned && dp < 1.7 && a.mood !== 'carga' && (a.cool ?? 0) < 6.5) return attack();
   if (a.mood === 'carga') {
     if (step(a.tx, a.ty, 4.5, 'avance')) {
       a.mood = 'retrocede';
@@ -230,6 +258,8 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
     return true;
   }
   if (dp < 2.6 && a.cool <= 0) {
+    if (a.warned) return attack();
+    a.warned = true;
     // Arremete hasta quedarse a una casilla de ti, sin llegar a tocarte.
     const reach = Math.max(0, dp - 1.1);
     a.mood = 'carga';
@@ -247,6 +277,24 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
   }
   a.mood = 'calma';
   return false;
+}
+
+/**
+ * El zarpazo del oso. La agilidad (y saber pelear) da opción a apartarse a tiempo; si no, una
+ * herida de verdad (la salud del protagonista: generations.ts), menos grave cuanta más defensa.
+ */
+function bearSwipe(s: Pick<AnimalsHost, 'w' | 'onWild'>): void {
+  const id = s.w.life?.identity;
+  if (!id) return;
+  const dodge = Math.min(0.6, Math.max(0.05, 0.15 + (statOf(id, 'agilidad') - STAT_BASE) * 0.05 + levelOf(id, 'combate') * 0.03));
+  if (Math.random() < dodge) {
+    s.onWild?.('oso', 'esquiva');
+    return;
+  }
+  const sev = (0.3 + Math.random() * 0.3) * Math.max(0.5, 1 - (statOf(id, 'defensa') - STAT_BASE) * 0.07);
+  injure(s.w, sev, 'el zarpazo de un oso');
+  id.needs.fatigue = Math.min(1, id.needs.fatigue + 0.2);
+  s.onWild?.('oso', 'zarpazo');
 }
 
 /**

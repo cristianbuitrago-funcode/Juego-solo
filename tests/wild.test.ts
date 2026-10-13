@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWorld } from '../src/core/gen/worldgen';
 import { getLayout } from '../src/world/layout';
 import { passable } from '../src/world/path';
 import { Furniture } from '../src/render/furniture';
+import { ensureLife } from '../src/world/life';
+import { healthOf } from '../src/world/generations';
 import { raidStep, reactWild, startRaid, type Animal, type WildEvent } from '../src/render/animals';
 
 describe('fieras frente al jugador', () => {
@@ -98,5 +100,30 @@ describe('fieras frente al jugador', () => {
     expect(list.includes(sheep)).toBe(true);
     expect(said).toContain('ahuyentados');
     expect(wolf.mood === 'vuelve' || wolf.mood === 'calma').toBe(true);
+  });
+
+  it('si insistes después del aviso, el oso ataca de verdad y te hiere', () => {
+    ensureLife(w);
+    const said: WildEvent[] = [];
+    const host = { w, l, furniture, onWild: (_k: string, e: WildEvent) => said.push(e) };
+    const a = make('oso');
+    const before = healthOf(w).value;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.99); // sin esquivar
+    try {
+      // Primer acercamiento: solo la carga de aviso.
+      const me = { x: spot.x - 2.4, y: spot.y };
+      for (let i = 0; i < 30; i++) reactWild(host, a, me, 0.1);
+      expect(said).toContain('carga');
+      expect(said).not.toContain('zarpazo');
+      expect(healthOf(w).value).toBe(before);
+      // Insiste: se le pega.
+      for (let i = 0; i < 40 && !said.includes('zarpazo'); i++) reactWild(host, a, { x: a.x - 1.2, y: a.y }, 0.1);
+      expect(said).toContain('zarpazo');
+      expect(healthOf(w).value).toBeLessThan(before);
+      expect(healthOf(w).conditions.some((c) => c.why === 'el zarpazo de un oso')).toBe(true);
+      expect(a.mood).toBe('retrocede');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
