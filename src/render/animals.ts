@@ -2,7 +2,10 @@ import type { WorldState } from '../core/types';
 import { ensureLife } from '../world/life';
 import type { Layout } from '../world/layout';
 import { passable } from '../world/path';
+import { geoOf } from '../world/geography';
 import { idx } from '../world/terrain';
+import { T } from '../world/types';
+import { ANIMAL_HALF } from '../visual/env/animals';
 import type { Furniture } from './furniture';
 import { hash } from './poses';
 import type * as S from './sprites';
@@ -50,7 +53,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
       const d = Math.hypot(a.tx - a.x, a.ty - a.y);
       if (d < 0.2) {
         if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
-          const R = a.kind === 'perro' ? 14 : a.kind === 'caballo' ? 4 : a.water ? 3 : 8;
+          const R = a.kind === 'perro' ? 14 : a.kind === 'caballo' || a.kind === 'gato' ? 4 : a.water ? 3 : a.kind === 'lobo' ? 7 : a.kind === 'oso' ? 5 : 8;
           a.tx = a.hx + (Math.random() - 0.5) * R;
           a.ty = a.hy + (Math.random() - 0.5) * R * 0.75;
           const tt = s.l.terrain.tiles[idx(Math.floor(a.tx), Math.floor(a.ty))];
@@ -59,7 +62,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
         }
         continue;
       }
-      const sp = Math.min(d, ({ ciervo: 1.6, perro: 2.2, caballo: 0.8, pato: 0.5 } as Record<string, number>)[a.kind] ?? 0.7) * dt;
+      const sp = Math.min(d, ({ ciervo: 1.6, perro: 2.2, caballo: 0.8, pato: 0.5, gato: 1.1, lobo: 2, oso: 0.6 } as Record<string, number>)[a.kind] ?? 0.7) * dt;
       const nx = a.x + ((a.tx - a.x) / d) * sp;
       const ny = a.y + ((a.ty - a.y) / d) * sp;
       // Los animales no atraviesan vallas, fuentes ni casas: si el paso está cortado, se paran.
@@ -77,7 +80,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
   }
 }
 
-const halfOf = (kind: Animal['kind']) => (kind === 'caballo' || kind === 'vaca' ? 0.8 : kind === 'gallina' || kind === 'pato' ? 0.25 : 0.55);
+const halfOf = (kind: Animal['kind']) => ANIMAL_HALF[kind];
 
 /**
  * El cuerpo de un animal es más ancho que un punto: no se planta con un farol o un poste
@@ -129,6 +132,38 @@ function spawnAnimals(s: AnimalsHost, regionId: number): Animal[] {
     const y = v.cy + v.plazaR + 1.5;
     if (passable(w, s.l, x, y) && !animalBlocked(s, 'perro', x, y)) out.push({ kind: 'perro', x, y, hx: v.cx + 0.5, hy: v.cy + 0.5, tx: x, ty: y, flip: false, anim: i, v: i });
   }
+  // Un gato o dos rondando las casas.
+  for (let i = 0; i < (r.population > 500 ? 2 : 1); i++) {
+    const b = v.houses[Math.floor(hash(`${regionId}gato`, i) * Math.min(8, v.houses.length))];
+    if (!b) break;
+    // (junto a una esquina de la casa, no delante de la puerta: ahí trabaja la gente, y en la
+    // forja se subía al yunque)
+    const x = hash(`${regionId}gato`, i + 3) < 0.5 ? b.x - 0.7 : b.x + b.w + 0.7;
+    const y = b.y + b.h - 0.2;
+    if (passable(w, s.l, x, y) && !animalBlocked(s, 'gato', x, y)) out.push({ kind: 'gato', x, y, hx: x, hy: y, tx: x, ty: y, flip: hash(`${regionId}gato`, i + 5) < 0.5, anim: i, v: Math.floor(hash(`${regionId}gato`, i + 7) * 3) });
+  }
+  // Fieras en el bosque, lejos del pueblo: una manada de lobos donde los hay, y algún oso en
+  // bosques y montes que no sean cálidos ni áridos.
+  const geo = geoOf(w, regionId);
+  // (en el bosque si lo hay a esa distancia; si no, en el monte o el prado abierto, nunca en
+  // caminos, campos ni plazas)
+  const wild = (kind: 'lobo' | 'oso', n: number, salt: number) => {
+    for (const ok of [(t: number) => t === T.Forest, (t: number) => t === T.Forest || t === T.Grass || t === T.Meadow]) {
+      for (let k = 0; k < 60; k++) {
+        const a = hash(`${regionId}${kind}`, k + salt) * Math.PI * 2;
+        const d = 32 + hash(`${regionId}${kind}`, k + salt + 70) * 10;
+        const x = v.cx + 0.5 + Math.cos(a) * d;
+        const y = v.cy + 0.5 + Math.sin(a) * d;
+        if (!ok(s.l.terrain.tiles[idx(Math.floor(x), Math.floor(y))]) || !passable(w, s.l, x, y)) continue;
+        herd(kind, n / Math.max(0.25, plenty), x, y);
+        return;
+      }
+    }
+  };
+  const cold = geo.climate === 'frio';
+  const hills = geo.biome === 'bosque' || geo.biome === 'montana';
+  if (geo.fauna.includes('lobos') || cold || (hills && hash(`${regionId}lobo`, 99) < 0.6)) wild('lobo', 3, 0);
+  if (hills && geo.climate !== 'calido' && geo.climate !== 'arido' && hash(`${regionId}oso`, 99) < 0.6) wild('oso', 1, 200);
   // Patos donde hay agua cerca.
   for (let k = 0; k < 40; k++) {
     const x = v.cx + 0.5 + (hash(`${regionId}pato`, k) - 0.5) * 50;

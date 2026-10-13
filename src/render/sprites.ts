@@ -199,7 +199,7 @@ export type PropKind = 'banco' | 'farol' | 'barril' | 'cajas' | 'fuente' | 'pozo
 // ---------------------------------------------------------------------------
 // Animales (proporciones propias; el caballo es más grande que una persona)
 // ---------------------------------------------------------------------------
-export type AnimalKind = 'vaca' | 'oveja' | 'gallina' | 'ciervo' | 'caballo' | 'perro' | 'pato';
+export type { AnimalKind } from '../visual/env/animals';
 
 
 
