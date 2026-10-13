@@ -49,7 +49,7 @@ const SIZE: Record<AnimalKind, [number, number, number]> = {
 };
 
 /** Mitad del ancho en el suelo (casillas): para que no se metan en muebles ni se pisen. */
-export const ANIMAL_HALF: Record<AnimalKind, number> = { vaca: 0.8, caballo: 0.8, oso: 0.8, ciervo: 0.6, lobo: 0.6, oveja: 0.55, perro: 0.5, gato: 0.3, gallina: 0.25, pato: 0.25 };
+export const ANIMAL_HALF: Record<AnimalKind, number> = { vaca: 0.8, caballo: 0.8, oso: 0.8, ciervo: 0.6, lobo: 0.6, oveja: 0.55, perro: 0.55, gato: 0.3, gallina: 0.25, pato: 0.25 };
 
 type G = CanvasRenderingContext2D;
 

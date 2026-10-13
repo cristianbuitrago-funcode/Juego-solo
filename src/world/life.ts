@@ -124,6 +124,7 @@ export function createLife(w: WorldState): Life {
   const past = id.past!;
   const candidates = life.folk.filter((f) => f.regionId === past.origin && f.age >= 30 && f.role !== 'lider' && f.role !== 'nino' && !f.charId);
   past.link = (candidates[0] ?? life.folk.find((f) => f.regionId === past.origin && f.role !== 'nino'))?.id;
+  if (past.heir) setupHeir(w, life);
   life.visited = {};
   story(w, 'Despertó junto a un camino, sin recordar quién era ni cómo había llegado allí.', 'despertar');
   syncAuthority(w);
@@ -133,6 +134,38 @@ export function createLife(w: WorldState): Life {
   startFirstStory(w);
   planToday(w);
   return life;
+}
+
+/**
+ * La historia del heredero: en su tierra reina su padre o su madre (un vecino mayor de allí, que
+ * pasa a ser quien manda: ver politics.ts), su reino y el pueblo donde despierta están enfrentados,
+ * y en ese pueblo y sus vecinos se le nota de dónde viene (la ropa, el acento): la gente empieza
+ * desconfiando de él más que de cualquier forastero. Se gana la confianza como siempre, con lo que hace.
+ */
+function setupHeir(w: WorldState, life: Life): void {
+  const past = life.identity!.past!;
+  const home = w.player.home;
+  const elders = life.folk.filter((f) => f.alive && f.regionId === past.origin && f.age >= 42 && f.role !== 'nino' && f.id !== past.link && !f.charId);
+  const parent = elders.find((f) => f.role === 'lider') ?? [...elders].sort((a, b) => b.age - a.age)[0];
+  if (parent) {
+    parent.role = 'lider';
+    past.parent = parent.id;
+  }
+  // Dos reinos enfrentados: mucha tensión y viejos agravios, aunque todavía sin guerra abierta.
+  for (const [a, b] of [[home, past.origin], [past.origin, home]]) {
+    const rel = (w.regions[a].relations[b] ??= { opinion: 0, grievance: 0, allied: false, war: false, tension: 0.1 });
+    rel.tension = Math.max(rel.tension, 0.62);
+    rel.opinion = Math.min(rel.opinion, -0.35);
+    rel.grievance = Math.max(rel.grievance, 0.3);
+  }
+  // Recelo: en el pueblo donde despierta y en los que lo rodean.
+  const near = new Set([home, ...(w.regions[home].neighbors ?? [])]);
+  for (const f of life.folk) {
+    if (!near.has(f.regionId)) continue;
+    const k = f.regionId === home ? 1 : 0.6;
+    f.trust = Math.max(0.05, f.trust - 0.14 * k);
+    f.fear = Math.min(1, f.fear + 0.06 * k);
+  }
 }
 
 /** Asegura que la partida tenga capa de vida (las partidas antiguas se migran). */

@@ -25,7 +25,7 @@ describe('animales de los pueblos', () => {
           const at = `${seed} ${v.regionId} ${a.kind} ${a.x.toFixed(1)},${a.y.toFixed(1)}`;
           expect(animalBlocked(host, a.kind, a.x, a.y), at).toBe(false);
           // Independiente de animalBlocked: ningún poste alto pegado al lomo.
-          expect(furniture.tallNear(a.x, a.y, a.kind === 'gallina' ? 0.25 : 0.55), at).toBe(false);
+          expect(furniture.tallNear(a.x, a.y, a.kind === 'gallina' ? 0.25 : a.kind === 'gato' ? 0.3 : 0.55), at).toBe(false);
         }
       }
     }

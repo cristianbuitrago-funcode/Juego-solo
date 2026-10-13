@@ -367,7 +367,13 @@ export function prologueScene(w: WorldState, t: PTarget): PScene | null {
     return {
       id: 'inn:1',
       title: `${f.name}, en la posada`,
-      lines: [`«Forastero, ¿eh? Se te nota en las botas.» ${f.name} te mide con la mirada. «Si buscas dónde pasar la noche, aquí hay camas. Dos monedas. Y si no tienes, ${folk(w, p.artisan)?.name ?? 'el artesano'} siempre anda buscando manos.»`, id.needs.hunger > 0.5 ? '«Y come algo, que pareces un fantasma.»' : '«Mañana por la mañana habrá mercado en la plaza. Se llena de gente.»'],
+      lines: [
+        id.past?.heir
+          ? `«Ese corte de capa es de ${w.regions[id.past.origin].name}.» ${f.name} baja la voz y mira hacia la puerta. «Aquí no queremos líos con los de allí, ¿entiendes? Hay quien perdió a un hijo en la última escaramuza.» Te mide con la mirada.`
+          : `«Forastero, ¿eh? Se te nota en las botas.» ${f.name} te mide con la mirada.`,
+        `«Si buscas dónde pasar la noche, aquí hay camas. Dos monedas. Y si no tienes, ${folk(w, p.artisan)?.name ?? 'el artesano'} siempre anda buscando manos.»`,
+        id.needs.hunger > 0.5 ? '«Y come algo, que pareces un fantasma.»' : '«Mañana por la mañana habrá mercado en la plaza. Se llena de gente.»',
+      ],
       choices: [{ id: 'gracias', label: '«Gracias.»' }],
       folk: f.id,
     };
@@ -413,6 +419,8 @@ export function prologueChoose(w: WorldState, sceneId: string, choice: string): 
       const lines = choice === 'no'
         ? [`«¿No recuerdas?» ${f.name} frunce el ceño. «¿Ni tu nombre?»`, 'Niegas con la cabeza. Duele un poco.']
         : [`«Estás en tierras de ${home.name}.» ${f.name} te mira las botas embarradas. «Vienes de lejos, eso seguro.»`];
+      // El heredero viste y habla como los de su reino: se le nota enseguida.
+      if (id.past?.heir) lines.push(`Al oírte hablar, ${f.name} da medio paso atrás. «Ese acento… Tú eres de ${w.regions[id.past.origin].name}.» No lo dice como una pregunta.`);
       return done({
         id: 'first:2',
         title: f.name,

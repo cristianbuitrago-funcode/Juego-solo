@@ -137,6 +137,8 @@ export function askAboutMe(w: WorldState, folkId: string): Outcome {
   const known = (id.standing[f.regionId] ?? 0) >= 1;
   if (f.regionId === past.origin) lines.push(`${f.name} te mira con atención. «Tu cara… Me suena de algo. Pregunta a otros, quizá alguien te recuerde.»`);
   else if (id.fragments.some((x) => x.id === 'colgante') && rnd(w, 7) < 0.5) lines.push(`Le enseñas el colgante. ${f.name} frunce el ceño: «Ese símbolo… Lo he visto en los carros que vienen de ${O.name}. Pero no sé más.»`);
+  else if (past.heir && !id.fragments.some((x) => x.id === 'verdad') && f.regionId !== past.origin && f.trust < 0.45 && rnd(w, 11) < 0.6)
+    lines.push(pick(w, [`${f.name} se cruza de brazos. «Hablas como los de ${O.name}. Y vistes como ellos. Con eso me basta para no fiarme.»`, `${f.name}: «La última vez que vino alguien de ${O.name}, ardieron dos graneros en la frontera. No me pidas que te abra la puerta.»`, `${f.name} te mira el colgante y aparta la vista. «Eso es un sello de ${O.name}. Guárdalo, que aquí no gusta.»`]));
   else if (known) lines.push(`${f.name}: «¿Que quién eres? Eres ${id.nickname === 'Sin nombre' ? 'el que apareció un día en el camino' : id.nickname}, el que ${(id.deeds.trabajar ?? 0) > 2 ? 'nos echa una mano' : 'anda preguntando'}. Para mí, con eso basta.»`);
   else lines.push(pick(w, [`${f.name}: «Ni idea. Llegaste por el camino, como todos los forasteros.»`, `${f.name}: «¿No sabes quién eres? Pues sí que estamos buenos.»`, `${f.name}: «Hablas raro. No eres de aquí, eso seguro.»`]));
   if (id.nickname === 'Sin nombre' && (life.folk.filter((x) => x.lastMet >= 0).length >= 3 || known)) {

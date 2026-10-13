@@ -1,6 +1,7 @@
 import { CULTURES, PLAYER_CULTURE } from '../core/content/cultures';
 import { personName } from '../core/content/names';
 import { Rng } from '../core/rng';
+import { clamp } from '../core/util';
 import type { WorldState } from '../core/types';
 import type { Life } from './types';
 
@@ -83,7 +84,9 @@ export const TALENTS: Record<TalentId, TalentDef> = {
 // ---------------------------------------------------------------------------
 // El pasado olvidado
 // ---------------------------------------------------------------------------
-export type PastRole = 'soldado' | 'mercader' | 'erudito' | 'explorador' | 'sanador' | 'consejero' | 'espia';
+export type PastRole = 'soldado' | 'mercader' | 'erudito' | 'explorador' | 'sanador' | 'consejero' | 'espia' | 'heredero';
+/** Cómo llegó: la comitiva del heredero no llegó a su destino. */
+export type Accident = 'rio' | 'emboscada' | 'tormenta';
 
 export interface Past {
   role: PastRole;
@@ -93,6 +96,17 @@ export interface Past {
   family: boolean;
   symbol: string; // lo que hay grabado en el colgante
   link?: string; // vecino de su tierra que le conoció
+  /**
+   * La historia del jugador: es el hijo o la hija de quien reina en su tierra de origin, un reino
+   * enemigo del pueblo donde despierta. Viajaba en una comitiva (en misión de paz si `deed` es
+   * 'bueno'; a espiar las defensas del vecino si es 'terrible') y un accidente le dejó sin memoria
+   * en tierra enemiga. Por eso al principio desconfían: se le nota de dónde viene.
+   */
+  heir?: boolean;
+  parent?: string; // quien reina en su tierra (un vecino de allí)
+  accident?: Accident;
+  /** Lo que decide al saberlo: volver a reclamar el trono, buscar la paz, quedarse o callar. */
+  claim?: 'reclamar' | 'paz' | 'renunciar' | 'callar';
 }
 
 const ROLE_LATENT: Record<PastRole, [string, number][]> = {
@@ -103,6 +117,8 @@ const ROLE_LATENT: Record<PastRole, [string, number][]> = {
   sanador: [['medicina', 3], ['k:medicina', 2], ['k:agricultura', 1]],
   consejero: [['diplomacia', 3], ['persuasion', 2], ['k:politica', 3]],
   espia: [['sigilo', 3], ['investigacion', 1], ['persuasion', 2]],
+  // Criado en una corte: mandar, negociar, la espada de los ejercicios y la historia de su casa.
+  heredero: [['liderazgo', 2], ['diplomacia', 2], ['combate', 2], ['k:politica', 2], ['k:historia', 1]],
 };
 
 /** Edificio que despierta un recuerdo según lo que fue. */
@@ -114,6 +130,7 @@ export const ROLE_OBJECT: Record<PastRole, string> = {
   sanador: 'templo',
   consejero: 'salon',
   espia: 'posada',
+  heredero: 'salon',
 };
 
 export const SYMBOLS = ['dos líneas cruzadas sobre un círculo', 'un ojo abierto dentro de un triángulo', 'una espiga partida', 'tres olas superpuestas', 'una torre con una estrella encima', 'una mano abierta con una llave', 'un ciervo con la cornamenta en llamas'];
@@ -194,7 +211,9 @@ export function createIdentity(w: WorldState, life: Life): Identity {
   const far = [...others].sort((a, b) => Math.hypot(b.center.x - home.center.x, b.center.y - home.center.y) - Math.hypot(a.center.x - home.center.x, a.center.y - home.center.y));
   const origin = far[rng.int(0, Math.min(2, far.length - 1))] ?? home;
   const culture = CULTURES.find((c) => c.id === origin.culture) ?? PLAYER_CULTURE;
-  const role = rng.pick<PastRole>(['soldado', 'mercader', 'erudito', 'explorador', 'sanador', 'consejero', 'espia']);
+  // (se conserva la tirada del oficio para que el resto del pasado no cambie de semilla a semilla)
+  void rng.pick<PastRole>(['soldado', 'mercader', 'erudito', 'explorador', 'sanador', 'consejero', 'espia']);
+  const role: PastRole = 'heredero';
   const past: Past = {
     role,
     origin: origin.id,
@@ -202,6 +221,8 @@ export function createIdentity(w: WorldState, life: Life): Identity {
     trueName: personName(rng, culture.syllables, new Set(life.folk.map((f) => f.name))),
     family: rng.chance(0.6),
     symbol: SYMBOLS[(origin.id * 3 + culture.id.length) % SYMBOLS.length],
+    heir: true,
+    accident: rng.pick<Accident>(['rio', 'emboscada', 'tormenta']),
   };
   const latent: Record<string, number> = {};
   for (const [k, v] of ROLE_LATENT[role]) latent[k] = v;
@@ -603,6 +624,7 @@ export function tryFragment(w: WorldState, trig: FragmentTrigger): FragmentEvent
         sanador: ['En el templo, una mujer gime con la pierna hinchada.', 'Antes de pensarlo ya estás pidiendo agua caliente y nombrando hierbas que no recordabas conocer.'],
         consejero: ['En el salón, alguien lee en voz alta un acuerdo entre pueblos.', 'Sabes, sin saber por qué, cuál de las cláusulas es una trampa. Y quién la escribió.'],
         espia: ['En la posada, dos hombres se pasan una nota doblada de una forma muy concreta.', 'Reconoces el doblez. Es una señal. Y tú sabías leerla.'],
+        heredero: ['En el salón del consejo cuelga un mapa de las fronteras.', `Sin pensarlo, señalas los vados de ${O.name}, sus torres y por dónde pasaría un ejército. Sabes cómo se llaman sus capitanes.`, 'Alguien del consejo te mira con los ojos entornados: «¿Quién te ha enseñado eso?»'],
       };
       remembered(w, 'objeto', 'Algo de su vida anterior asomó: reconoció lo que nunca recordaba haber visto.');
       return { id: 'objeto', title: 'Algo que conoces', lines: [...T[past.role], '¿Quién eras?'] };
@@ -621,7 +643,7 @@ export function tryFragment(w: WorldState, trig: FragmentTrigger): FragmentEvent
         return {
           id: 'sueno',
           title: 'Un sueño',
-          lines: past.family ? ['Sueñas con una casa de piedra y una voz que te llama por un nombre que no entiendes.', 'Hay alguien más contigo. Pequeño. Te tira de la manga.', 'Al despertar, el nombre se te escapa como agua entre los dedos.'] : ['Sueñas con fuego y con gente corriendo. Tú das órdenes. O las recibes.', past.deed === 'terrible' ? 'Hay humo. Y una sensación de culpa que te dura toda la mañana.' : 'Alguien te da las gracias llorando. No sabes por qué.'],
+          lines: past.heir ? heirDream(w) : past.family ? ['Sueñas con una casa de piedra y una voz que te llama por un nombre que no entiendes.', 'Hay alguien más contigo. Pequeño. Te tira de la manga.', 'Al despertar, el nombre se te escapa como agua entre los dedos.'] : ['Sueñas con fuego y con gente corriendo. Tú das órdenes. O las recibes.', past.deed === 'terrible' ? 'Hay humo. Y una sensación de culpa que te dura toda la mañana.' : 'Alguien te da las gracias llorando. No sabes por qué.'],
         };
       }
       if (has(id, 'persona') && !has(id, 'verdad')) return revealTruth(w);
@@ -639,6 +661,21 @@ export function tryFragment(w: WorldState, trig: FragmentTrigger): FragmentEvent
       if (!has(id, 'persona')) {
         remembered(w, 'persona', `Alguien de ${O.name} le reconoció y le dijo su verdadero nombre: ${past.trueName}.`);
         const f = life.folk.find((x) => x.id === past.link);
+        const ruler = past.parent ? life.folk.find((x) => x.id === past.parent) : undefined;
+        if (past.heir)
+          return {
+            id: 'persona',
+            title: '¿Alteza?',
+            lines: [
+              `${f?.name ?? 'Alguien'} se queda blanco al verte y, sin pensarlo, hinca una rodilla en el barro. «¿${past.trueName}? Os dimos por muerto. La comitiva apareció destrozada ${ACCIDENT_WHERE[past.accident ?? 'rio']}, y de vos, ni rastro.»`,
+              `«Sois hijo de ${ruler?.name ?? 'quien reina'}, que gobierna ${O.name}. Media corte os llora y la otra media ya se reparte vuestra herencia.»`,
+              `Ese nombre, ${past.trueName}, suena a algo tuyo. Pero no lo recuerdas.`,
+            ],
+            choices: [
+              { id: 'aceptar', label: `Aceptar tu nombre: ${past.trueName}` },
+              { id: 'rechazar', label: `Seguir siendo «${id.nickname}»` },
+            ],
+          };
         return {
           id: 'persona',
           title: '¿Eres tú?',
@@ -659,6 +696,7 @@ function revealTruth(w: WorldState): FragmentEvent {
   const id = w.life!.identity!;
   const past = id.past!;
   const O = w.regions[past.origin];
+  if (past.heir) return revealHeir(w);
   remembered(w, 'verdad', past.deed === 'bueno' ? `Supo lo que había hecho en ${O.name}: algo que muchos le agradecían.` : `Supo lo que había hecho en ${O.name}: algo que muchos no le perdonaban.`);
   const lines =
     past.deed === 'bueno'
@@ -676,7 +714,47 @@ function revealTruth(w: WorldState): FragmentEvent {
 }
 
 function roleWord(r: PastRole): string {
-  return { soldado: 'soldado', mercader: 'mercader', erudito: 'erudito', explorador: 'explorador', sanador: 'sanador', consejero: 'consejero de un señor', espia: 'alguien que vendía secretos' }[r];
+  return { soldado: 'soldado', mercader: 'mercader', erudito: 'erudito', explorador: 'explorador', sanador: 'sanador', consejero: 'consejero de un señor', espia: 'alguien que vendía secretos', heredero: 'heredero del trono' }[r];
+}
+
+const ACCIDENT_WHERE: Record<Accident, string> = { rio: 'en el vado, tras la crecida', emboscada: 'en el desfiladero, con flechas sin marcas', tormenta: 'al pie del puerto, bajo la nieve' };
+
+/** El sueño del heredero: el accidente que le trajo hasta aquí. */
+function heirDream(w: WorldState): string[] {
+  const past = w.life!.identity!.past!;
+  const name = past.trueName;
+  const crash: Record<Accident, string[]> = {
+    rio: ['Sueñas con el estruendo del agua. Un carro que se ladea en mitad de un vado, caballos que relinchan, el frío que te corta el aliento.', `Alguien grita «¡Sujetad a ${name}!» mientras la corriente te arrastra.`],
+    emboscada: ['Sueñas con un desfiladero y con flechas que llegan de ninguna parte. La escolta cae a tu alrededor.', `Alguien te empuja barranco abajo gritando «¡Corred, ${name}!». Luego, golpes y oscuridad.`],
+    tormenta: ['Sueñas con nieve que no deja ver el camino. La comitiva se separa en la ventisca y tu caballo resbala.', `Una voz lejana te llama, «¡${name}!», cada vez más débil.`],
+  };
+  return [...crash[past.accident ?? 'rio'], 'Al despertar tienes las manos heladas. Y la certeza de que no viajabas solo, ni por gusto.'];
+}
+
+/** La verdad del heredero: quién es, adónde iba y por qué la gente de aquí le miraba así. */
+function revealHeir(w: WorldState): FragmentEvent {
+  const life = w.life!;
+  const id = life.identity!;
+  const past = id.past!;
+  const O = w.regions[past.origin];
+  const H = w.regions[w.player.home];
+  const ruler = past.parent ? life.folk.find((x) => x.id === past.parent) : undefined;
+  remembered(w, 'verdad', `Recordó que era ${past.trueName}, heredero de ${O.name}, y a qué había venido a ${H.name}.`);
+  const mission =
+    past.deed === 'bueno'
+      ? [`Viajabas en secreto hacia ${H.name} con una propuesta de paz, a espaldas de los halcones de la corte de ${O.name}. Pocos sabían que ibas.`, 'Quizá demasiados.']
+      : [`${ruler?.name ?? 'Tu padre'} te envió a ${H.name} disfrazado de mercader para medir sus defensas antes de la guerra. Tú aceptaste sin rechistar.`, 'Ahora conoces a la gente a la que ibas a espiar. Y algunos te han dado de comer.'];
+  return {
+    id: 'verdad',
+    title: 'Quién eres',
+    lines: [`Lo recuerdas todo de golpe. Eres ${past.trueName}, hijo de ${ruler?.name ?? 'quien reina'} y heredero del trono de ${O.name}: el reino con el que ${H.name} lleva años enfrentado.`, ...mission, `La comitiva no llegó nunca. Por eso despertaste aquí, sin nada más que el colgante con el sello de tu casa. Y por eso, sin saber nada, te miraban con recelo: se te notaba de dónde venías.`],
+    choices: [
+      { id: 'reclamar', label: `Volver a ${O.name} y reclamar tu lugar como heredero` },
+      { id: 'paz', label: `Terminar lo que empezaste: buscar la paz entre ${O.name} y ${H.name}` },
+      { id: 'renunciar', label: `Renunciar al trono y quedarte en ${H.name}` },
+      { id: 'callar', label: 'Callarlo: nadie tiene por qué saberlo' },
+    ],
+  };
 }
 
 /** Lo que decides hacer con lo que recuerdas. El pasado explica, no obliga. */
@@ -689,6 +767,7 @@ export function chooseFragment(w: WorldState, fragId: string, choice: string): s
   if (frag) frag.choice = choice;
   const gen = life.player.generation;
   const originFolk = life.folk.filter((f) => f.alive && f.regionId === past.origin);
+  const H = w.regions[w.player.home];
   switch (`${fragId}:${choice}`) {
     case 'persona:aceptar':
       id.named = true;
@@ -714,7 +793,41 @@ export function chooseFragment(w: WorldState, fragId: string, choice: string): s
       for (const [i, f] of originFolk.slice(0, 8).entries()) f.memories.push({ day: w.day, kind: i % 3 === 0 ? 'ofensa' : 'honestidad', weight: i % 3 === 0 ? -0.4 : 0.25, gen });
       story(w, `Reconoció ante la gente de ${O.name} lo que había hecho.`, 'decision');
       return ['Algunos te escupen. Otros, para tu sorpresa, te dan la mano por haber tenido el valor de decirlo.'];
+    case 'verdad:reclamar': {
+      past.claim = 'reclamar';
+      id.vow = past.origin;
+      // En su tierra le esperan: le ofrecen un asiento en el consejo de la corte, y el trono cuando falte quien reina.
+      id.offers.push({ regionId: past.origin, level: 5, day: w.day });
+      for (const f of originFolk.slice(0, 8)) f.memories.push({ day: w.day, kind: 'ayuda', weight: 0.3, gen });
+      story(w, `Decidió volver a ${O.name} y reclamar su lugar como heredero.`, 'decision');
+      return [`Volverás a ${O.name}. Allí te esperan un asiento en la corte y, cuando falte quien reina, el trono.`, `Lo que hagas por ${O.name} contará el doble. Y en ${H.name} no les gustará saber quién eras.`];
+    }
+    case 'verdad:paz': {
+      past.claim = 'paz';
+      // Tu palabra pesa en las dos cortes: la tensión entre ambos reinos baja y se abre la puerta a negociar.
+      for (const [a, b] of [[past.origin, w.player.home], [w.player.home, past.origin]]) {
+        const rel = (w.regions[a].relations[b] ??= { opinion: 0, grievance: 0, allied: false, war: false, tension: 0.1 });
+        rel.tension = Math.max(0, rel.tension - 0.25);
+        rel.opinion = Math.min(1, rel.opinion + 0.2);
+        rel.grievance = Math.max(0, rel.grievance - 0.15);
+      }
+      for (const f of life.folk.filter((x) => x.alive && x.regionId === w.player.home).slice(0, 10)) f.memories.push({ day: w.day, kind: 'honestidad', weight: 0.25, gen });
+      story(w, `Decidió acabar lo que había empezado: la paz entre ${O.name} y ${H.name}.`, 'decision');
+      return [`Cuentas la verdad en ${H.name}: quién eres y a qué venías. Hay gritos, y alguien pide que te encierren. Pero también hay quien te escucha.`, `Entre ${O.name} y ${H.name} baja la tensión. La paz no está hecha: está por hacer, y ahora tú eres el puente.`];
+    }
+    case 'verdad:renunciar': {
+      past.claim = 'renunciar';
+      for (const f of life.folk.filter((x) => x.alive && x.regionId === w.player.home)) f.trust = clamp(f.trust + 0.08);
+      for (const f of originFolk.slice(0, 6)) f.memories.push({ day: w.day, kind: 'ofensa', weight: -0.3, gen });
+      story(w, `Renunció al trono de ${O.name} para quedarse en ${H.name}.`, 'decision');
+      return [`Le dices a ${H.name} quién eras y que ya no lo eres. Que tu sitio está aquí. Muchos no se lo creen del todo; algunos, sí.`, `En ${O.name}, en cambio, lo llaman traición.`];
+    }
     case 'verdad:callar':
+      if (past.heir) {
+        past.claim = 'callar';
+        story(w, `Guardó en secreto que era el heredero de ${O.name}.`, 'decision');
+        return [`Lo guardas. Nadie en ${H.name} sabe que el forastero que les ayuda es el heredero de ${O.name}.`, 'Pero el colgante lleva el sello de tu casa, y en los pueblos la gente habla.'];
+      }
       story(w, 'Guardó para sí lo que había hecho.', 'decision');
       return ['Lo guardas. Pero los secretos pesan, y en los pueblos la gente habla.'];
   }
@@ -742,7 +855,12 @@ export function questions(w: WorldState): string[] {
   if (has(id, 'cancion') && !has(id, 'lugar')) q.push(`¿Por qué conozco una canción de ${O.name}?`);
   if (has(id, 'lugar') && !has(id, 'persona')) q.push(`¿Me conoce alguien en ${O.name}?`);
   if (has(id, 'sueno') && !has(id, 'verdad')) q.push(past.family ? '¿Quién era la persona del sueño?' : '¿Qué pasó la noche del fuego?');
-  if (has(id, 'persona') && !has(id, 'verdad')) q.push('¿Por qué me fui?');
+  if (has(id, 'persona') && !has(id, 'verdad')) q.push(past.heir ? '¿Adónde iba la comitiva, y por qué no llegó?' : '¿Por qué me fui?');
+  if (past.heir && !has(id, 'verdad')) q.push(`¿Por qué en ${w.regions[w.player.home].name} me miran con recelo?`);
+  if (past.heir && has(id, 'verdad')) {
+    const H = w.regions[w.player.home].name;
+    q.push(past.claim === 'reclamar' ? `¿Qué me espera en la corte de ${O.name}?` : past.claim === 'paz' ? `¿Podré hacer la paz entre ${O.name} y ${H}?` : past.claim === 'renunciar' ? `¿Me aceptará ${H} como uno de los suyos?` : '¿Cuánto tiempo podré guardar el secreto?');
+  }
   if (!q.length) q.push('Ya sabes quién fuiste. La pregunta ahora es quién vas a ser.');
   return q;
 }

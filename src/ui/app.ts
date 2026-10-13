@@ -287,6 +287,9 @@ export class App {
       h('p', null, 'Frío. Hierba mojada bajo la mejilla.'),
       h('p', null, 'Abres los ojos. El cielo empieza a clarear. No sabes dónde estás.'),
       h('p', null, 'Intentas recordar cómo llegaste aquí. Tu nombre. Cualquier cosa.'),
+      ...(id.past?.heir
+        ? [h('p', null, { rio: 'Tienes la ropa empapada y huele a río. Te duelen las costillas, como si te hubiera arrastrado la corriente.', emboscada: 'Te duele un costado. Hay sangre seca en la manga, y no toda es tuya.', tormenta: 'Tienes los dedos entumecidos y escarcha en el pelo, como si hubieras pasado la noche en la nieve.' }[id.past.accident ?? 'rio']), h('p', null, 'Tu capa es de buen paño, bordada en el cuello. Demasiado buena para un caminante.')]
+        : []),
       h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
       h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.', false, true); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
     );
