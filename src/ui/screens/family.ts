@@ -51,7 +51,7 @@ export function renderFamily(app: App): Node[] {
       ? section('Cómo estás',
           h('div', { class: 'need' }, h('span', null, '🍞 Hambre'), bar(id.needs.hunger, id.needs.hunger > 0.8)),
           h('div', { class: 'need' }, h('span', null, '💤 Cansancio'), bar(id.needs.fatigue, id.needs.fatigue > 0.85)),
-          h('p', { class: 'muted' }, `🪙 ${id.needs.coins} monedas · 🎒 ${p.inventory.comida} de comida · ${p.inventory.hierbas} hierbas · ${p.inventory.reliquias} objetos de valor`),
+          h('p', { class: 'muted' }, `🪙 ${id.needs.coins} monedas · 🎒 ${p.inventory.comida} de comida · ${p.inventory.hierbas} hierbas · ${p.inventory.reliquias} objetos de valor${p.torches ? ` · 🔥 ${p.torches} antorcha${p.torches > 1 ? 's' : ''}` : ''}`),
           h('p', { class: 'tiny' }, id.housed ? 'Tienes una casa donde dormir.' : 'No tienes dónde dormir: la posada cuesta dinero; al raso se descansa mal.'),
         )
       : null,

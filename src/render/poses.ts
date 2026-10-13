@@ -90,14 +90,15 @@ export function extraAp(s: PoseHost, id: string, regionId: number, role: FolkRol
   return ap;
 }
 
-export function playerAp(s: PoseHost, lantern: boolean): Appearance {
+export function playerAp(s: PoseHost, lantern: boolean, torch = false): Appearance {
   const p = ensureLife(s.w).player;
   if (s.playerLook !== p.look) (s.playerLook = p.look), (s.playerLookKey = JSON.stringify(p.look ?? ''));
-  const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${s.playerLookKey}`;
+  const key = `${p.name}:${p.generation}:${p.age >= 58 ? 1 : 0}:${lantern}:${torch}:${s.playerLookKey}`;
   const c = s.apCache.get('@player');
   if (c && c.key === key) return c.ap;
   const ap = playerAppearance(p);
   if (lantern) ap.outfit.item = 'farol';
+  if (torch) ap.outfit.item = 'antorcha'; // (la antorcha encendida, en lugar del farol)
   s.apCache.set('@player', { key, ap });
   return ap;
 }

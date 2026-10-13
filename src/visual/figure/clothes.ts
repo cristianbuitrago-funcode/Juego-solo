@@ -510,6 +510,27 @@ export function paintItem(g: CanvasRenderingContext2D, item: Exclude<Item, undef
       g.arc(1.3 * s, -8 * s, 1.3 * s, Math.PI, Math.PI * 2.1);
       g.stroke();
       break;
+    case 'antorcha': {
+      // Palo de pino con la cabeza envuelta en trapos y brea, y una llama alta (más que un farol).
+      stick(0, -8, 0, 3.5, 0.75);
+      g.fillStyle = '#3a2a1e';
+      g.beginPath();
+      g.ellipse(0, -8.6 * s, 0.95 * s, 1.4 * s, 0, 0, Math.PI * 2);
+      g.fill();
+      const fl = g.createRadialGradient(0, -11.6 * s, 0.1 * s, 0, -11.6 * s, 3.6 * s);
+      fl.addColorStop(0, '#fff4c0');
+      fl.addColorStop(0.35, '#ffb040');
+      fl.addColorStop(0.8, 'rgba(220,80,20,0.85)');
+      fl.addColorStop(1, 'rgba(200,60,10,0)');
+      g.fillStyle = fl;
+      g.beginPath();
+      g.moveTo(-1.5 * s, -9.4 * s);
+      g.quadraticCurveTo(-2.3 * s, -12.6 * s, 0, -15.8 * s);
+      g.quadraticCurveTo(2.3 * s, -12.6 * s, 1.5 * s, -9.4 * s);
+      g.closePath();
+      g.fill();
+      break;
+    }
     case 'baston':
       stick(0, -1, 0.5, 9, 0.7);
       ell(g, 0, -1 * s, 0.7 * s, 0.5 * s, shd(WOOD, 0.2));

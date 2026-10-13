@@ -5,6 +5,7 @@ import { passable } from '../src/world/path';
 import { Furniture } from '../src/render/furniture';
 import { ensureLife } from '../src/world/life';
 import { healthOf } from '../src/world/generations';
+import { buyTorch, lightTorch, TORCH_MINUTES, torchLit } from '../src/world/livelihood';
 import { raidStep, reactWild, startRaid, type Animal, type WildEvent } from '../src/render/animals';
 
 describe('fieras frente al jugador', () => {
@@ -157,5 +158,38 @@ describe('fieras frente al jugador', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('una antorcha encendida mantiene a raya a los lobos: te siguen de lejos y no muerden', () => {
+    const said: WildEvent[] = [];
+    const host = { w, l, furniture, onWild: (_k: string, e: WildEvent) => said.push(e) };
+    const a = make('lobo');
+    const me = { x: spot.x - 6, y: spot.y };
+    let closest = 99;
+    for (let i = 0; i < 300; i++) {
+      reactWild(host, a, me, 0.1, true, true);
+      closest = Math.min(closest, Math.hypot(a.x - me.x, a.y - me.y));
+    }
+    expect(said).not.toContain('mordisco');
+    expect(said).toContain('fuego');
+    expect(closest).toBeGreaterThan(5.5);
+    // El que ya venía a morder da media vuelta al ver el fuego.
+    const b = make('lobo');
+    b.mood = 'ataca';
+    reactWild(host, b, me, 0.1, true, true);
+    expect(b.mood).toBe('huye');
+  });
+
+  it('las antorchas se compran, se encienden y se apagan solas', () => {
+    const life = ensureLife(w);
+    life.identity!.needs.coins = 10;
+    expect(buyTorch(w, w.player.home).lines[0]).toContain('brea');
+    expect(life.player.torches).toBe(1);
+    expect(torchLit(w)).toBe(false);
+    lightTorch(w);
+    expect(torchLit(w)).toBe(true);
+    expect(life.player.torches).toBe(0);
+    life.clock += TORCH_MINUTES + 1;
+    expect(torchLit(w)).toBe(false);
   });
 });

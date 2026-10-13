@@ -37,6 +37,7 @@ import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, player
 import { buyerSpot, villageDrawables } from './village';
 import { hudShiftFor } from './screenbox';
 import { walkPace } from '../world/stats';
+import { torchLit } from '../world/livelihood';
 import { drawWet } from './wet';
 
 /**
@@ -1487,13 +1488,16 @@ export class WorldScene {
       }
     // Jugador.
     const me = life.player;
-    const pap = this.dress(playerAp(this, darkness(life.clock) > 0.3), wet, cold);
+    const torch = torchLit(this.w);
+    const pap = this.dress(playerAp(this, darkness(life.clock) > 0.3, torch), wet, cold);
     const ppose = playerPose(this, sec, wet, cold);
     this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
     if (darkness(life.clock) > 0.3) {
       // Junto a una farola, el farol de mano casi no se nota (dos focos pegados se leían como un error).
       const byLamp = this.l.villages.some((v) => Math.abs(v.cx - me.x) < v.plazaR + 4 && Math.abs(v.cy - me.y) < v.plazaR + 4 && v.lamps.some((lp) => Math.hypot(lp.x - me.x, lp.y - me.y) < 2.6));
-      this.lights.push({ x: me.x * TILE + (ppose.flip ? -3.5 : 3.5), y: me.y * TILE - 11, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
+      // La antorcha da mucha más luz que el farol, y tiembla como el fuego.
+      if (torch) this.lights.push({ x: me.x * TILE + (ppose.flip ? -3.5 : 3.5), y: me.y * TILE - 20, r: 82, k: 0.95 + Math.sin(sec * 9.3) * 0.04 + Math.sin(sec * 23.1) * 0.03 });
+      else this.lights.push({ x: me.x * TILE + (ppose.flip ? -3.5 : 3.5), y: me.y * TILE - 11, r: byLamp ? 30 : 54, k: byLamp ? 0.3 : 0.8 });
     }
 
     // Las sombras van antes que todo lo que se alza sobre el suelo.

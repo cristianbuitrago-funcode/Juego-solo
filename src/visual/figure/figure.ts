@@ -194,12 +194,12 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
     case 'shake':
       // Se habla y se señala con la mano libre: solo un bastón, una lanza o el cayado (con el gancho a
       // la altura del hombro, ya no delante de la cara) se quedan en la mano.
-      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
+      return own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha' ? own : undefined;
     case 'fight':
       return own && WEAPONS.has(own) && own !== 'arco' ? own : undefined;
     case 'run':
       // Corriendo no se lleva una cesta delante del pecho: solo armas o un bastón.
-      return own && (WEAPONS.has(own) || own === 'lanza' || own === 'cayado' || own === 'baston') ? own : undefined;
+      return own && (WEAPONS.has(own) || own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha') ? own : undefined;
     case 'carry':
       return own === 'cesta' || own === 'saco' ? own : 'saco';
     case 'wave':
@@ -210,9 +210,9 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
     case 'argue':
     case 'sit':
       if (pose.drink) return 'jarra';
-      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
+      return own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha' ? own : undefined;
     case 'rest':
-      return own === 'lanza' || own === 'cayado' || own === 'baston' ? own : undefined;
+      return own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha' ? own : undefined;
     default:
       return own;
   }
@@ -345,7 +345,7 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
         // Ángulo del objeto respecto al brazo. Bastones, cayados y lanzas (fuera de combate) se
         // quedan verticales pase lo que pase con el brazo; lo que cuelga, cuelga; las herramientas
         // siguen un ángulo propio en el mundo (-90° + R.item). Hay que anular brazo y torso.
-        const upright = item === 'cayado' || item === 'paraguas' || item === 'baston' || item === 'jarra' || (item === 'lanza' && pose.action !== 'fight');
+        const upright = item === 'cayado' || item === 'antorcha' || item === 'paraguas' || item === 'baston' || item === 'jarra' || (item === 'lanza' && pose.action !== 'fight');
         const hangs = pose.action === 'idle' || pose.action === 'walk' || pose.action === 'look';
         g.rotate(upright ? l.a + l.b - R.lean + R.item * 0.3 : hangs ? l.a + l.b - R.lean - 0.15 + R.item : l.b + l.a - Math.PI / 2 + R.item);
         // La lanza en ristre: la punta (dibujada hacia arriba) va hacia donde mira, no hacia atrás.

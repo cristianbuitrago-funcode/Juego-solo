@@ -17,7 +17,7 @@ import { maybeSpawn } from '../world/encounters';
 import { getLayout } from '../world/layout';
 import { addScore, eat, rest, speedFactor, story, tickNeeds, tryFragment, type GainNote } from '../world/identity';
 import { ensureLife, syncClock } from '../world/life';
-import { exploreLearning, forage, sleepOutcome } from '../world/livelihood';
+import { exploreLearning, forage, sleepOutcome, lightTorch } from '../world/livelihood';
 import { discoverNear, presenceTick } from '../world/presence';
 import { DAY_MINUTES } from '../world/types';
 import { clear, h, vibrate } from './dom';
@@ -315,6 +315,10 @@ export class App {
     const pe = life.society ? playerEco(w) : null;
     if (pe && cargoCount(pe) > 0) choices.push({ label: `📦 Tu carga: ${Object.entries(pe.cargo).filter(([, n]) => (n ?? 0) >= 0.5).map(([g, n]) => `${Math.round(n!)} ${GOOD[g as Good].name}`).join(', ')}`, run: () => this.refresh() });
     for (const b of pe?.businesses ?? []) choices.push({ label: `📒 Tu ${b.kind === 'puesto' ? 'puesto' : b.kind === 'granja' ? 'campo' : 'transporte'} en ${w.regions[b.regionId].name}`, run: () => businessDialog(this, b.id, () => this.refresh()) });
+    // La antorcha: encender una (dura unas tres horas) o ver cuánto le queda a la que arde.
+    const torchLeft = (me.torchUntil ?? 0) - life.clock;
+    if (torchLeft > 0) choices.push({ label: `🔥 Tu antorcha arde (le quedan unas ${Math.max(1, Math.round(torchLeft / 60))} h)`, run: () => {} });
+    else if (me.torches) choices.push({ label: `🔥 Encender una antorcha (tienes ${me.torches})`, hint: 'Mantiene a raya a los lobos', primary: hourOf(life.clock) >= 20 || hourOf(life.clock) < 6, run: () => { this.toast(lightTorch(w)); this.refresh(); } });
     if (id.items.includes('colgante')) choices.push({ label: '🔱 Mirar el colgante', run: () => { const ev = tryFragment(w, { kind: 'colgante' }); if (ev) showFragment(this, ev); } });
     choices.push({ label: 'Nada', run: () => {} });
     dialogue(this, 'Tú', `🍞 ${Math.round(id.needs.hunger * 100)}% hambre · 💤 ${Math.round(id.needs.fatigue * 100)}% cansancio · 🪙 ${id.needs.coins}`, [], choices);
@@ -545,6 +549,7 @@ export class App {
       'lobo:asalto': `¡Los lobos bajan a ${town} a por el ganado!`,
       'lobo:ahuyentados': info?.by === 'jugador' ? 'Te plantas ante los lobos y la manada huye al monte.' : `La guardia de ${town} sale a su encuentro y ahuyenta a los lobos.`,
       'lobo:presa': `Los lobos se han llevado ${prey} de ${town}. Nadie llegó a tiempo.`,
+      'lobo:fuego': 'Los lobos ven el fuego de tu antorcha. Te siguen, pero no se atreven a acercarse.',
       'lobo:mordisco': 'Un lobo sale de la oscuridad y te muerde la pierna antes de que puedas reaccionar. Se aparta, pero no se va.',
       'lobo:esquiva': 'Un lobo se te lanza encima. Lo ves venir y te apartas: sus dientes se cierran en el aire.',
       'oso:mira': 'Un oso se ha parado a mirarte. Mejor no acercarse más.',

@@ -233,6 +233,35 @@ export function buyMeal(w: WorldState, regionId: number): Outcome {
   return { lines: ['Guiso caliente, pan duro y un vaso de algo que quema. Te sientes persona otra vez.'], notes: gain(w, 'k:culturas', 0.3), minutes: 40 };
 }
 
+// ---------------------------------------------------------------------------
+// La antorcha: el fuego mantiene a raya a los lobos (un farol no; ver render/animals.ts)
+// ---------------------------------------------------------------------------
+export const TORCH_MINUTES = 180;
+
+export function torchLit(w: WorldState): boolean {
+  const life = w.life;
+  return !!life && (life.player.torchUntil ?? 0) > life.clock;
+}
+
+export function buyTorch(w: WorldState, regionId: number): Outcome {
+  const life = ensureLife(w);
+  const id = life.identity!;
+  const price = priceOf(w, regionId, 1);
+  if (id.needs.coins < price) return none([`Una antorcha de brea cuesta ${price} moneda${price > 1 ? 's' : ''}. No te llega.`]);
+  id.needs.coins -= price;
+  life.player.torches = (life.player.torches ?? 0) + 1;
+  return { lines: ['Un palo de pino con la punta envuelta en trapos y brea. «Para el camino de noche», te dicen. «A los lobos no les gusta el fuego.»'], notes: [], minutes: 5 };
+}
+
+export function lightTorch(w: WorldState): string {
+  const life = ensureLife(w);
+  const p = life.player;
+  if (!(p.torches ?? 0)) return 'No te queda ninguna antorcha.';
+  p.torches = (p.torches ?? 0) - 1;
+  p.torchUntil = life.clock + TORCH_MINUTES;
+  return 'Prendes la antorcha. La brea chisporrotea y la noche retrocede unos pasos a tu alrededor. Arderá unas tres horas.';
+}
+
 export function buyFood(w: WorldState, regionId: number): Outcome {
   const life = ensureLife(w);
   const id = life.identity!;

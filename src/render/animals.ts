@@ -7,6 +7,7 @@ import { geoOf } from '../world/geography';
 import { idx } from '../world/terrain';
 import { T } from '../world/types';
 import { injure } from '../world/generations';
+import { torchLit } from '../world/livelihood';
 import { levelOf } from '../world/identity';
 import { STAT_BASE, statOf } from '../world/stats';
 import { ANIMAL_HALF } from '../visual/env/animals';
@@ -52,7 +53,7 @@ export interface Animal {
 
 export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede' | 'acecha' | 'asalta' | 'vuelve' | 'ataca';
 /** Lo que el jugador debería saber de una fiera (la app lo convierte en un aviso). */
-export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados' | 'zarpazo' | 'esquiva' | 'mordisco';
+export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados' | 'zarpazo' | 'esquiva' | 'mordisco' | 'fuego';
 export interface WildInfo {
   regionId?: number;
   prey?: S.AnimalKind;
@@ -79,6 +80,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
   const h = hourOf(life.clock);
   const night = wildNight(h);
   const nightId = Math.floor((life.clock / 60 + 6 - 12) / 24);
+  const torch = torchLit(s.w);
   for (const v of s.l.villages) {
     const far = Math.hypot(v.cx - me.x, v.cy - me.y) > 60;
     if (far) {
@@ -99,7 +101,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
         raidStep(s, v.regionId, list, a, me, dt);
         continue;
       }
-      if ((a.kind === 'lobo' || a.kind === 'oso') && reactWild(s, a, me, dt, night)) continue;
+      if ((a.kind === 'lobo' || a.kind === 'oso') && reactWild(s, a, me, dt, night, torch)) continue;
       const d = Math.hypot(a.tx - a.x, a.ty - a.y);
       if (d < 0.2) {
         if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
@@ -139,7 +141,7 @@ const halfOf = (kind: Animal['kind']) => ANIMAL_HALF[kind];
  * para antes de alcanzarte) y luego retrocede despacio sin darte la espalda. Ninguno ataca: es un
  * aviso. Devuelve true si este fotograma ha decidido ella cómo se mueve el animal.
  */
-export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, a: Animal, me: { x: number; y: number }, dt: number, night = false): boolean {
+export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, a: Animal, me: { x: number; y: number }, dt: number, night = false, torch = false): boolean {
   const kind = a.kind as 'lobo' | 'oso';
   const dx = me.x - a.x;
   const dy = me.y - a.y;
@@ -184,6 +186,16 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
   if (dp > 14) (a.told = undefined), (a.warned = false); // lejos: el próximo encuentro empieza de nuevo
   if (kind === 'lobo') {
     // Se lanza a morder: corre hasta ti; al alcanzarte muerde (o lo esquivas) y se aparta.
+    // El fuego de una antorcha les quita las ganas: el que venía a morder da media vuelta.
+    if (a.mood === 'ataca' && torch) {
+      const t = away(-dx / dp, -dy / dp, 7);
+      a.mood = 'huye';
+      a.tx = t.x;
+      a.ty = t.y;
+      a.stalkT = 0;
+      say('fuego');
+      return true;
+    }
     if (a.mood === 'ataca') {
       step(me.x, me.y, 5.2, 'avance');
       if (Math.hypot(me.x - a.x, me.y - a.y) < 0.9) {
@@ -207,13 +219,23 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
       return true;
     }
     // De noche se crecen: solo huyen si te les echas encima, y antes te siguen a distancia.
-    if (dp < (night ? 2.5 : 4)) {
+    if (dp < (night && !torch ? 2.5 : 4)) {
       const t = away(-dx / dp, -dy / dp, 9);
       a.mood = 'huye';
       a.tx = t.x;
       a.ty = t.y;
       say('huye');
       return step(t.x, t.y, 3.6, 'avance'), true;
+    }
+    if (night && torch && dp < 11) {
+      // Con la antorcha encendida te siguen, pero a distancia del fuego, y no se atreven a morder.
+      a.mood = 'acecha';
+      a.stalkT = 0;
+      if (dp > 7.5) step(a.x + (dx / dp) * (dp - 7), a.y + (dy / dp) * (dp - 7), 1.1, 'avance');
+      else if (dp < 6.5) step(a.x - (dx / dp) * (7 - dp), a.y - (dy / dp) * (7 - dp), 1.6, 'jugador');
+      else step(a.x, a.y, 0, 'jugador');
+      say('fuego');
+      return true;
     }
     if (night && dp < 11) {
       a.mood = 'acecha';
@@ -515,8 +537,8 @@ export function raidStep(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'
     }
     return;
   }
-  // Con el jugador encima (a menos de 3 casillas), la manada se lo piensa y se va.
-  if (Math.hypot(me.x - a.x, me.y - a.y) < 3) return scareRaiders(s, regionId, list, 'jugador');
+  // Con el jugador encima (a menos de 3 casillas; de 6 si lleva una antorcha), la manada se lo piensa y se va.
+  if (Math.hypot(me.x - a.x, me.y - a.y) < (torchLit(s.w) ? 6 : 3)) return scareRaiders(s, regionId, list, 'jugador');
   const prey = a.prey;
   if (!prey || !list.includes(prey) || (a.stuck ?? 0) > 4) {
     a.mood = 'vuelve';

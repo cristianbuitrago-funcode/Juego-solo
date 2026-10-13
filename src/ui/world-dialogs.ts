@@ -19,7 +19,7 @@ import { doorOf, getLayout, nearestWalkable } from '../world/layout';
 import { rumorFragment } from '../world/heir';
 import { answerOffer, chooseFragment, gain, hasTalent, levelOf, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
 import { ensureLife, heirs, succeed } from '../world/life';
-import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
+import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome, buyTorch } from '../world/livelihood';
 import { arcAct, arcChoices } from '../world/arcs';
 import { convoyDialog, marketDialog } from './market';
 import { playerEco } from '../world/business';
@@ -658,6 +658,7 @@ function tavern(app: App, regionId: number): void {
     { label: '👂 Escuchar conversaciones', run: listen, primary: !forastero || id.needs.hunger < 0.5 },
     ...(forastero ? [
       { label: `🍲 Comer algo caliente (${priceOf(w, regionId, 1)} 🪙)`, primary: id.needs.hunger >= 0.5, run: () => outcome(app, 'La posada', buyMeal(w, regionId)) },
+      { label: `🔥 Comprar una antorcha (${priceOf(w, regionId, 1)} 🪙)`, hint: 'Para el camino de noche: a los lobos no les gusta el fuego', run: () => outcome(app, 'La posada', buyTorch(w, regionId)) },
       { label: `🛏 Dormir aquí (${priceOf(w, regionId, 2)} 🪙)`, run: () => { const o = rentBed(w, regionId); if (o.lines[0].startsWith('Una cama de paja')) app.sleep('posada'); else outcome(app, 'La posada', o); } },
       ...loft(app, regionId),
     ] : []),
