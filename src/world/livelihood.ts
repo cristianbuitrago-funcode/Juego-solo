@@ -5,6 +5,8 @@ import { clamp } from '../core/util';
 import { commitCtx, makeCtx } from '../core/world';
 import { remember } from './folk';
 import { addScore, chanceOf, deed, eat, gain, hasTalent, levelOf, rest, story, tryFragment, type FragmentEvent, type GainNote, type KnowId, type SkillId } from './identity';
+import { fatiguePace, statOf } from './stats';
+import { rumorFragment } from './heir';
 import { ensureLife } from './life';
 import { getLayout } from './layout';
 import { foodPrice, foodStock, marketOf, trade } from './economy';
@@ -45,6 +47,8 @@ export interface Job {
   pay: { coins: number; comida: number; hierbas: number };
   task: string; // lo que haces, en palabras
   needs?: number; // reconocimiento mínimo en el pueblo
+  /** Ataque (fuerza) que pide un oficio duro: con menos rinde menos; con mucho más, rinde más. */
+  strength?: number;
 }
 
 export function jobFor(w: WorldState, f: Folk): Job | null {
@@ -52,17 +56,17 @@ export function jobFor(w: WorldState, f: Folk): Job | null {
   const poor = r.flags.hambre || (r.isHome ? w.player.reserves < 20 : r.food < 4);
   switch (f.role) {
     case 'campesino':
-      return { label: '🌾 Ayudar en el campo', skill: 'agricultura', know: 'agricultura', minutes: 180, pay: { coins: 1, comida: poor ? 0 : 1, hierbas: 0 }, task: 'Cavas surcos, arrancas malas hierbas y cargas cestos hasta que te arden las manos.' };
+      return { label: '🌾 Ayudar en el campo', skill: 'agricultura', know: 'agricultura', minutes: 180, pay: { coins: 1, comida: poor ? 0 : 1, hierbas: 0 }, task: 'Cavas surcos, arrancas malas hierbas y cargas cestos hasta que te arden las manos.', strength: 4 };
     case 'pastor':
       return { label: '🐑 Ayudar con el rebaño', skill: 'supervivencia', know: 'agricultura', minutes: 180, pay: { coins: 1, comida: poor ? 0 : 1, hierbas: 0 }, task: 'Recorres las lomas buscando ovejas perdidas y aprendes a leer el cielo.' };
     case 'pescador':
-      return { label: '🎣 Ayudar con las redes', skill: 'supervivencia', minutes: 180, pay: { coins: 1, comida: poor ? 1 : 2, hierbas: 0 }, task: 'Remiendas redes, tiras de ellas con el agua por la cintura y vuelves oliendo a río.' };
+      return { label: '🎣 Ayudar con las redes', skill: 'supervivencia', minutes: 180, pay: { coins: 1, comida: poor ? 1 : 2, hierbas: 0 }, task: 'Remiendas redes, tiras de ellas con el agua por la cintura y vuelves oliendo a río.', strength: 3 };
     case 'artesano':
-      return { label: '🔨 Trabajar en el taller', skill: 'artesania', know: 'tecnologia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Sujetas, cortas, reparas. Una herramienta rota vuelve a servir entre tus manos.' };
+      return { label: '🔨 Trabajar en el taller', skill: 'artesania', know: 'tecnologia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Sujetas, cortas, reparas. Una herramienta rota vuelve a servir entre tus manos.', strength: 4 };
     case 'comerciante':
       return { label: '⚖ Ayudar en el puesto', skill: 'comercio', know: 'economia', minutes: 180, pay: { coins: poor ? 1 : 3, comida: 0, hierbas: 0 }, task: 'Pregonas, pesas, regateas. Aprendes lo que vale cada cosa y lo que la gente cree que vale.' };
     case 'guardia':
-      return { label: '⚔ Entrenar con la guardia', skill: 'combate', minutes: 120, pay: { coins: 0, comida: 1, hierbas: 0 }, task: 'Golpes de palo, caídas, más golpes. Al final del día te duele todo, pero aguantas un poco más.' };
+      return { label: '⚔ Entrenar con la guardia', skill: 'combate', minutes: 120, pay: { coins: 0, comida: 1, hierbas: 0 }, task: 'Golpes de palo, caídas, más golpes. Al final del día te duele todo, pero aguantas un poco más.', strength: 4 };
     case 'sanadora':
       return { label: '🌿 Ayudar a la sanadora', skill: 'medicina', know: 'medicina', minutes: 180, pay: { coins: 1, comida: 0, hierbas: 1 }, task: 'Machacas raíces, hierves paños y sujetas a quien grita. Aprendes qué cura y qué no.' };
     case 'anciano':
@@ -72,9 +76,11 @@ export function jobFor(w: WorldState, f: Folk): Job | null {
     case 'posadero':
       return { label: '🍺 Ayudar en la posada', skill: 'persuasion', know: 'culturas', minutes: 150, pay: { coins: 1, comida: 1, hierbas: 0 }, task: 'Sirves jarras, friegas cuencos y escuchas. En una posada se entera uno de todo.' };
     case 'minero':
-      return { label: '⛏ Bajar a la mina', skill: 'supervivencia', know: 'geografia', minutes: 240, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Polvo, oscuridad y el eco de los picos. Sales con los pulmones llenos de piedra y unas monedas.' };
+      return { label: '⛏ Bajar a la mina', skill: 'supervivencia', know: 'geografia', minutes: 240, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Polvo, oscuridad y el eco de los picos. Sales con los pulmones llenos de piedra y unas monedas.', strength: 5 };
     case 'carpintero':
-      return { label: '🪚 Ayudar en la carpintería', skill: 'artesania', know: 'tecnologia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Serrar, cepillar, encajar. La madera tiene su genio y hay que escucharla.' };
+      return { label: '🪚 Ayudar en la carpintería', skill: 'artesania', know: 'tecnologia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Serrar, cepillar, encajar. La madera tiene su genio y hay que escucharla.', strength: 4 };
+    case 'lenador':
+      return { label: '🪓 Cortar leña', skill: 'supervivencia', know: 'geografia', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Hacha arriba, hacha abajo. Apilas troncos hasta que el sudor te escuece en los ojos.', strength: 5 };
     case 'lider':
       return { label: '🏛 Ofrecer tu ayuda al consejo', skill: 'liderazgo', know: 'politica', minutes: 180, pay: { coins: 2, comida: 0, hierbas: 0 }, task: 'Organizas turnos, escribes cartas, escuchas quejas. Ves por dentro cómo se decide en un pueblo.', needs: 2 };
     default:
@@ -104,6 +110,17 @@ export function work(w: WorldState, folkId: string): Outcome {
     pay.coins = Math.max(0, pay.coins - 1);
     lines.push(`${f.name} suspira: «Torpe, pero con ganas. Ya aprenderás.»`);
   } else lines.push(`${f.name} asiente: «No lo haces nada mal.»`);
+  // Oficios duros: la fuerza (el ataque) cuenta tanto como saber hacerlo.
+  if (job.strength) {
+    const arm = statOf(id, 'ataque');
+    if (arm < job.strength) {
+      pay.coins = Math.max(0, pay.coins - 1);
+      lines.push(`Te faltan brazos para esto: a media tarde ya no puedes con ${f.role === 'lenador' ? 'el hacha' : f.role === 'pescador' ? 'la red' : 'el peso'}. (Ataque ${arm} de ${job.strength}.)`);
+    } else if (arm >= job.strength + 2) {
+      pay.coins += 1;
+      lines.push(`Haces el trabajo de dos. ${f.name} te da una moneda de más: «Con esos brazos, vuelve cuando quieras.»`);
+    }
+  }
   id.needs.coins += pay.coins;
   life.player.inventory.comida += pay.comida;
   life.player.inventory.hierbas += pay.hierbas;
@@ -115,7 +132,7 @@ export function work(w: WorldState, folkId: string): Outcome {
   addScore(w, r.id, ok ? 1.6 : 1);
   deed(id, 'trabajar');
   deed(id, `oficio:${job.skill}`);
-  id.needs.fatigue = Math.min(1, id.needs.fatigue + job.minutes / 1000);
+  id.needs.fatigue = Math.min(1, id.needs.fatigue + (job.minutes / 1000) * fatiguePace(id)); // (la defensa es aguante)
   if ((id.deeds.trabajar ?? 0) === 1) story(w, `Encontró su primer trabajo en ${r.name}, con ${f.name}.`, 'logro');
   return { lines, notes, minutes: job.minutes };
 }
@@ -129,7 +146,7 @@ export function askAboutMe(w: WorldState, folkId: string): Outcome {
   const f = life.folk.find((x) => x.id === folkId);
   if (!f) return none(['…']);
   const past = id.past;
-  const frag = tryFragment(w, { kind: 'hablar', folkId });
+  const frag = rumorFragment(w, folkId) ?? tryFragment(w, { kind: 'hablar', folkId });
   if (frag) return { lines: [], notes: [], minutes: 10, fragment: frag };
   if (!past) return none([`${f.name}: «Todo el mundo sabe quién eres.»`]);
   const O = w.regions[past.origin];

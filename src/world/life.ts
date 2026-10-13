@@ -20,6 +20,7 @@ import { walkable } from './terrain';
 import { findPath } from './path';
 import { createIdentity, legacyIdentity, story, syncAuthority, updateStanding, type Identity } from './identity';
 import { getLayout, nearestWalkable } from './layout';
+import { heirSecretDay } from './heir';
 import type { Avatar, Folk, Life, TownState } from './types';
 import { DAYS_PER_YEAR, T, TH, TW } from './types';
 
@@ -222,6 +223,7 @@ export function dailyLife(w: WorldState): void {
   const news = updateStanding(w);
   const id = life.identity;
   if (id) for (const n of news) (id.inbox ??= []).push(n.text);
+  if (id) (id.inbox ??= []).push(...heirSecretDay(w)); // el secreto del heredero, si lo calla
   if (id && gnews.length) (id.inbox ??= []).push(...gnews.slice(0, 3));
   // Fase 6: el mundo completo (asentamientos, caminos, puertos, desastres, técnicas, épocas…).
   const wnews = atlasDay(w);

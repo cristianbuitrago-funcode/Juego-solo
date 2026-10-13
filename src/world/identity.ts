@@ -4,6 +4,8 @@ import { Rng } from '../core/rng';
 import { clamp } from '../core/util';
 import type { WorldState } from '../core/types';
 import type { Life } from './types';
+import { addXp, learnPace, statBonus, type Stats } from './stats';
+import { answerRumor } from './heir';
 
 /**
  * Identidad del protagonista. Despierta sin memoria y sin autoridad: no
@@ -107,6 +109,9 @@ export interface Past {
   accident?: Accident;
   /** Lo que decide al saberlo: volver a reclamar el trono, buscar la paz, quedarse o callar. */
   claim?: 'reclamar' | 'paz' | 'renunciar' | 'callar';
+  /** Si lo calla: cuánto se ha filtrado (0..1) y el día en que corrió el rumor (heir.ts). */
+  secretHeat?: number;
+  secretOut?: number;
 }
 
 const ROLE_LATENT: Record<PastRole, [string, number][]> = {
@@ -181,6 +186,8 @@ export interface Identity {
   temper?: string; // carácter (los herederos lo traen de nacimiento)
   /** Lo que la edad y la salud hacen al cuerpo y a la mente (Fase 5; lo escribe generations.ts cada día). */
   vigor?: { body: number; mind: number; learn: number; teach: number; social: number };
+  /** Nivel y atributos (ataque, defensa, inteligencia, agilidad, carisma): ver stats.ts. */
+  stats?: Stats;
 }
 
 const blankTraits = <K extends string>(ids: K[]): Record<K, Trait> => Object.fromEntries(ids.map((k) => [k, { xp: 0, level: 0, found: -1 }])) as Record<K, Trait>;
@@ -317,7 +324,8 @@ export function chanceOf(id: Identity, skill: SkillId, difficulty = 1): number {
   // La edad cuenta: el cuerpo para lo físico, la experiencia para lo demás.
   const v = id.vigor;
   const age = v ? (['combate', 'agricultura', 'artesania', 'supervivencia', 'sigilo'].includes(skill) ? (v.body - 1) * 0.3 : (v.mind - 1) * 0.35) : 0;
-  return Math.max(0.08, Math.min(0.95, 0.42 + lv * 0.13 - difficulty * 0.12 + age));
+  // Y los atributos en que se apoya esa habilidad (la fuerza para el campo, el carisma para convencer…).
+  return Math.max(0.08, Math.min(0.95, 0.42 + lv * 0.13 - difficulty * 0.12 + age + statBonus(id, skill)));
 }
 
 export interface GainNote {
@@ -342,7 +350,7 @@ export function gain(w: WorldState, key: SkillId | `k:${KnowId}`, amount: number
   const before = t.level;
   // Se aprende más deprisa de joven; los saberes, mejor con los años.
   const v = id.vigor;
-  const pace = v ? (isKnow ? (v.learn + v.mind) / 2 : v.learn) : 1;
+  const pace = (v ? (isKnow ? (v.learn + v.mind) / 2 : v.learn) : 1) * learnPace(id, isKnow);
   t.xp += amount * (1 + latent * 0.35) * pace;
   let lv = 0;
   for (let i = 1; i <= MAX_LEVEL; i++) if (t.xp >= LEVEL_XP[i]) lv = i;
@@ -369,6 +377,8 @@ export function gain(w: WorldState, key: SkillId | `k:${KnowId}`, amount: number
   }
   t.level = lv;
   for (const n of checkTalents(w)) notes.push(n);
+  // Todo lo que se practica da experiencia de personaje (subir de nivel, repartir puntos).
+  notes.push(...addXp(w, amount * 4));
   return notes;
 }
 
@@ -768,6 +778,7 @@ export function chooseFragment(w: WorldState, fragId: string, choice: string): s
   const gen = life.player.generation;
   const originFolk = life.folk.filter((f) => f.alive && f.regionId === past.origin);
   const H = w.regions[w.player.home];
+  if (fragId === 'rumor') return answerRumor(w, choice).lines;
   switch (`${fragId}:${choice}`) {
     case 'persona:aceptar':
       id.named = true;

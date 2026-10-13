@@ -137,10 +137,15 @@ export const ICONS: Record<string, string> = {
   gema: F('M7 4.5h10l3.5 5L12 20.5 3.5 9.5z') + S('M3.5 9.5h17M9 4.5l3 5 3-5M12 9.5v11'),
   remolino: S('M12 12a2 2 0 1 1 2-2 4 4 0 1 1-4-4 6 6 0 1 1-6 6 8 8 0 0 1 8-8'),
   regla: F('M3 16.5L16.5 3 21 7.5 7.5 21z') + S('M7 12.5l1.5 1.5M9.5 10l2 2M12 7.5l1.5 1.5M14.5 5l2 2'),
+  // Atributos del personaje (y el hacha del leñador).
+  brazo: F('M5 19.5c0-3 1-5.5 3-7.5l2-4.5c.6-1.4 2.3-1.9 3.5-1l1 .8-1.6 3.4c2.4-.9 5.1.4 5.8 2.9.6 2.2-.6 4.4-2.7 5.1L9 20.5H6z') + S('M13.5 11.2c1.4.2 2.4 1.3 2.5 2.7'),
+  mente: F('M12 3.8a6.8 6.8 0 0 0-6.8 6.8c0 2 .8 3.4 1.8 4.6v4.6h6.4V18h2a1.8 1.8 0 0 0 1.8-1.8v-2l1.8-.6-1.7-3.6A6.8 6.8 0 0 0 12 3.8z') + S('M9.5 9.5c.6-1.2 2-1.6 3-1M10.5 13c1.5.4 3-.2 3.6-1.6'),
+  hacha: S('M7 21L16.5 6.5') + F('M13.5 4.5c2.3-1.4 5-.9 6.5 1.1-1.5 1.7-1.7 4-.6 6-2.4.7-4.8-.3-6.1-2.4z'),
 };
 
 /** Qué icono corresponde a cada emoji que todavía usa la interfaz. */
 const EMOJI: Record<string, string> = {
+  '💪': 'brazo', '🧠': 'mente', '🪶': 'pluma', '🪓': 'hacha',
   '🪙': 'moneda', '💰': 'bolsaDinero', '🎒': 'bolsa', '🌾': 'grano', '🍞': 'pan', '💤': 'sueno', '🧭': 'brujula',
   '📜': 'pergamino', '☰': 'menu', '✋': 'mano', '🤲': 'mano', '🏃': 'correr', '🚶': 'caminante', '🌙': 'luna', '🌒': 'mascara',
   '☀': 'sol', '☁': 'nube', '🌧': 'lluvia', '⛈': 'tormenta', '🌬': 'viento', '🌫': 'niebla', '❄': 'nieve',

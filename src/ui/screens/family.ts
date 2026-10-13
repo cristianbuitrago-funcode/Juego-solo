@@ -10,6 +10,7 @@ import { emotionOf, playerRegion } from '../../world/society';
 import { forecastDialog, politicsSections, secretsDialog } from '../politics';
 import { lifeSections } from '../generations';
 import { showFragment } from '../world-dialogs';
+import { spendPoint, STAT_IDS, STATS, statsOf, xpToNext } from '../../world/stats';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
 import { h } from '../dom';
@@ -45,6 +46,7 @@ export function renderFamily(app: App): Node[] {
       h('p', { class: 'muted' }, `${metFolk.length === 1 ? 'Has conocido a una persona.' : `Has conocido a ${metFolk.length} personas.`} ${friends ? `${friends} te aprecian.` : ''} ${enemies ? `${enemies} te guardan rencor.` : ''}`),
       p.age > 55 ? h('p', { class: 'tiny' }, 'Los años pesan. Piensa en quién tomará el relevo.') : null,
     ),
+    statsSection(app),
     id.mode === 'forastero'
       ? section('Cómo estás',
           h('div', { class: 'need' }, h('span', null, '🍞 Hambre'), bar(id.needs.hunger, id.needs.hunger > 0.8)),
@@ -92,6 +94,31 @@ export function renderFamily(app: App): Node[] {
       : null,
   ];
   return out.filter((x): x is Node => !!x);
+}
+
+/**
+ * Nivel y atributos: la experiencia de todo lo que haces sube tu nivel; cada nivel da puntos para
+ * repartir. Cada atributo dice para qué sirve (el ataque también es la fuerza de los oficios duros).
+ */
+function statsSection(app: App): HTMLElement {
+  const id = ensureLife(app.w!).identity!;
+  const st = statsOf(id);
+  const need = xpToNext(st.level);
+  return section(`Nivel ${st.level}`,
+    h('div', { class: 'need' }, h('span', null, `✦ ${Math.floor(st.xp)} / ${need}`), h('div', { class: 'meter warm' }, h('div', { class: 'meter-fill', style: `width:${Math.round((st.xp / need) * 100)}%` }))),
+    h('p', { class: 'tiny' }, st.points ? `Tienes ${st.points} punto${st.points > 1 ? 's' : ''} para repartir.` : 'Todo lo que haces te da experiencia: trabajar, aprender, hablar, explorar. Cada nivel trae 3 puntos.'),
+    ...STAT_IDS.map((k) =>
+      h('div', { class: 'entry' },
+        h('div', { class: 'ico' }, STATS[k].icon),
+        h('div', { class: 'txt' },
+          h('b', null, `${STATS[k].name} ${st.base[k]}`),
+          ` · ${STATS[k].desc}`,
+          h('div', { class: 'tiny' }, STATS[k].uses),
+          st.points ? h('div', null, h('button', { class: 'btn small', onclick: () => { if (spendPoint(id, k)) app.refresh(); } }, `+1 ${STATS[k].name}`)) : null,
+        ),
+      ),
+    ),
+  );
 }
 
 const CLOAKS = ['#c9902c', '#8a2f2a', '#2f4f7a', '#3f5f3a', '#5a4a6a', '#3a3430'];

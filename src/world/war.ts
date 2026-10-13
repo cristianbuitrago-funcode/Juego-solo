@@ -1,4 +1,5 @@
 import { Rng, hashString } from '../core/rng';
+import { STAT_BASE, statOf } from './stats';
 import type { WorldState } from '../core/types';
 import { clamp } from '../core/util';
 import { commitCtx, entry, makeCtx } from '../core/world';
@@ -356,7 +357,8 @@ export function enlist(w: WorldState, war: War, side: number): { lines: string[]
   if (hurt) {
     id.needs.hunger = Math.min(1, id.needs.hunger + 0.2);
     // Una herida de verdad (y, si el cuerpo ya no aguanta, la muerte en el campo).
-    const sev = rng.range(0.25, 0.7) * (1.4 - (id.vigor?.body ?? 1) * 0.4);
+    // (la defensa es aguante: la misma herida hace menos daño)
+    const sev = rng.range(0.25, 0.7) * (1.4 - (id.vigor?.body ?? 1) * 0.4) * Math.max(0.55, 1 - (statOf(id, 'defensa') - STAT_BASE) * 0.06);
     injure(w, sev, `una batalla en ${w.regions[war.front].name}`);
     if (sev > 0.6 && healthOf(w).value < 0.35 && rng.chance(0.35)) die(w, 'guerra', `en la batalla de ${w.regions[war.front].name}`);
   }

@@ -16,6 +16,7 @@ import { ROLE_TITLE } from '../world/folk';
 import { hourOf } from '../world/clock';
 import { describeEncounter, encounterOptions, resolveEncounter } from '../world/encounters';
 import { doorOf, getLayout, nearestWalkable } from '../world/layout';
+import { rumorFragment } from '../world/heir';
 import { answerOffer, chooseFragment, gain, hasTalent, levelOf, STANDING, story, tryFragment, type FragmentEvent } from '../world/identity';
 import { ensureLife, heirs, succeed } from '../world/life';
 import { afterTalk, askAboutMe, buyFood, buyMeal, charity, convince, deceive, eavesdrop, encounterLearning, jobFor, noticeLie, priceOf, readLeader, rentBed, sellRelic, study, tendSick, work, type Outcome } from '../world/livelihood';
@@ -325,7 +326,7 @@ function talk(app: App, folkId: string): void {
   const id = life.identity!;
   const inv = life.player.inventory;
   const choices: Choice[] = [];
-  const memory = tryFragment(w, { kind: 'hablar', folkId });
+  const memory = rumorFragment(w, folkId) ?? tryFragment(w, { kind: 'hablar', folkId });
   if (memory) return showFragment(app, memory);
   app.notes(afterTalk(w, f));
   if (res.lied) {

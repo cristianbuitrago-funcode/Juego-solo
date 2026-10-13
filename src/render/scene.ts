@@ -36,6 +36,7 @@ import { drawBirds, moveBirds, type Bird } from './birds';
 import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
 import { buyerSpot, villageDrawables } from './village';
 import { hudShiftFor } from './screenbox';
+import { walkPace } from '../world/stats';
 import { drawWet } from './wet';
 
 /**
@@ -747,7 +748,8 @@ export class WorldScene {
     const want = !!(dx || dy);
     const tile = this.l.terrain.tiles[idx(Math.floor(me.x), Math.floor(me.y))];
     // Escala humana: una persona mide ~1,9 teselas; andar ≈ 1,6 pasos dobles por segundo.
-    const top = (run ? 6.4 : 3.2) * speedOf(tile) * this.speed();
+    const pid = ensureLife(this.w).identity;
+    const top = (run ? 6.4 : 3.2) * speedOf(tile) * this.speed() * (pid ? walkPace(pid) : 1); // (la agilidad)
     // Inercia: arranca en ~0,12 s y frena en ~0,08 s.
     const kv = 1 - Math.exp(-dt * (want ? 20 : 34));
     this.vel.x += (dx * top - this.vel.x) * kv;
