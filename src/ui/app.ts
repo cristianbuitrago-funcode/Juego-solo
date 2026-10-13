@@ -511,8 +511,8 @@ export class App {
     this.whisperBox.append(el);
     if (sound) audio.sfx('peticion');
     while (this.whisperBox.children.length > 3) this.whisperBox.firstChild?.remove();
-    window.setTimeout(() => el.classList.add('out'), 6000);
-    window.setTimeout(() => el.remove(), 7000);
+    window.setTimeout(() => el.classList.add('out'), 4500);
+    window.setTimeout(() => el.remove(), 5500);
   }
 
   private cineTimer = 0;

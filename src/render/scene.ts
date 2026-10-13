@@ -253,6 +253,18 @@ export class WorldScene {
     if (!c) this.smithAps.set(ap, (c = { ...ap, outfit: { ...ap.outfit, apron: '#6a4a30', sleeves: 'remangadas' } }));
     return c;
   }
+  // En la plaza, quien pastorea deja el cayado (en el campo lo lleva): con todos a cuestas, la
+  // plaza se llenaba de palos.
+  private townAps = new WeakMap<Appearance, Appearance>();
+  private townAp(ap: Appearance): Appearance {
+    if (ap.outfit.item !== 'cayado') return ap;
+    let c = this.townAps.get(ap);
+    if (!c) this.townAps.set(ap, (c = { ...ap, outfit: { ...ap.outfit, item: undefined } }));
+    return c;
+  }
+  private inPlaza(x: number, y: number): boolean {
+    return this.l.terrain.tiles[idx(Math.floor(x), Math.floor(y))] === T.Plaza;
+  }
   /** Un punto (píxeles de mundo) que el HUD no debe tapar: caras, la hoguera… */
   keepVisible(x: number, y: number): void {
     this.heads.push(x, y);
@@ -1312,7 +1324,7 @@ export class WorldScene {
         pose.flip = smith.x < e.x;
       }
       // Quien golpea el yunque lleva el mandil de cuero del oficio, sea cual sea su papel en el pueblo.
-      this.pushPerson(items, pose.action === 'hammer' ? this.smithAp(ap) : ap, pose, e.x * TILE, e.y * TILE);
+      this.pushPerson(items, pose.action === 'hammer' ? this.smithAp(ap) : this.inPlaza(e.x, e.y) ? this.townAp(ap) : ap, pose, e.x * TILE, e.y * TILE);
       if (pose.action === 'hammer') {
         anvils.push(e);
         // El yunque delante, donde cae el martillo.

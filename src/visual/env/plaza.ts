@@ -201,13 +201,21 @@ export function planterTex(season: Season, v: number): Tex {
     g.fillStyle = shd('#867c6a', 0.3);
     g.fillRect(2, 19, 24, 1);
     if (season === 'invierno') {
-      ell(g, 14, 9.5, 12, 2.2, '#eef2f6');
-      g.strokeStyle = '#5a4a3a';
-      g.lineWidth = 0.6;
-      for (let i = 0; i < 5; i++) {
+      // Seto bajo de hoja perenne asomando entre montones de nieve desiguales, y algún tallo seco
+      // torcido (una tapa blanca lisa con palitos rectos y en fila se leía como una tarta con velas).
+      for (let i = 0; i < 7; i++) ell(g, 4 + i * 3.3 + R(), 8 + R() * 1.5, 2.4, 1.8, ['#3a5a3a', '#2f4f34', '#46664a'][i % 3]);
+      for (let i = 0; i < 6; i++) ell(g, 4 + i * 4 + R() * 1.5, 8.4 + R() * 1.2, 2.6 + R() * 1.4, 1.3 + R() * 0.8, i % 2 ? '#e6ecf3' : '#f2f5f9');
+      g.strokeStyle = '#6a5440';
+      g.lineWidth = 0.5;
+      for (let i = 0; i < 3; i++) {
+        const x = 6 + R() * 16;
+        const h = 3 + R() * 3;
+        const lean = (R() - 0.5) * 3;
         g.beginPath();
-        g.moveTo(5 + i * 4.5, 9);
-        g.lineTo(4 + i * 4.5 + R() * 2, 3 + R() * 2);
+        g.moveTo(x, 8.5);
+        g.quadraticCurveTo(x + lean * 0.3, 8.5 - h * 0.6, x + lean, 8.5 - h);
+        g.moveTo(x + lean * 0.4, 8.5 - h * 0.55);
+        g.lineTo(x + lean * 0.4 + (lean > 0 ? -1.2 : 1.2), 8.5 - h * 0.8);
         g.stroke();
       }
       return;
