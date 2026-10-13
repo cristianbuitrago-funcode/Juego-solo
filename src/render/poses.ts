@@ -109,7 +109,7 @@ export function entPose(s: PoseHost, id: string, e: Ent, f: Folk | undefined, se
   let action: Action;
   if (e.moving) {
     facing = Math.abs(e.dy) > Math.abs(e.dx) * 1.3 ? (e.dy > 0 ? 'front' : 'back') : 'side';
-    action = 'walk';
+    action = react?.action === 'run' ? 'run' : 'walk';
   } else if (id === s.converseId) {
     action = Math.floor(sec / 1.8) % 3 === 2 ? 'nod' : 'talk';
   } else if (react?.action) action = react.action;

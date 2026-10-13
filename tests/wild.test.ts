@@ -3,7 +3,7 @@ import { createWorld } from '../src/core/gen/worldgen';
 import { getLayout } from '../src/world/layout';
 import { passable } from '../src/world/path';
 import { Furniture } from '../src/render/furniture';
-import { reactWild, type Animal, type WildEvent } from '../src/render/animals';
+import { raidStep, reactWild, startRaid, type Animal, type WildEvent } from '../src/render/animals';
 
 describe('fieras frente al jugador', () => {
   const w = createWorld(4242);
@@ -53,5 +53,50 @@ describe('fieras frente al jugador', () => {
     expect(closest).toBeLessThan(1.6);
     expect(backed).toBe(true);
     expect(Math.hypot(a.x - me.x, a.y - me.y)).toBeGreaterThan(closest + 1);
+  });
+
+  it('de noche el lobo se acerca a unas 5 casillas y solo huye si te le echas encima', () => {
+    const host = { w, l, furniture };
+    const a = make('lobo');
+    const me = { x: spot.x - 9, y: spot.y };
+    for (let i = 0; i < 60; i++) reactWild(host, a, me, 0.1, true);
+    const d = Math.hypot(a.x - me.x, a.y - me.y);
+    expect(a.mood).toBe('acecha');
+    expect(d).toBeGreaterThan(4.5);
+    expect(d).toBeLessThan(6.5);
+    // A 3,5 de día huiría; de noche aguanta.
+    const near = { x: a.x - 3.5, y: a.y };
+    reactWild(host, a, near, 0.1, true);
+    expect(a.mood).not.toBe('huye');
+  });
+
+  it('asalto nocturno: sin nadie que lo impida, los lobos se llevan una res y vuelven a su guarida', () => {
+    const said: WildEvent[] = [];
+    const host = { w, l, furniture, onWild: (_k: string, e: WildEvent) => said.push(e) };
+    const wolf = make('lobo');
+    const sheep: Animal = { kind: 'oveja', x: spot.x + 4, y: spot.y, hx: spot.x + 4, hy: spot.y, tx: spot.x + 4, ty: spot.y, flip: false, anim: 0, v: 0 };
+    const list = [wolf, sheep];
+    expect(startRaid(host, 0, list)).toBe(true);
+    const far = { x: spot.x - 40, y: spot.y };
+    for (let i = 0; i < 200 && list.includes(sheep); i++) raidStep(host, 0, list, wolf, far, 0.1);
+    expect(list.includes(sheep)).toBe(false);
+    expect(said).toEqual(['asalto', 'presa']);
+    for (let i = 0; i < 200 && wolf.mood === 'vuelve'; i++) raidStep(host, 0, list, wolf, far, 0.1);
+    expect(wolf.mood).toBe('calma');
+    expect(Math.hypot(wolf.x - spot.x, wolf.y - spot.y)).toBeLessThan(0.5);
+  });
+
+  it('con el jugador delante, el asalto se frustra y la res se salva', () => {
+    const said: WildEvent[] = [];
+    const host = { w, l, furniture, onWild: (_k: string, e: WildEvent) => said.push(e) };
+    const wolf = make('lobo');
+    const sheep: Animal = { kind: 'oveja', x: spot.x + 4, y: spot.y, hx: spot.x + 4, hy: spot.y, tx: spot.x + 4, ty: spot.y, flip: false, anim: 0, v: 0 };
+    const list = [wolf, sheep];
+    startRaid(host, 0, list);
+    const me = { x: spot.x + 2, y: spot.y + 0.5 };
+    for (let i = 0; i < 40; i++) raidStep(host, 0, list, wolf, me, 0.1);
+    expect(list.includes(sheep)).toBe(true);
+    expect(said).toContain('ahuyentados');
+    expect(wolf.mood === 'vuelve' || wolf.mood === 'calma').toBe(true);
   });
 });

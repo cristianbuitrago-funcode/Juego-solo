@@ -31,7 +31,7 @@ import * as S from './sprites';
 import type { Drawable } from './drawable';
 import { postDrawables, roadTraffic } from './traffic';
 import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
-import { moveAnimals, type Animal, type WildEvent } from './animals';
+import { moveAnimals, scareRaiders, wildNight, type Animal, type WildEvent, type WildInfo } from './animals';
 import { drawBirds, moveBirds, type Bird } from './birds';
 import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
 import { buyerSpot, villageDrawables } from './village';
@@ -68,7 +68,7 @@ export interface SceneCallbacks {
   onArrive(t: Target): void;
   onTick(): void; // cada ~1 s real (presencia, descubrimientos, encuentros)
   /** Un lobo o un oso ha reaccionado al jugador (para contárselo). */
-  onWild?(kind: 'lobo' | 'oso', what: WildEvent): void;
+  onWild?(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void;
 }
 
 export interface Ent {
@@ -618,6 +618,7 @@ export class WorldScene {
     this.separate(dt);
     this.settle(dt);
     moveAnimals(this, dt);
+    this.defend(dt);
     moveBirds(this, dt);
     this.socialAcc += dt;
     if (this.socialAcc > 0.3) {
@@ -996,8 +997,55 @@ export class WorldScene {
    * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
    * pasa, se le lleva al sitio libre más cercano.
    */
-  onWild(kind: 'lobo' | 'oso', what: WildEvent): void {
-    this.cb.onWild?.(kind, what);
+  onWild(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void {
+    this.cb.onWild?.(kind, what, info);
+  }
+
+  /**
+   * Defensa del pueblo: cuando los lobos bajan a por el ganado, la guardia y quien explora (los
+   * aventureros del pueblo) que estén en el pueblo (a menos de 45 casillas) salen a su encuentro corriendo, aunque
+   * estuvieran durmiendo, con el arma en ristre. Al llegar a su lado, la manada huye. Luego cada
+   * cual vuelve a lo suyo.
+   */
+  private defenders = new Map<string, Animal>();
+  private defendAcc = 0;
+  private defend(dt: number): void {
+    this.defendAcc += dt;
+    if (this.defendAcc < 0.25) return;
+    this.defendAcc = 0;
+    const now = performance.now();
+    for (const [rid, list] of this.animals) {
+      const raiders = list.filter((a) => a.kind === 'lobo' && a.mood === 'asalta');
+      if (!raiders.length) continue;
+      for (const [id, e] of this.ents) {
+        const f = this.folkById.get(id);
+        if (!f || f.regionId !== rid || (f.role !== 'guardia' && f.role !== 'exploradora') || f.age < 16) continue;
+        let wolf = raiders[0];
+        for (const r of raiders) if (Math.hypot(r.x - e.x, r.y - e.y) < Math.hypot(wolf.x - e.x, wolf.y - e.y)) wolf = r;
+        const d = Math.hypot(wolf.x - e.x, wolf.y - e.y);
+        if (d > 45) continue; // (se da la voz de alarma: acude quien está en el pueblo)
+        e.inside = false;
+        (e as Ent & { wantInside?: boolean }).wantInside = false;
+        this.defenders.set(id, wolf);
+        e.path = [{ x: wolf.x, y: wolf.y }];
+        e.partner = undefined;
+        e.react = { action: d < 3 ? 'fight' : 'run', expr: 'enfadado', until: now + 600 };
+        if (d < 2.2) {
+          scareRaiders(this, rid, list, 'guardia');
+          break;
+        }
+      }
+    }
+    // Pasado el peligro, cada cual vuelve a su rutina.
+    for (const [id, wolf] of this.defenders) {
+      if (wolf.mood === 'asalta') continue;
+      this.defenders.delete(id);
+      const e = this.ents.get(id);
+      if (!e) continue;
+      e.react = { action: 'idle', expr: 'enfadado', until: now + 1500 };
+      const path = findPath(this.w, e.x, e.y, e.tx, e.ty, 2500);
+      e.path = path.length ? path : [{ x: e.tx, y: e.ty }];
+    }
   }
 
   private vendorSpots = new Map<number, { day: number; spots: { x: number; y: number }[] }>();
@@ -1089,14 +1137,15 @@ export class WorldScene {
   }
 
   private moveFolk(dt: number): void {
-    for (const [, e] of this.ents) {
+    for (const [id, e] of this.ents) {
       const wantInside = (e as Ent & { wantInside?: boolean }).wantInside;
+      const guarding = this.defenders.has(id);
       if (!e.path.length) {
         e.moving = false;
-        if (wantInside) e.inside = true;
+        if (wantInside && !guarding) e.inside = true;
         continue;
       }
-      this.step(e, dt, 2.3);
+      this.step(e, dt, guarding ? 3.6 : 2.3); // (quien sale a por los lobos, corre)
     }
   }
 
@@ -1425,10 +1474,13 @@ export class WorldScene {
       this.pushPerson(items, ap, pose, m.x * TILE, m.y * TILE);
     }
     // Animales.
+    const nightNow = wildNight(hourOf(life.clock));
     for (const list of this.animals.values())
       for (const a of list) {
         if (!inView(a.x * TILE, a.y * TILE)) continue;
         const moving = Math.hypot(a.tx - a.x, a.ty - a.y) > 0.2;
+        // De noche, a los lobos se les ven brillar los ojos en la oscuridad.
+        if (a.kind === 'lobo' && nightNow) this.lights.push({ x: a.x * TILE + (a.flip ? -11 : 11), y: a.y * TILE - 15, r: 5, k: 0.55 });
         items.push({ y: a.y * TILE + (a.water ? -2 : 0), draw: () => put(g, animalTex(a.kind, moving ? Math.floor(a.anim) % 4 : 0, a.v), a.x * TILE, a.y * TILE, a.flip) });
       }
     // Jugador.

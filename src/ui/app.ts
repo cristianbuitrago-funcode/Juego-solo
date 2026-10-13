@@ -10,6 +10,7 @@ import { loadGame, saveGame } from '../core/save';
 import type { WorldState } from '../core/types';
 import { audio } from '../audio/audio';
 import { WorldScene, type Target } from '../render/scene';
+import type { WildEvent, WildInfo } from '../render/animals';
 import { clockText, dayOf, hourOf, seasonOf, yearOf } from '../world/clock';
 import { wireWorld } from '../world';
 import { maybeSpawn } from '../world/encounters';
@@ -134,7 +135,7 @@ export class App {
       onFocus: (t) => this.setFocus(t),
       onArrive: (t) => arrive(this, t),
       onTick: () => this.tick(),
-      onWild: (kind, what) => this.wildNotice(kind, what),
+      onWild: (kind, what, info) => this.wildNotice(kind, what, info),
     });
     this.scene.reduceMotion = this.settings.reduceMotion;
     this.scene.setQuality(this.settings.quality);
@@ -516,20 +517,35 @@ export class App {
     window.setTimeout(() => el.remove(), 5500);
   }
 
-  // Avisos de fieras: uno por tipo de suceso cada medio minuto (una manada entera no repite el aviso).
+  // Avisos de fieras: uno por tipo de suceso (y pueblo) cada medio minuto (una manada entera no
+  // repite el aviso). Los asaltos solo se cuentan si pasan cerca: si no, no te enterarías.
   private wildSaid = new Map<string, number>();
-  private wildNotice(kind: 'lobo' | 'oso', what: 'mira' | 'huye' | 'carga'): void {
+  private wildNotice(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void {
+    const w = this.w;
+    if (!w) return;
     const key = `${kind}:${what}`;
     const now = performance.now();
-    if (now - (this.wildSaid.get(key) ?? -1e9) < 30000) return;
-    this.wildSaid.set(key, now);
-    const text = {
+    const said = `${key}:${info?.regionId ?? ''}`;
+    if (now - (this.wildSaid.get(said) ?? -1e9) < 30000) return;
+    const town = info?.regionId !== undefined ? w.regions[info.regionId]?.name : undefined;
+    if (town !== undefined) {
+      const v = this.scene?.l.villages[info!.regionId!];
+      const me = ensureLife(w).player;
+      if (!v || Math.hypot(v.cx - me.x, v.cy - me.y) > 40) return;
+    }
+    this.wildSaid.set(said, now);
+    const prey = info?.prey === 'oveja' ? 'una oveja' : info?.prey === 'gallina' ? 'una gallina' : info?.prey === 'vaca' ? 'un ternero' : 'una res';
+    const text: string | undefined = {
       'lobo:mira': 'Unos lobos te observan desde la espesura, quietos.',
       'lobo:huye': 'Los lobos se apartan de ti y se pierden entre los árboles.',
+      'lobo:acecha': 'En la oscuridad, unos ojos te siguen. De noche los lobos se acercan más.',
+      'lobo:asalto': `¡Los lobos bajan a ${town} a por el ganado!`,
+      'lobo:ahuyentados': info?.by === 'jugador' ? 'Te plantas ante los lobos y la manada huye al monte.' : `La guardia de ${town} sale a su encuentro y ahuyenta a los lobos.`,
+      'lobo:presa': `Los lobos se han llevado ${prey} de ${town}. Nadie llegó a tiempo.`,
       'oso:mira': 'Un oso se ha parado a mirarte. Mejor no acercarse más.',
       'oso:carga': '¡El oso arremete unos pasos y se frena en seco! Es un aviso: retrocede.',
     }[key];
-    if (text) this.whisper(text, what === 'carga');
+    if (text) this.whisper(text, what === 'carga' || what === 'asalto');
   }
 
   private cineTimer = 0;

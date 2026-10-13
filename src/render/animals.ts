@@ -1,7 +1,8 @@
 import type { WorldState } from '../core/types';
+import { hourOf } from '../world/clock';
 import { ensureLife } from '../world/life';
 import type { Layout } from '../world/layout';
-import { passable } from '../world/path';
+import { findPath, passable } from '../world/path';
 import { geoOf } from '../world/geography';
 import { idx } from '../world/terrain';
 import { T } from '../world/types';
@@ -33,11 +34,28 @@ export interface Animal {
   cool?: number;
   /** Ya avisó de esto en este encuentro (no repetir el mensaje). */
   told?: string;
+  /** Lobos de noche: la res del pueblo a la que van, y su guarida para volver. */
+  prey?: Animal;
+  den?: { x: number; y: number };
+  /** Camino que sigue (rodeando casas y vallas) y cuánto lleva sin avanzar. */
+  route?: { x: number; y: number }[];
+  routeAge?: number;
+  stuck?: number;
 }
 
-export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede';
+export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede' | 'acecha' | 'asalta' | 'vuelve';
 /** Lo que el jugador debería saber de una fiera (la app lo convierte en un aviso). */
-export type WildEvent = 'mira' | 'huye' | 'carga';
+export type WildEvent = 'mira' | 'huye' | 'carga' | 'acecha' | 'asalto' | 'presa' | 'ahuyentados';
+export interface WildInfo {
+  regionId?: number;
+  prey?: S.AnimalKind;
+  by?: 'guardia' | 'jugador';
+}
+/** De noche (los lobos se atreven a acercarse). */
+export const wildNight = (h: number) => h >= 21.5 || h < 5.5;
+const LIVESTOCK = new Set<S.AnimalKind>(['oveja', 'gallina', 'vaca']);
+// Cada pueblo sufre como mucho un asalto por noche (la noche se cuenta de mediodía a mediodía).
+const raided = new WeakMap<Animal[], number>();
 
 export interface AnimalsHost {
   w: WorldState;
@@ -45,11 +63,15 @@ export interface AnimalsHost {
   furniture: Furniture;
   animals: Map<number, Animal[]>;
   /** Una fiera ha reaccionado al jugador de una forma que conviene contarle. */
-  onWild?(kind: 'lobo' | 'oso', what: WildEvent): void;
+  onWild?(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void;
 }
 
 export function moveAnimals(s: AnimalsHost, dt: number): void {
-  const me = ensureLife(s.w).player;
+  const life = ensureLife(s.w);
+  const me = life.player;
+  const h = hourOf(life.clock);
+  const night = wildNight(h);
+  const nightId = Math.floor((life.clock / 60 + 6 - 12) / 24);
   for (const v of s.l.villages) {
     const far = Math.hypot(v.cx - me.x, v.cy - me.y) > 60;
     if (far) {
@@ -61,8 +83,16 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
       list = spawnAnimals(s, v.regionId);
       s.animals.set(v.regionId, list);
     }
-    for (const a of list) {
-      if ((a.kind === 'lobo' || a.kind === 'oso') && reactWild(s, a, me, dt)) continue;
+    if (night && raided.get(list) !== nightId && Math.random() < dt / 25) {
+      raided.set(list, nightId);
+      startRaid(s, v.regionId, list);
+    }
+    for (const a of [...list]) {
+      if (a.kind === 'lobo' && (a.mood === 'asalta' || a.mood === 'vuelve')) {
+        raidStep(s, v.regionId, list, a, me, dt);
+        continue;
+      }
+      if ((a.kind === 'lobo' || a.kind === 'oso') && reactWild(s, a, me, dt, night)) continue;
       const d = Math.hypot(a.tx - a.x, a.ty - a.y);
       if (d < 0.2) {
         if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
@@ -102,7 +132,7 @@ const halfOf = (kind: Animal['kind']) => ANIMAL_HALF[kind];
  * para antes de alcanzarte) y luego retrocede despacio sin darte la espalda. Ninguno ataca: es un
  * aviso. Devuelve true si este fotograma ha decidido ella cómo se mueve el animal.
  */
-export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, a: Animal, me: { x: number; y: number }, dt: number): boolean {
+export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, a: Animal, me: { x: number; y: number }, dt: number, night = false): boolean {
   const kind = a.kind as 'lobo' | 'oso';
   const dx = me.x - a.x;
   const dy = me.y - a.y;
@@ -155,13 +185,22 @@ export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild
       }
       return true;
     }
-    if (dp < 4) {
+    // De noche se crecen: solo huyen si te les echas encima, y antes te siguen a distancia.
+    if (dp < (night ? 2.5 : 4)) {
       const t = away(-dx / dp, -dy / dp, 9);
       a.mood = 'huye';
       a.tx = t.x;
       a.ty = t.y;
       say('huye');
       return step(t.x, t.y, 3.6, 'avance'), true;
+    }
+    if (night && dp < 11) {
+      a.mood = 'acecha';
+      // Se acerca despacio hasta unas 5 casillas y ahí se queda, mirándote.
+      if (dp > 5.5) step(a.x + (dx / dp) * (dp - 5), a.y + (dy / dp) * (dp - 5), 1.3, 'avance');
+      else step(a.x, a.y, 0, 'jugador');
+      say('acecha');
+      return true;
     }
     if (dp < 8) {
       a.mood = 'mira';
@@ -302,4 +341,125 @@ function spawnAnimals(s: AnimalsHost, regionId: number): Animal[] {
     break;
   }
   return out;
+}
+
+/** Paso de un animal hacia (tx, ty) a `speed` casillas/s; se para si el camino está cortado. Devuelve true al llegar. */
+function walkTo(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture'>, a: Animal, tx: number, ty: number, speed: number, dt: number): boolean {
+  a.tx = tx;
+  a.ty = ty;
+  const d = Math.hypot(tx - a.x, ty - a.y);
+  if (d < 0.25) return true;
+  a.flip = tx < a.x;
+  const sp = Math.min(d, speed * dt);
+  const nx = a.x + ((tx - a.x) / d) * sp;
+  const ny = a.y + ((ty - a.y) / d) * sp;
+  if (!passable(s.w, s.l, nx, ny)) {
+    // Rodea por un lado si tiene delante una casa o una valla.
+    const sx = a.x + (-(ty - a.y) / d) * sp;
+    const sy = a.y + ((tx - a.x) / d) * sp;
+    if (!passable(s.w, s.l, sx, sy)) return false;
+    a.x = sx;
+    a.y = sy;
+  } else {
+    a.x = nx;
+    a.y = ny;
+  }
+  a.anim += dt * 6 * Math.max(1, speed / 1.5);
+  return false;
+}
+
+/**
+ * Asalto nocturno: la manada del pueblo baja a por una res (oveja, gallina o vaca). Si no hay
+ * ganado, no baja. La guardia y quien explora (scene.ts) o el propio jugador pueden ahuyentarla.
+ */
+export function startRaid(s: Pick<AnimalsHost, 'onWild'>, regionId: number, list: Animal[]): boolean {
+  const wolves = list.filter((a) => a.kind === 'lobo' && a.mood !== 'huye');
+  if (!wolves.length) return false;
+  const cx = wolves.reduce((t, a) => t + a.x, 0) / wolves.length;
+  const cy = wolves.reduce((t, a) => t + a.y, 0) / wolves.length;
+  let prey: Animal | undefined;
+  let best = Infinity;
+  for (const a of list) {
+    if (!LIVESTOCK.has(a.kind) || a.water) continue;
+    const d = Math.hypot(a.x - cx, a.y - cy);
+    if (d < best) (best = d), (prey = a);
+  }
+  if (!prey) return false;
+  for (const w of wolves) {
+    w.mood = 'asalta';
+    w.prey = prey;
+    w.den = { x: w.hx, y: w.hy };
+  }
+  s.onWild?.('lobo', 'asalto', { regionId });
+  return true;
+}
+
+/** Ahuyenta a los lobos que asaltan este pueblo: vuelven corriendo a su guarida. */
+export function scareRaiders(s: Pick<AnimalsHost, 'onWild'>, regionId: number, list: Animal[], by: 'guardia' | 'jugador'): void {
+  let any = false;
+  for (const a of list)
+    if (a.kind === 'lobo' && a.mood === 'asalta') {
+      a.mood = 'vuelve';
+      a.prey = undefined;
+      any = true;
+    }
+  if (any) s.onWild?.('lobo', 'ahuyentados', { regionId, by });
+}
+
+export function raidStep(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, regionId: number, list: Animal[], a: Animal, me: { x: number; y: number }, dt: number): void {
+  const den = a.den ?? { x: a.hx, y: a.hy };
+  // Sigue un camino de verdad hasta (gx, gy): en línea recta se atascaba contra la primera casa.
+  const go = (gx: number, gy: number, speed: number): boolean => {
+    a.routeAge = (a.routeAge ?? 99) + dt;
+    const last = a.route?.[a.route.length - 1];
+    if (!a.route || a.routeAge > 2 || !last || Math.hypot(last.x - gx, last.y - gy) > 1.5) {
+      a.route = findPath(s.w, a.x, a.y, gx, gy, 3000);
+      if (!a.route.length) a.route = [{ x: gx, y: gy }];
+      a.routeAge = 0;
+    }
+    const n = a.route[0];
+    const x0 = a.x;
+    const y0 = a.y;
+    if (walkTo(s, a, n.x, n.y, speed, dt)) a.route.shift();
+    // Sin avanzar unos segundos: se rinde (vuelve a la guarida, o se queda donde está si ya volvía).
+    a.stuck = Math.hypot(a.x - x0, a.y - y0) < speed * dt * 0.2 ? (a.stuck ?? 0) + dt : 0;
+    return !a.route.length && Math.hypot(gx - a.x, gy - a.y) < 0.6;
+  };
+  if (a.mood === 'vuelve') {
+    if (go(den.x, den.y, 3.4) || (a.stuck ?? 0) > 4) {
+      a.mood = 'calma';
+      a.hx = a.x;
+      a.hy = a.y;
+      a.tx = a.x;
+      a.ty = a.y;
+      a.route = undefined;
+      a.stuck = 0;
+    }
+    return;
+  }
+  // Con el jugador encima (a menos de 3 casillas), la manada se lo piensa y se va.
+  if (Math.hypot(me.x - a.x, me.y - a.y) < 3) return scareRaiders(s, regionId, list, 'jugador');
+  const prey = a.prey;
+  if (!prey || !list.includes(prey) || (a.stuck ?? 0) > 4) {
+    a.mood = 'vuelve';
+    a.prey = undefined;
+    a.route = undefined;
+    a.stuck = 0;
+    return;
+  }
+  // La res corre a apartarse (más despacio que el lobo).
+  const pd = Math.hypot(prey.x - a.x, prey.y - a.y) || 0.001;
+  if (pd < 5) walkTo(s, prey, prey.x + ((prey.x - a.x) / pd) * 1.5, prey.y + ((prey.y - a.y) / pd) * 1.5, prey.kind === 'gallina' ? 1.4 : 1.1, dt);
+  if (pd < 2) walkTo(s, a, prey.x, prey.y, 2.6, dt);
+  else go(prey.x, prey.y, 2.6);
+  if (Math.hypot(prey.x - a.x, prey.y - a.y) < 0.9) {
+    list.splice(list.indexOf(prey), 1);
+    for (const w of list)
+      if (w.kind === 'lobo' && w.mood === 'asalta') {
+        w.mood = 'vuelve';
+        w.prey = undefined;
+        w.route = undefined;
+      }
+    s.onWild?.('lobo', 'presa', { regionId, prey: prey.kind });
+  }
 }
