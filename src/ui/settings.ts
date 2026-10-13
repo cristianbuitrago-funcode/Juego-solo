@@ -8,11 +8,11 @@ export interface Settings {
   reduceMotion: boolean;
   haptics: boolean;
   tutorial: boolean;
-  quality: 'alta' | 'media' | 'baja'; // resolución y gentío del mundo
+  quality: 'auto' | 'ultra' | 'alta' | 'media' | 'baja'; // nivel gráfico (auto = según el dispositivo)
 }
 
 const KEY = 'ecos_ajustes_v1';
-const DEFAULTS: Settings = { music: 0.6, sfx: 0.7, textSize: 'normal', reduceMotion: false, haptics: true, tutorial: true, quality: 'media' };
+const DEFAULTS: Settings = { music: 0.6, sfx: 0.7, textSize: 'normal', reduceMotion: false, haptics: true, tutorial: true, quality: 'auto' };
 
 export function loadSettings(): Settings {
   try {

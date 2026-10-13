@@ -47,7 +47,9 @@ function initGov(w: WorldState, regionId: number): Gov {
   const tr = CULTURES.find((c) => c.id === r.culture)?.traits ?? { curiosity: 0.5, pride: 0.5, mercantile: 0.5, caution: 0.5, spirituality: 0.5 };
   // Cada cultura tiende a gobernarse a su manera (Fase 6: también consejos de ancianos y ciudades libres).
   const prefer = profileOf(cultureOf(w, regionId)).government;
-  const system: GovSystem = r.isHome ? 'consejo' : rng.weighted(['consejo', 'alcalde', 'monarquia', 'republica', 'familias', 'tribal', 'ciudad'] as GovSystem[], (s) => (prefer.includes(s) ? 0.9 : 0) + (s === 'consejo' ? 0.5 : s === 'alcalde' ? 0.3 + tr.caution * 0.4 : s === 'monarquia' ? 0.1 + tr.pride * 0.6 : s === 'republica' ? 0.1 + tr.curiosity * 0.4 : s === 'familias' ? 0.1 + tr.mercantile * 0.5 : 0.05))!;
+  // La tierra del heredero es un reino: allí reina su familia.
+  const heirOf = w.life?.identity?.past?.heir && w.life.identity.past.origin === regionId;
+  const system: GovSystem = r.isHome ? 'consejo' : heirOf ? 'monarquia' : rng.weighted(['consejo', 'alcalde', 'monarquia', 'republica', 'familias', 'tribal', 'ciudad'] as GovSystem[], (s) => (prefer.includes(s) ? 0.9 : 0) + (s === 'consejo' ? 0.5 : s === 'alcalde' ? 0.3 + tr.caution * 0.4 : s === 'monarquia' ? 0.1 + tr.pride * 0.6 : s === 'republica' ? 0.1 + tr.curiosity * 0.4 : s === 'familias' ? 0.1 + tr.mercantile * 0.5 : 0.05))!;
   const laws: Laws = {
     impuestos: 'medio',
     comercio: tr.mercantile > 0.6 ? 'libre' : rng.chance(0.4) ? 'aranceles' : 'libre',
@@ -73,13 +75,17 @@ export function ensurePolitics(w: WorldState): void {
   ensureOrgs(w);
   for (const r of w.regions) {
     const g = govOf(w, r.id);
-    if (!g.ruler || (g.ruler !== 'jugador' && !folkById(w, g.ruler)?.alive)) g.ruler = pickRuler(w, r.id, g);
+    // (si quien gobierna ha muerto, decide la sucesión de politicsDay: herencia en las monarquías;
+    // sustituirle aquí se adelantaba a ella y nadie heredaba nunca)
+    if (!g.ruler) g.ruler = pickRuler(w, r.id, g);
     if (!g.council.length) g.council = councilOf(w, r.id);
     pol.owner[r.id] ??= r.id;
   }
 }
 
 function pickRuler(w: WorldState, regionId: number, g: Gov): string | undefined {
+  const past = w.life!.identity?.past;
+  if (past?.heir && past.origin === regionId && past.parent && folkById(w, past.parent)?.alive) return past.parent;
   const adults = w.life!.folk.filter((f) => f.alive && f.regionId === regionId && f.age >= 18 && f.p);
   if (g.system === 'militar') {
     const guard = orgsOf(w, regionId).find((o) => o.kind === 'guardia');
@@ -696,17 +702,24 @@ function succession(w: WorldState, regionId: number): string[] {
   const f = folkById(w, g.ruler);
   if (f?.alive && f.regionId === regionId) return [];
   let next: string | undefined;
-  if (g.system === 'monarquia' && f) next = kinOf(w, f.id).map((k) => folkById(w, k.id)).find((x) => x?.alive && x.age >= 16 && x.regionId === regionId)?.id;
+  // Si muere quien reina en la tierra del heredero y este ha decidido reclamar el trono, el trono es suyo.
+  const past = w.life!.identity?.past;
+  if (past?.heir && past.origin === regionId && past.claim === 'reclamar' && f?.id === past.parent) next = 'jugador';
+  if (!next && g.system === 'monarquia' && f) next = kinOf(w, f.id).map((k) => folkById(w, k.id)).find((x) => x?.alive && x.age >= 16 && x.regionId === regionId)?.id;
   next ??= pickRuler(w, regionId, { ...g, ruler: undefined });
   const name = f?.name ?? 'quien gobernaba';
   g.ruler = next;
+  if (next === 'jugador') w.life!.identity!.rank[regionId] = 6;
   g.council = councilOf(w, regionId);
   if (g.system === 'alcalde' || g.system === 'republica') g.nextElection = Math.min(g.nextElection ?? w.day + 6, w.day + 6);
-  const text = `${w.regions[regionId].name} se queda sin ${name}. ${next ? `${folkById(w, next)?.name} ocupa su lugar${g.system === 'monarquia' ? ' por herencia' : ' de momento'}.` : 'Nadie sabe quién mandará.'}`;
+  const text =
+    next === 'jugador'
+      ? `${w.regions[regionId].name} se queda sin ${name}. Por derecho de sangre, la corona pasa a ti: ahora reinas en ${w.regions[regionId].name}.`
+      : `${w.regions[regionId].name} se queda sin ${name}. ${next ? `${folkById(w, next)?.name} ocupa su lugar${g.system === 'monarquia' ? ' por herencia' : ' de momento'}.` : 'Nadie sabe quién mandará.'}`;
   logEvent(w, regionId, 'gobierno', text, next ? [next] : []);
   g.history.push({ day: w.day, text });
   g.legitimacy = clamp(g.legitimacy - 0.08);
-  return playerRegion(w) === regionId ? [text] : [];
+  return playerRegion(w) === regionId || next === 'jugador' ? [text] : [];
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { DEFAULT_PLAYER_LOOK, playerAppearance, SKINS, type PlayerLook } from '../../render/appearance';
-import { drawPortrait } from '../../render/human';
+import { drawPortrait } from '../../visual/figure/portrait';
 import { KNOWS, MAX_LEVEL, questions, SKILLS, STANDING, TALENTS, tryFragment, whoAmI, type KnowId, type SkillId } from '../../world/identity';
 import { ensureLife, heirs } from '../../world/life';
 import { ROLE_TITLE } from '../../world/folk';
@@ -10,6 +10,7 @@ import { emotionOf, playerRegion } from '../../world/society';
 import { forecastDialog, politicsSections, secretsDialog } from '../politics';
 import { lifeSections } from '../generations';
 import { showFragment } from '../world-dialogs';
+import { spendPoint, STAT_IDS, STATS, statsOf, xpToNext } from '../../world/stats';
 import { yearOf } from '../../world/clock';
 import type { App } from '../app';
 import { h } from '../dom';
@@ -45,11 +46,12 @@ export function renderFamily(app: App): Node[] {
       h('p', { class: 'muted' }, `${metFolk.length === 1 ? 'Has conocido a una persona.' : `Has conocido a ${metFolk.length} personas.`} ${friends ? `${friends} te aprecian.` : ''} ${enemies ? `${enemies} te guardan rencor.` : ''}`),
       p.age > 55 ? h('p', { class: 'tiny' }, 'Los años pesan. Piensa en quién tomará el relevo.') : null,
     ),
+    statsSection(app),
     id.mode === 'forastero'
       ? section('Cómo estás',
           h('div', { class: 'need' }, h('span', null, '🍞 Hambre'), bar(id.needs.hunger, id.needs.hunger > 0.8)),
           h('div', { class: 'need' }, h('span', null, '💤 Cansancio'), bar(id.needs.fatigue, id.needs.fatigue > 0.85)),
-          h('p', { class: 'muted' }, `🪙 ${id.needs.coins} monedas · 🎒 ${p.inventory.comida} de comida · ${p.inventory.hierbas} hierbas · ${p.inventory.reliquias} objetos de valor`),
+          h('p', { class: 'muted' }, `🪙 ${id.needs.coins} monedas · 🎒 ${p.inventory.comida} de comida · ${p.inventory.hierbas} hierbas · ${p.inventory.reliquias} objetos de valor${p.torches ? ` · 🔥 ${p.torches} antorcha${p.torches > 1 ? 's' : ''}` : ''}`),
           h('p', { class: 'tiny' }, id.housed ? 'Tienes una casa donde dormir.' : 'No tienes dónde dormir: la posada cuesta dinero; al raso se descansa mal.'),
         )
       : null,
@@ -94,6 +96,31 @@ export function renderFamily(app: App): Node[] {
   return out.filter((x): x is Node => !!x);
 }
 
+/**
+ * Nivel y atributos: la experiencia de todo lo que haces sube tu nivel; cada nivel da puntos para
+ * repartir. Cada atributo dice para qué sirve (el ataque también es la fuerza de los oficios duros).
+ */
+function statsSection(app: App): HTMLElement {
+  const id = ensureLife(app.w!).identity!;
+  const st = statsOf(id);
+  const need = xpToNext(st.level);
+  return section(`Nivel ${st.level}`,
+    h('div', { class: 'need' }, h('span', null, `✦ ${Math.floor(st.xp)} / ${need}`), h('div', { class: 'meter warm' }, h('div', { class: 'meter-fill', style: `width:${Math.round((st.xp / need) * 100)}%` }))),
+    h('p', { class: 'tiny' }, st.points ? `Tienes ${st.points} punto${st.points > 1 ? 's' : ''} para repartir.` : 'Todo lo que haces te da experiencia: trabajar, aprender, hablar, explorar. Cada nivel trae 3 puntos.'),
+    ...STAT_IDS.map((k) =>
+      h('div', { class: 'entry' },
+        h('div', { class: 'ico' }, STATS[k].icon),
+        h('div', { class: 'txt' },
+          h('b', null, `${STATS[k].name} ${st.base[k]}`),
+          ` · ${STATS[k].desc}`,
+          h('div', { class: 'tiny' }, STATS[k].uses),
+          st.points ? h('div', null, h('button', { class: 'btn small', onclick: () => { if (spendPoint(id, k)) app.refresh(); } }, `+1 ${STATS[k].name}`)) : null,
+        ),
+      ),
+    ),
+  );
+}
+
 const CLOAKS = ['#c9902c', '#8a2f2a', '#2f4f7a', '#3f5f3a', '#5a4a6a', '#3a3430'];
 const TUNICS = ['#2f5f63', '#6a3a2a', '#4a5a2a', '#2a3a5a', '#7a6a4a', '#5a2a4a'];
 const HAIR_COLORS = ['#2a1e14', '#4a3020', '#7a4a22', '#a8743a', '#c9a060', '#8a3a1a'];
@@ -108,7 +135,7 @@ function lookEditor(app: App): HTMLElement {
     p.look = { ...look, ...k };
     app.refresh();
   };
-  const canvas = h('canvas', { class: 'portrait big', width: 200, height: 200 }) as HTMLCanvasElement;
+  const canvas = h('canvas', { class: 'portrait big', width: Math.round(100 * Math.min(3, Math.max(2, window.devicePixelRatio || 1))), height: Math.round(100 * Math.min(3, Math.max(2, window.devicePixelRatio || 1))) }) as HTMLCanvasElement;
   drawPortrait(canvas, playerAppearance({ ...p, look }), 'neutral', 1.3);
   const swatches = (list: string[], cur: string, key: 'cloak' | 'tunic' | 'hairColor') =>
     h('div', { class: 'swatches' }, ...list.map((c) => h('button', { class: `swatch ${c === cur ? 'on' : ''}`, style: `background:${c}`, 'aria-label': c, onclick: () => set({ [key]: c }) })));

@@ -116,6 +116,9 @@ export interface Avatar {
   family: Kin[];
   lineage: Ancestor[];
   inventory: { comida: number; hierbas: number; reliquias: number };
+  /** Antorchas sin encender, y hasta cuándo (reloj) arde la que lleva en la mano. */
+  torches?: number;
+  torchUntil?: number;
   pendingDeath: boolean;
   /** Cómo y cuándo murió (Fase 5). */
   death?: { day: number; cause: string; text: string; regionId: number };

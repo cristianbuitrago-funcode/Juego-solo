@@ -3,7 +3,7 @@ import { routineMood, socialOverride } from './social';
 import type { WorldState } from '../core/types';
 import { hourOf } from './clock';
 import { weatherIn } from './geography';
-import { doorOf, getLayout, type Village } from './layout';
+import { doorOf, getLayout, stallShown, type Village } from './layout';
 import type { Folk } from './types';
 
 /**
@@ -99,8 +99,10 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       }
       const fields = v.fields.length ? v.fields : [{ x: v.cx + 8, y: v.cy + 8, w: 4, h: 4 }];
       const field = fields[Math.floor(hash(f.id, 11) * fields.length)];
-      const fx = field.x + hash(f.id, bucket) * field.w;
-      const fy = field.y + hash(f.id, bucket + 3) * field.h;
+      // Cada cual en su surco, avanzando poco a poco por él (antes cruzaba el campo entero
+      // cada 25 minutos y casi siempre se le veía andando en vez de trabajar).
+      const fx = field.x + ((hash(f.id, 5) + bucket * 0.07) % 1) * field.w;
+      const fy = field.y + hash(f.id, 6) * field.h;
       if (f.role === 'pastor') return at({ x: fx + field.w + 3, y: fy + 2 }, 'cuida del rebaño');
       return at({ x: fx, y: fy }, f.role === 'pescador' ? 'remienda redes junto al agua' : 'trabaja el campo');
     }
@@ -109,8 +111,12 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       if (gone) return atHome('no ha abierto su puesto');
       if (h >= 8 && h < 18) {
         if (h >= 15 && h < 16) return at(keyDoor(v, 'posada'), 'cierra tratos en la posada');
-        const s = v.stalls[Math.floor(hash(f.id, 5) * v.stalls.length)] ?? { x: v.cx, y: v.cy };
-        return at({ x: s.x, y: s.y + 1.1 }, hungry ? 'atiende un puesto casi vacío' : 'atiende su puesto');
+        // Solo los puestos que se montan (junto al poste de caminos no hay sitio), y al lado
+        // del puesto: delante estorbaba a quien se acerca y tapaba a quien atiende detrás.
+        const open = v.stalls.filter((st) => stallShown(v, st));
+        const s = open[Math.floor(hash(f.id, 5) * open.length)] ?? { x: v.cx, y: v.cy };
+        const side = hash(f.id, 6) < 0.5 ? -1 : 1;
+        return at({ x: s.x + side * 1.6, y: s.y + 0.15 }, hungry ? 'atiende un puesto casi vacío' : 'atiende su puesto');
       }
       if (h >= 18 && h < 20) return at(keyDoor(v, 'posada'), 'bebe en la posada');
       return atHome('cuenta sus ganancias');
@@ -159,7 +165,11 @@ export function routineOf(w: WorldState, f: Folk, clock: number): RoutineTarget 
       return at(keyDoor(v, 'posada'), 'cuenta historias en la posada');
     case 'artesano':
     default:
-      if (h >= 8 && h < 18) return at(keyDoor(v, v.keys.some((k) => k.kind === 'forja') ? 'forja' : 'almacen'), r.militancy > 0.55 ? 'forja armas sin descanso' : 'trabaja en el taller');
+      if (h >= 8 && h < 18) {
+        // Delante de la puerta, no en ella: en el umbral parecía estar metido en la boca del fuego.
+        const door = keyDoor(v, v.keys.some((k) => k.kind === 'forja') ? 'forja' : 'almacen');
+        return at({ x: door.x, y: door.y + 1.2 }, r.militancy > 0.55 ? 'forja armas sin descanso' : 'trabaja en el taller');
+      }
       if (h >= 18 && h < 20.5) return at(keyDoor(v, 'posada'), 'descansa en la posada');
       return atHome();
   }
