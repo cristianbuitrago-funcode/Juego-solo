@@ -27,13 +27,25 @@ export interface Animal {
   anim: number;
   water?: boolean; // patos: solo nadan
   v: number;
+  /** Fieras (lobo, oso): cómo están reaccionando al jugador ahora. */
+  mood?: WildMood;
+  /** Segundos que faltan para que el oso pueda volver a cargar. */
+  cool?: number;
+  /** Ya avisó de esto en este encuentro (no repetir el mensaje). */
+  told?: string;
 }
+
+export type WildMood = 'calma' | 'mira' | 'huye' | 'carga' | 'retrocede';
+/** Lo que el jugador debería saber de una fiera (la app lo convierte en un aviso). */
+export type WildEvent = 'mira' | 'huye' | 'carga';
 
 export interface AnimalsHost {
   w: WorldState;
   l: Layout;
   furniture: Furniture;
   animals: Map<number, Animal[]>;
+  /** Una fiera ha reaccionado al jugador de una forma que conviene contarle. */
+  onWild?(kind: 'lobo' | 'oso', what: WildEvent): void;
 }
 
 export function moveAnimals(s: AnimalsHost, dt: number): void {
@@ -50,6 +62,7 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
       s.animals.set(v.regionId, list);
     }
     for (const a of list) {
+      if ((a.kind === 'lobo' || a.kind === 'oso') && reactWild(s, a, me, dt)) continue;
       const d = Math.hypot(a.tx - a.x, a.ty - a.y);
       if (d < 0.2) {
         if (Math.random() < dt * (a.kind === 'perro' ? 0.8 : 0.3)) {
@@ -81,6 +94,121 @@ export function moveAnimals(s: AnimalsHost, dt: number): void {
 }
 
 const halfOf = (kind: Animal['kind']) => ANIMAL_HALF[kind];
+
+/**
+ * Fieras frente al jugador. El lobo es receloso: a unas 8 casillas se para y te mira, y si te
+ * acercas a menos de 4 huye corriendo y se va a otra parte del bosque. El oso no huye: se planta
+ * y te mira; si llegas a menos de 2,6 casillas hace una carga de aviso (arremete unos pasos y se
+ * para antes de alcanzarte) y luego retrocede despacio sin darte la espalda. Ninguno ataca: es un
+ * aviso. Devuelve true si este fotograma ha decidido ella cómo se mueve el animal.
+ */
+export function reactWild(s: Pick<AnimalsHost, 'w' | 'l' | 'furniture' | 'onWild'>, a: Animal, me: { x: number; y: number }, dt: number): boolean {
+  const kind = a.kind as 'lobo' | 'oso';
+  const dx = me.x - a.x;
+  const dy = me.y - a.y;
+  const dp = Math.hypot(dx, dy) || 0.001;
+  const say = (what: WildEvent) => {
+    if (a.told?.includes(what)) return;
+    a.told = (a.told ?? '') + what;
+    s.onWild?.(kind, what);
+  };
+  // Un paso hacia (tx, ty); se para si el camino está cortado. Devuelve true al llegar.
+  const step = (tx: number, ty: number, speed: number, face: 'avance' | 'jugador') => {
+    a.tx = tx;
+    a.ty = ty;
+    const d = Math.hypot(tx - a.x, ty - a.y);
+    a.flip = face === 'jugador' ? me.x < a.x : tx < a.x;
+    if (d < 0.2) return true;
+    const sp = Math.min(d, speed * dt);
+    const nx = a.x + ((tx - a.x) / d) * sp;
+    const ny = a.y + ((ty - a.y) / d) * sp;
+    if (!passable(s.w, s.l, nx, ny) || (animalBlocked(s, a.kind, nx, ny) && !animalBlocked(s, a.kind, a.x, a.y))) {
+      a.tx = a.x;
+      a.ty = a.y;
+      return true;
+    }
+    a.x = nx;
+    a.y = ny;
+    a.anim += dt * 6 * Math.max(1, speed / 1.5);
+    return false;
+  };
+  // Un sitio libre a `dist` casillas en la dirección (ux, uy), o girando un poco si está cortado.
+  const away = (ux: number, uy: number, dist: number) => {
+    for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
+      const c = Math.cos(turn);
+      const sn = Math.sin(turn);
+      const x = a.x + (ux * c - uy * sn) * dist;
+      const y = a.y + (ux * sn + uy * c) * dist;
+      if (passable(s.w, s.l, x, y) && !animalBlocked(s, a.kind, x, y)) return { x, y };
+    }
+    return { x: a.x, y: a.y };
+  };
+  a.cool = Math.max(0, (a.cool ?? 0) - dt);
+  if (dp > 14) a.told = undefined; // lejos: el próximo encuentro se vuelve a contar
+  if (kind === 'lobo') {
+    if (a.mood === 'huye') {
+      if (step(a.tx, a.ty, 3.6, 'avance') || dp > 12) {
+        a.mood = 'calma';
+        // Su sitio pasa a ser donde ha ido a parar (no vuelve enseguida adonde estabas).
+        a.hx = a.x;
+        a.hy = a.y;
+      }
+      return true;
+    }
+    if (dp < 4) {
+      const t = away(-dx / dp, -dy / dp, 9);
+      a.mood = 'huye';
+      a.tx = t.x;
+      a.ty = t.y;
+      say('huye');
+      return step(t.x, t.y, 3.6, 'avance'), true;
+    }
+    if (dp < 8) {
+      a.mood = 'mira';
+      step(a.x, a.y, 0, 'jugador');
+      say('mira');
+      return true;
+    }
+    a.mood = 'calma';
+    return false;
+  }
+  // Oso.
+  if (a.mood === 'carga') {
+    if (step(a.tx, a.ty, 4.5, 'avance')) {
+      a.mood = 'retrocede';
+      const t = away(-dx / dp, -dy / dp, 6);
+      a.tx = t.x;
+      a.ty = t.y;
+    }
+    return true;
+  }
+  if (a.mood === 'retrocede') {
+    if (step(a.tx, a.ty, 0.7, 'jugador') || dp > 8) {
+      a.mood = dp < 8 ? 'mira' : 'calma';
+      a.hx = a.x;
+      a.hy = a.y;
+    }
+    return true;
+  }
+  if (dp < 2.6 && a.cool <= 0) {
+    // Arremete hasta quedarse a una casilla de ti, sin llegar a tocarte.
+    const reach = Math.max(0, dp - 1.1);
+    a.mood = 'carga';
+    a.cool = 8;
+    a.tx = a.x + (dx / dp) * reach;
+    a.ty = a.y + (dy / dp) * reach;
+    say('carga');
+    return true;
+  }
+  if (dp < 8) {
+    a.mood = 'mira';
+    step(a.x, a.y, 0, 'jugador');
+    say('mira');
+    return true;
+  }
+  a.mood = 'calma';
+  return false;
+}
 
 /**
  * El cuerpo de un animal es más ancho que un punto: no se planta con un farol o un poste

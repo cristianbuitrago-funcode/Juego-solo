@@ -134,6 +134,7 @@ export class App {
       onFocus: (t) => this.setFocus(t),
       onArrive: (t) => arrive(this, t),
       onTick: () => this.tick(),
+      onWild: (kind, what) => this.wildNotice(kind, what),
     });
     this.scene.reduceMotion = this.settings.reduceMotion;
     this.scene.setQuality(this.settings.quality);
@@ -513,6 +514,22 @@ export class App {
     while (this.whisperBox.children.length > 3) this.whisperBox.firstChild?.remove();
     window.setTimeout(() => el.classList.add('out'), 4500);
     window.setTimeout(() => el.remove(), 5500);
+  }
+
+  // Avisos de fieras: uno por tipo de suceso cada medio minuto (una manada entera no repite el aviso).
+  private wildSaid = new Map<string, number>();
+  private wildNotice(kind: 'lobo' | 'oso', what: 'mira' | 'huye' | 'carga'): void {
+    const key = `${kind}:${what}`;
+    const now = performance.now();
+    if (now - (this.wildSaid.get(key) ?? -1e9) < 30000) return;
+    this.wildSaid.set(key, now);
+    const text = {
+      'lobo:mira': 'Unos lobos te observan desde la espesura, quietos.',
+      'lobo:huye': 'Los lobos se apartan de ti y se pierden entre los árboles.',
+      'oso:mira': 'Un oso se ha parado a mirarte. Mejor no acercarse más.',
+      'oso:carga': '¡El oso arremete unos pasos y se frena en seco! Es un aviso: retrocede.',
+    }[key];
+    if (text) this.whisper(text, what === 'carga');
   }
 
   private cineTimer = 0;

@@ -31,7 +31,7 @@ import * as S from './sprites';
 import type { Drawable } from './drawable';
 import { postDrawables, roadTraffic } from './traffic';
 import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
-import { moveAnimals, type Animal } from './animals';
+import { moveAnimals, type Animal, type WildEvent } from './animals';
 import { drawBirds, moveBirds, type Bird } from './birds';
 import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
 import { buyerSpot, villageDrawables } from './village';
@@ -67,6 +67,8 @@ export interface SceneCallbacks {
   onFocus(t: Target | null): void;
   onArrive(t: Target): void;
   onTick(): void; // cada ~1 s real (presencia, descubrimientos, encuentros)
+  /** Un lobo o un oso ha reaccionado al jugador (para contárselo). */
+  onWild?(kind: 'lobo' | 'oso', what: WildEvent): void;
 }
 
 export interface Ent {
@@ -994,6 +996,10 @@ export class WorldScene {
    * mueble (la fuente, un puesto), encima de otra persona quieta ni pegado al jugador. Si
    * pasa, se le lleva al sitio libre más cercano.
    */
+  onWild(kind: 'lobo' | 'oso', what: WildEvent): void {
+    this.cb.onWild?.(kind, what);
+  }
+
   private vendorSpots = new Map<number, { day: number; spots: { x: number; y: number }[] }>();
   private settle(dt: number): void {
     const people: Ent[] = [];
