@@ -1,4 +1,5 @@
 import type { Mood } from '../core/types';
+import { FORMANTS, type Syllable, type VoiceProfile } from './voice';
 
 /**
  * Música ambiental generativa con Web Audio (sin archivos de sonido).
@@ -27,16 +28,20 @@ export class AudioEngine {
   private master!: GainNode;
   private musicBus!: GainNode;
   private sfxBus!: GainNode;
+  private voiceBus!: GainNode;
   private delay!: DelayNode;
   private mood: Mood = 'calma';
   private timer: number | null = null;
   private drone: { osc: OscillatorNode; gain: GainNode } | null = null;
   musicVolume = 0.6;
   sfxVolume = 0.7;
+  voiceVolume = 0.8;
   /** El paisaje sonoro de donde se está (Fase 6): viento, mar, lluvia, pájaros, tambores. */
   private amb: Ambience = { biome: 'llanura', weather: 'despejado', war: false, night: false };
   private beds: Partial<Record<'viento' | 'mar' | 'lluvia', { gain: GainNode; lfo?: OscillatorNode }>> = {};
   private noise: AudioBuffer | null = null;
+  /** Ruido blanco para los golpes, los pasos y el aire de las voces. */
+  private white: AudioBuffer | null = null;
   private ambTimer: number | null = null;
 
   /** Debe llamarse tras un gesto del usuario (política de autoplay). */
@@ -66,7 +71,9 @@ export class AudioEngine {
     this.musicBus.connect(this.delay);
     this.delay.connect(this.master);
     this.sfxBus.connect(this.master);
-    this.setVolumes(this.musicVolume, this.sfxVolume);
+    this.voiceBus = this.ctx.createGain();
+    this.voiceBus.connect(this.master);
+    this.setVolumes(this.musicVolume, this.sfxVolume, this.voiceVolume);
     this.startLoop();
     this.startAmbience();
   }
@@ -88,6 +95,9 @@ export class AudioEngine {
       last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
       d[i] = last * 3.5;
     }
+    this.white = ctx.createBuffer(1, len, ctx.sampleRate);
+    const wd = this.white.getChannelData(0);
+    for (let i = 0; i < len; i++) wd[i] = Math.random() * 2 - 1;
     const bed = (type: BiquadFilterType, freq: number, lfoHz = 0) => {
       const src = ctx.createBufferSource();
       src.buffer = this.noise;
@@ -156,10 +166,12 @@ export class AudioEngine {
     }
   }
 
-  setVolumes(music: number, sfx: number): void {
+  setVolumes(music: number, sfx: number, voice = this.voiceVolume): void {
     this.musicVolume = music;
     this.sfxVolume = sfx;
+    this.voiceVolume = voice;
     if (!this.ctx) return;
+    this.voiceBus.gain.setTargetAtTime(voice * 0.5, this.ctx.currentTime, 0.05);
     this.musicBus.gain.setTargetAtTime(music * 0.22, this.ctx.currentTime, 0.3);
     this.sfxBus.gain.setTargetAtTime(sfx * 0.35, this.ctx.currentTime, 0.05);
   }
@@ -246,7 +258,98 @@ export class AudioEngine {
     }
   }
 
-  sfx(kind: 'tap' | 'dia' | 'peticion' | 'descubrimiento' | 'error' | 'accion'): void {
+  /** Un soplo de ruido filtrado (pasos, golpes, puertas, aire). */
+  private burst(start: number, dur: number, vol: number, type: BiquadFilterType, freq: number, q = 0.8, bus: GainNode = this.sfxBus, sweep = 0): void {
+    const ctx = this.ctx!;
+    if (!this.white) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.white;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.setValueAtTime(freq, start);
+    if (sweep) f.frequency.exponentialRampToValueAtTime(Math.max(40, freq * sweep), start + dur);
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(vol, start + Math.min(0.012, dur * 0.2));
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    src.connect(f).connect(g).connect(bus);
+    src.start(start, Math.random() * 1.5);
+    src.stop(start + dur + 0.05);
+  }
+
+  /** Un tono que resbala de una frecuencia a otra (golpes sordos, gruñidos, silbidos). */
+  private glide(from: number, to: number, start: number, dur: number, vol: number, type: OscillatorType, cutoff: number, bus: GainNode = this.sfxBus): void {
+    const ctx = this.ctx!;
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, to), start + dur);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = cutoff;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(vol, start + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    osc.connect(f).connect(g).connect(bus);
+    osc.start(start);
+    osc.stop(start + dur + 0.05);
+  }
+
+  /**
+   * Una sílaba de la voz de alguien: un pulso con armónicos pasa por tres
+   * resonancias (las de la vocal, escaladas al tamaño de su garganta).
+   */
+  syllable(v: VoiceProfile, s: Syllable, gain = 1): void {
+    const ctx = this.ctx;
+    if (!ctx || this.voiceVolume <= 0 || ctx.state !== 'running') return;
+    const t = ctx.currentTime + 0.005;
+    const jitter = (Math.random() - 0.5) * v.range * 0.5;
+    const f0 = v.pitch * Math.pow(2, (s.bend * (v.range / 4) + jitter) / 12);
+    const dur = (0.085 + s.stress * 0.04) / Math.max(0.6, v.speed);
+    const vol = 0.5 * v.volume * gain * (1 + s.stress * 0.35);
+    const osc = ctx.createOscillator();
+    osc.type = v.timbre === 'suave' || v.timbre === 'infantil' ? 'triangle' : v.timbre === 'nasal' ? 'square' : 'sawtooth';
+    osc.frequency.setValueAtTime(f0 * 1.04, t);
+    osc.frequency.exponentialRampToValueAtTime(f0 * 0.97, t + dur);
+    if (v.timbre === 'rasgada') {
+      // La voz cascada tiembla: una segunda fuente un poco desafinada.
+      const rough = ctx.createOscillator();
+      rough.type = 'sawtooth';
+      rough.frequency.value = f0 * 0.503;
+      const rg = ctx.createGain();
+      rg.gain.value = f0 * 0.06;
+      rough.connect(rg).connect(osc.frequency);
+      rough.start(t);
+      rough.stop(t + dur + 0.05);
+    }
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(vol, t + 0.012);
+    env.gain.setValueAtTime(vol, t + dur * 0.55);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const F = FORMANTS[s.vowel];
+    const weights = v.timbre === 'grave' ? [1, 0.45, 0.1] : v.timbre === 'nasal' ? [0.6, 0.9, 0.5] : v.timbre === 'suave' ? [1, 0.5, 0.12] : [1, 0.7, 0.25];
+    for (let i = 0; i < 3; i++) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = F[i] * v.formant;
+      bp.Q.value = i === 0 ? 5 : 8;
+      const g = ctx.createGain();
+      g.gain.value = weights[i] * (osc.type === 'triangle' ? 2.6 : 1);
+      osc.connect(bp).connect(g).connect(env);
+    }
+    env.connect(this.voiceBus);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+    // Aire: en las consonantes que silban y en las voces veladas.
+    const air = (s.hiss ? 0.1 : 0) + v.breath * 0.07;
+    if (air > 0.01) this.burst(t - 0.004, s.hiss ? 0.05 : dur, air * v.volume * gain, 'bandpass', s.hiss ? 5200 : 2400 * v.formant, 0.7, this.voiceBus);
+  }
+
+  sfx(kind: 'tap' | 'dia' | 'peticion' | 'descubrimiento' | 'error' | 'accion' | 'paso' | 'puerta' | 'salir' | 'golpe' | 'esquiva' | 'grunido' | 'choque' | 'moneda' | 'pagina' | 'abrir' | 'cerrar' | 'elegir' | 'lazo' | 'lazoMal' | 'sueno' | 'whisper', amount = 1): void {
     const ctx = this.ctx;
     if (!ctx || this.sfxVolume <= 0) return;
     const t = ctx.currentTime + 0.01;
@@ -272,6 +375,68 @@ export class AudioEngine {
         break;
       case 'error':
         this.tone(160, t, 0.25, 0.2, 'square', 600, this.sfxBus);
+        break;
+      case 'paso':
+        // Una pisada: un golpe sordo y corto, distinto cada vez. `amount` = lo fuerte que se pisa.
+        this.burst(t, 0.07, 0.16 * amount, 'lowpass', 500 + Math.random() * 500, 0.6, this.sfxBus, 0.4);
+        break;
+      case 'puerta':
+        // El pestillo, las bisagras y la hoja que se abre.
+        this.burst(t, 0.04, 0.3, 'bandpass', 2600, 2);
+        this.glide(210, 330, t + 0.05, 0.38, 0.1, 'sawtooth', 900);
+        this.burst(t + 0.42, 0.16, 0.3, 'lowpass', 300, 0.7);
+        break;
+      case 'salir':
+        this.glide(320, 200, t, 0.3, 0.09, 'sawtooth', 900);
+        this.burst(t + 0.3, 0.14, 0.34, 'lowpass', 260, 0.7);
+        break;
+      case 'golpe':
+        this.glide(190, 48, t, 0.22, 0.75 * amount, 'sine', 500);
+        this.burst(t, 0.12, 0.6 * amount, 'lowpass', 1400, 0.6, this.sfxBus, 0.2);
+        break;
+      case 'choque':
+        // Acero contra acero (o palo contra palo): un chasquido brillante con cola metálica.
+        this.burst(t, 0.05, 0.5 * amount, 'highpass', 3000, 0.7);
+        this.tone(2140, t, 0.3, 0.1 * amount, 'triangle', 9000, this.sfxBus);
+        this.tone(3270, t, 0.22, 0.06 * amount, 'sine', 9000, this.sfxBus);
+        break;
+      case 'esquiva':
+        this.burst(t, 0.22, 0.34, 'bandpass', 900, 1.2, this.sfxBus, 3.2);
+        break;
+      case 'grunido':
+        this.glide(92, 62, t, 0.55, 0.5, 'sawtooth', 420);
+        this.glide(97, 58, t + 0.03, 0.5, 0.35, 'square', 300);
+        this.burst(t, 0.5, 0.2, 'bandpass', 420, 1.5);
+        break;
+      case 'moneda':
+        this.tone(2600, t, 0.25, 0.1, 'sine', 9000, this.sfxBus);
+        this.tone(3900, t + 0.06, 0.3, 0.08, 'sine', 9000, this.sfxBus);
+        break;
+      case 'pagina':
+        this.burst(t, 0.2, 0.22, 'highpass', 1800, 0.5, this.sfxBus, 1.8);
+        break;
+      case 'abrir':
+        this.burst(t, 0.14, 0.14, 'bandpass', 700, 0.8, this.sfxBus, 2.4);
+        break;
+      case 'cerrar':
+        this.burst(t, 0.12, 0.12, 'bandpass', 1400, 0.8, this.sfxBus, 0.4);
+        break;
+      case 'elegir':
+        this.tone(740, t, 0.12, 0.16, 'triangle', 3500, this.sfxBus);
+        this.tone(1110, t + 0.05, 0.16, 0.1, 'sine', 4500, this.sfxBus);
+        break;
+      case 'lazo':
+        // Alguien te mira mejor: dos notas que suben. `amount` = cuánto ha cambiado.
+        [0, 7, ...(amount > 0.6 ? [12, 16] : [])].forEach((n, i) => this.tone(midi(69 + n), t + i * 0.11, 0.9, 0.1 + amount * 0.08, 'sine', 5000, this.sfxBus));
+        break;
+      case 'lazoMal':
+        [0, -6, ...(amount > 0.6 ? [-7, -13] : [])].forEach((n, i) => this.tone(midi(62 + n), t + i * 0.13, 1, 0.1 + amount * 0.08, 'triangle', 1800, this.sfxBus));
+        break;
+      case 'sueno':
+        [0, -3, -7, -12].forEach((n, i) => this.tone(midi(64 + n), t + i * 0.32, 2.2, 0.12, 'sine', 2200, this.sfxBus));
+        break;
+      case 'whisper':
+        this.burst(t, 0.16, 0.07, 'bandpass', 2300, 0.9, this.sfxBus, 0.7);
         break;
     }
   }

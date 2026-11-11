@@ -31,6 +31,7 @@ import * as S from './sprites';
 import type { Drawable } from './drawable';
 import { postDrawables, roadTraffic } from './traffic';
 import { drawEdgeArrows, drawLabels, drawMarkers } from './overlay';
+import { addEmote, drawEmotes, type Emote, type EmoteKind } from './emotes';
 import { moveAnimals, scareRaiders, wildNight, type Animal, type WildEvent, type WildInfo } from './animals';
 import { drawBirds, moveBirds, type Bird } from './birds';
 import { apOf, dress, entPose, extraAp, hash, lodAt, marchPose, playerAp, playerPose, strideOf } from './poses';
@@ -134,6 +135,68 @@ export class WorldScene {
   cam = { x: 0, y: 0, z: ZOOM.explore };
   private userZ = 1; // multiplicador del pellizco
   converseId: string | null = null;
+  /** Quien conversa contigo está hablando ahora mismo (lo marca la voz del diálogo). */
+  speaking = false;
+  /** Gestos sobre la cabeza (emotes.ts). */
+  emotes: Emote[] = [];
+  /** Reacción del protagonista a lo que le acaba de pasar (un golpe, una esquiva). */
+  playerReact: { action: Action; expr: Expr; until: number } | null = null;
+  private jolt = 0;
+  private sparks: { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string }[] = [];
+  /** Cruzando una puerta: 1 entra (y se queda dentro), −1 sale. */
+  private door: { start: number; dir: 1 | -1 } | null = null;
+  /** Pisadas: se avisa a cada paso (para el sonido). */
+  onStep: ((run: boolean) => void) | null = null;
+  private stepPhase = 0;
+
+  /** Alguien deja ver lo que siente: un bocadillo sobre su cabeza ('@player' para el protagonista). */
+  emote(who: string, kind: EmoteKind, strength = 0.5): void {
+    addEmote(this, who, kind, strength);
+  }
+
+  /** El protagonista reacciona con el cuerpo durante `ms`. */
+  react(action: Action, expr: Expr, ms: number): void {
+    this.playerReact = { action, expr, until: performance.now() + ms };
+  }
+
+  /** Sacude la cámara (un golpe, una carga). */
+  shake(amount: number): void {
+    if (!this.reduceMotion) this.jolt = Math.max(this.jolt, amount);
+  }
+
+  /** Chispas de un impacto en un punto del mundo (en teselas). */
+  burst(x: number, y: number, color: string, n = 14, power = 1): void {
+    if (this.reduceMotion) return;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = (0.6 + Math.random() * 1.6) * power;
+      this.sparks.push({ x: x * TILE, y: y * TILE - 14, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.6, life: 0, max: 14 + Math.random() * 14, color });
+    }
+    if (this.sparks.length > 120) this.sparks.splice(0, this.sparks.length - 120);
+  }
+
+  /** El protagonista cruza la puerta que tiene delante y desaparece dentro. */
+  enterDoor(): void {
+    this.stop();
+    this.door = { start: performance.now(), dir: 1 };
+  }
+
+  /** Vuelve a salir por la puerta. */
+  leaveDoor(): void {
+    if (this.door?.dir === 1) this.door = { start: performance.now(), dir: -1 };
+  }
+
+  /** Cuánto ha cruzado la puerta: 0 fuera, 1 dentro del todo. */
+  private doorK(): number {
+    const d = this.door;
+    if (!d) return 0;
+    const p = Math.min(1, (performance.now() - d.start) / (this.reduceMotion ? 1 : 420));
+    if (d.dir === -1 && p >= 1) {
+      this.door = null;
+      return 0;
+    }
+    return d.dir === 1 ? p : 1 - p;
+  }
   apCache = new Map<string, { key: string; ap: Appearance }>();
   playerLook: unknown = null;
   wxFrame = 'despejado';
@@ -334,7 +397,7 @@ export class WorldScene {
       // Tapado por el diario o el mapa (opacos), el mundo no se pinta; detrás de un
       // diálogo, que lo deja ver en penumbra y quieto, basta un fotograma de cada tres.
       this.frameNo++;
-      if (!this.covered && (!this.paused || this.frameNo % 3 === 0)) {
+      if (!this.covered && (!this.paused || this.converseId || this.frameNo % 3 === 0)) {
         const w0 = performance.now();
         this.draw(t);
         // Se mide el trabajo de dibujo (no el intervalo entre fotogramas: un móvil a 30 Hz no es lento).
@@ -790,6 +853,12 @@ export class WorldScene {
     }
     const pap = this.apCache.get('@player')?.ap;
     this.playerAnim += (moved / strideOf(pap, this.playerRun)) * Math.PI;
+    // Una pisada cada medio ciclo de zancada.
+    const stepNo = Math.floor(this.playerAnim / Math.PI);
+    if (stepNo !== this.stepPhase) {
+      this.stepPhase = stepNo;
+      if (moved > 0.002) this.onStep?.(this.playerRun);
+    }
     if (moved < 0.002 && !want) this.playerMoving = false;
   }
 
@@ -1001,6 +1070,23 @@ export class WorldScene {
    * pasa, se le lleva al sitio libre más cercano.
    */
   onWild(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void {
+    // Lo que pasa se ve en el cuerpo y en la cámara antes de leerse en ningún aviso.
+    const me = ensureLife(this.w).player;
+    if (what === 'zarpazo' || what === 'mordisco') {
+      this.shake(what === 'zarpazo' ? 13 : 8);
+      this.react('hurt', 'miedo', 750);
+      this.burst(me.x, me.y, '#c8301e', what === 'zarpazo' ? 22 : 14, 1.2);
+      this.emote('@player', 'golpe', what === 'zarpazo' ? 1 : 0.6);
+    } else if (what === 'esquiva') {
+      this.react('dodge', 'sorpresa', 520);
+      this.shake(3);
+      for (let i = 0; i < 5; i++) this.puff(me.x * TILE + (Math.random() - 0.5) * 10, me.y * TILE, 'rgba(176,150,112,', 0.7);
+    } else if (what === 'carga') {
+      this.shake(5);
+      this.emote('@player', 'sorpresa', 0.8);
+    } else if (what === 'ahuyentados' && info?.by === 'jugador') {
+      this.react('fight', 'enfadado', 1100);
+    } else if (what === 'acecha' || what === 'mira') this.emote('@player', 'sorpresa', 0.3);
     this.cb.onWild?.(kind, what, info);
   }
 
@@ -1270,8 +1356,9 @@ export class WorldScene {
     g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     // El trueno sacude un instante la cámara (2–3 px), salvo con movimiento reducido.
     const shake = !this.reduceMotion && this.wfx.flash > 0.55 ? (this.wfx.flash - 0.55) * 6 : 0;
-    const sx = shake ? (Math.random() - 0.5) * shake : 0;
-    const sy = shake ? (Math.random() - 0.5) * shake : 0;
+    const sx = (shake ? (Math.random() - 0.5) * shake : 0) + (Math.random() - 0.5) * this.jolt;
+    const sy = (shake ? (Math.random() - 0.5) * shake : 0) + (Math.random() - 0.5) * this.jolt;
+    this.jolt = this.jolt > 0.2 ? this.jolt * 0.86 : 0;
     g.setTransform(dz, 0, 0, dz, this.dpr * (this.vw / 2 - this.cam.x * z + sx), this.dpr * (this.vh / 2 - this.cam.y * z + sy));
     g.imageSmoothingEnabled = true;
     g.imageSmoothingQuality = 'low';
@@ -1491,8 +1578,18 @@ export class WorldScene {
     const torch = torchLit(this.w);
     const pap = this.dress(playerAp(this, darkness(life.clock) > 0.3, torch), wet, cold);
     const ppose = playerPose(this, sec, wet, cold);
-    this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
-    if (darkness(life.clock) > 0.3) {
+    // Cruzando una puerta, el protagonista camina hacia la fachada y se funde con la penumbra de dentro.
+    const dk = this.doorK();
+    if (dk > 0) {
+      if (dk < 1) {
+        const entering = this.door?.dir !== -1;
+        const dpose: Pose = { ...ppose, facing: entering ? 'back' : 'front', action: 'walk', phase: dk * 7, speed: 1 };
+        const py = me.y * TILE - dk * TILE * 0.85;
+        this.shadowQ.push(() => { g.save(); g.globalAlpha = 1 - dk; drawFigureShadow(g, pap, me.x * TILE, py, this.sun, false); g.restore(); });
+        items.push({ y: me.y * TILE, draw: () => { g.save(); g.globalAlpha = 1 - dk * dk; drawFigure(g, pap, dpose, me.x * TILE, py); g.restore(); } });
+      }
+    } else this.pushPerson(items, pap, ppose, me.x * TILE, me.y * TILE);
+    if (darkness(life.clock) > 0.3 && dk < 0.5) {
       // Junto a una farola, el farol de mano casi no se nota (dos focos pegados se leían como un error).
       const byLamp = this.l.villages.some((v) => Math.abs(v.cx - me.x) < v.plazaR + 4 && Math.abs(v.cy - me.y) < v.plazaR + 4 && v.lamps.some((lp) => Math.hypot(lp.x - me.x, lp.y - me.y) < 2.6));
       // La antorcha da mucha más luz que el farol, y tiembla como el fuego.
@@ -1523,7 +1620,7 @@ export class WorldScene {
         }
     }
     // Si el follaje tapa al protagonista, se le sigue viendo en transparencia (no se pierde nunca).
-    if (this.playerHidden) {
+    if (this.playerHidden && dk === 0) {
       g.save();
       // (a 0,5 la copa de un cerezo en flor lo dejaba lavado de rosa)
       g.globalAlpha = 0.8;
@@ -1557,6 +1654,7 @@ export class WorldScene {
     drawGrade(g, hourOf(life.clock), weather, this.vw, this.vh, nightK > 0.01);
     this.lighting.night(g, weather, nightK, this.lights, this.cam, this.vw, this.vh);
     drawLabels(this, g);
+    drawEmotes(this, g);
     drawEdgeArrows(this, g, t);
     const cine = this.cineAmount();
     if (cine > 0) {
@@ -1692,6 +1790,25 @@ export class WorldScene {
 
   private drawParticles(g: CanvasRenderingContext2D, t: number): void {
     void t;
+    // Chispas de los golpes: trazos cortos que salen disparados y caen.
+    if (this.sparks.length) {
+      this.sparks = this.sparks.filter((p) => p.life < p.max);
+      g.lineCap = 'round';
+      for (const p of this.sparks) {
+        p.life++;
+        p.vy += 0.09;
+        p.x += p.vx;
+        p.y += p.vy;
+        g.globalAlpha = 1 - p.life / p.max;
+        g.strokeStyle = p.color;
+        g.lineWidth = 1.3;
+        g.beginPath();
+        g.moveTo(p.x, p.y);
+        g.lineTo(p.x - p.vx * 2.2, p.y - p.vy * 2.2);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
     this.particles = this.particles.filter((p) => p.life < p.max);
     for (const p of this.particles) {
       p.life++;

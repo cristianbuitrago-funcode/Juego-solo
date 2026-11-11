@@ -1,0 +1,176 @@
+/* =====================================================================
+   Movimiento: nada aparece ni desaparece de golpe. Cada cuadro, aviso,
+   botón y transición entra y sale con su animación. Todo se apaga con
+   «Reducir animaciones» (body[data-motion='reduced']).
+   ===================================================================== */
+
+/* ---------- Cuadros de diálogo: suben al entrar, bajan al salir ---------- */
+.overlay { animation: veil-in 0.22s ease-out both; }
+.modal { animation: sheet-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes veil-in { from { background-color: rgba(15, 10, 6, 0); } }
+@keyframes sheet-in { from { transform: translateY(46px); opacity: 0; } to { transform: none; opacity: 1; } }
+.overlay.closing { pointer-events: none; animation: veil-out 0.19s ease-in both; }
+.overlay.closing .modal { animation: sheet-out 0.19s ease-in both; }
+@keyframes veil-out { to { background-color: rgba(15, 10, 6, 0); } }
+@keyframes sheet-out { to { transform: translateY(40px); opacity: 0; } }
+/* Una conversación que sigue: el cuadro no se va, cambia lo que dice. */
+.overlay.swap { animation: none; }
+.overlay.swap .modal { animation: none; }
+.overlay.swap .modal > * { animation: swap-in 0.22s ease-out both; }
+@keyframes swap-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (min-width: 700px) {
+  @keyframes sheet-in { from { transform: translateY(18px) scale(0.97); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes sheet-out { to { transform: translateY(12px) scale(0.98); opacity: 0; } }
+}
+
+/* El retrato entra con un pequeño rebote; mientras habla, el marco late. */
+.dlg-head .portrait { animation: portrait-in 0.36s cubic-bezier(0.34, 1.4, 0.64, 1) both; }
+@keyframes portrait-in { from { transform: scale(0.72) rotate(-4deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.modal.typing.voiced .dlg-head .portrait { box-shadow: 0 0 0 3px rgba(43, 30, 21, 0.75), 0 0 0 5px rgba(201, 160, 82, 0.55), 0 4px 10px rgba(0, 0, 0, 0.4); }
+
+/* El texto se escribe: lo que aún no se ha dicho ocupa su sitio, invisible. */
+.tw-off { visibility: hidden; }
+.modal.typing { cursor: pointer; }
+.modal.typing p:has(.tw-off:not(:empty))::after { content: ''; }
+.skip-hint { position: absolute; right: 16px; bottom: calc(10px + var(--safe-bottom)); font-family: var(--serif); font-style: italic; font-size: 0.8em; color: var(--ink-soft); opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+.modal.typing .skip-hint { opacity: 0.7; animation: hint-bob 1.1s ease-in-out infinite; }
+@keyframes hint-bob { 50% { transform: translateY(3px); } }
+
+/* Las opciones esperan a que termine de hablar y entran una a una. */
+.dlg-choices.pending { height: 0; margin-top: 0; overflow: hidden; pointer-events: none; }
+.dlg-choices.ready .btn { animation: choice-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.dlg-choices.ready .btn:nth-child(2) { animation-delay: 0.04s; }
+.dlg-choices.ready .btn:nth-child(3) { animation-delay: 0.08s; }
+.dlg-choices.ready .btn:nth-child(4) { animation-delay: 0.12s; }
+.dlg-choices.ready .btn:nth-child(5) { animation-delay: 0.16s; }
+.dlg-choices.ready .btn:nth-child(n + 6) { animation-delay: 0.2s; }
+@keyframes choice-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+.dlg-choices .btn { transition: transform 0.12s, background-color 0.15s, border-left-width 0.12s; }
+.dlg-choices .btn:active { transform: scale(0.985) translateX(3px); border-left-width: 6px; }
+
+/* ---------- Botones: se hunden al pulsarlos ---------- */
+.btn, .icon-btn, .chip, .run-btn, .quick-btn, .opt-chip, .tabs button { transition: transform 0.12s ease, filter 0.15s ease, background-color 0.2s ease, opacity 0.2s ease; }
+.btn:active, .icon-btn:active, .run-btn:active, .quick-btn:active, .opt-chip:active { transform: scale(0.94); filter: brightness(1.08); }
+
+/* ---------- Avisos: entran, se quedan y se van ---------- */
+.toast { animation: toast-life 2.8s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes toast-life {
+  0% { opacity: 0; transform: translate(-50%, 14px) scale(0.94); }
+  8% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  88% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -8px) scale(0.98); }
+}
+.whisper { animation: whisper-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both; transition: opacity 0.9s, transform 0.9s; }
+@keyframes whisper-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } to { opacity: 1; transform: none; } }
+.whisper.out { opacity: 0; transform: translateY(-8px); }
+
+/* Botones de contexto («Hablar», «Entrar»…): aparecen al acercarse a algo. */
+.prompt-label { animation: prompt-in 0.24s ease-out both; }
+.prompt-actions .btn { animation: prompt-pop 0.3s cubic-bezier(0.34, 1.5, 0.64, 1) both; }
+.prompt-actions .btn:nth-child(2) { animation-delay: 0.05s; }
+.prompt-actions .btn:nth-child(3) { animation-delay: 0.1s; }
+.prompt-actions .btn:nth-child(4) { animation-delay: 0.15s; }
+.prompt.still > *, .prompt.still .btn { animation: none; }
+.veil.indoor { z-index: 59; }
+.veil.indoor::before { background: radial-gradient(ellipse at 50% 30%, #1d1610, #0b0806 70%); }
+.prompt.leaving > * { animation: prompt-out 0.16s ease-in both; }
+@keyframes prompt-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes prompt-pop { from { opacity: 0; transform: translateY(12px) scale(0.85); } to { opacity: 1; transform: none; } }
+@keyframes prompt-out { to { opacity: 0; transform: translateY(8px) scale(0.96); } }
+
+/* Las cifras del HUD dan un pequeño salto cuando cambian. */
+.hud .chip.bump { animation: chip-bump 0.5s cubic-bezier(0.34, 1.6, 0.64, 1); }
+.hud .chip.bump.down { animation-name: chip-drop; }
+@keyframes chip-bump { 0% { transform: scale(1); } 35% { transform: scale(1.22); filter: brightness(1.5); } 100% { transform: scale(1); } }
+@keyframes chip-drop { 0% { transform: scale(1); } 35% { transform: scale(0.86) translateY(2px); filter: brightness(0.75) saturate(1.6); } 100% { transform: scale(1); } }
+.hud .chip.warn { animation: warn-pulse 1.6s ease-in-out infinite; }
+@keyframes warn-pulse { 50% { box-shadow: 0 0 0 3px rgba(200, 70, 40, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35); } }
+
+/* ---------- Pantallas enteras: menú, carga, despertar ---------- */
+.menu > * { animation: menu-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.menu > *:nth-child(2) { animation-delay: 0.08s; }
+.menu > *:nth-child(3) { animation-delay: 0.16s; }
+.menu > *:nth-child(4) { animation-delay: 0.26s; }
+.menu > *:nth-child(5) { animation-delay: 0.32s; }
+.menu > *:nth-child(6) { animation-delay: 0.38s; }
+.menu > *:nth-child(7) { animation-delay: 0.44s; }
+.menu > *:nth-child(n + 8) { animation-delay: 0.5s; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.menu.leaving { animation: menu-out 0.35s ease-in both; }
+@keyframes menu-out { to { opacity: 0; transform: scale(1.04); filter: blur(3px); } }
+.loading .tag { animation: breathe 1.6s ease-in-out infinite; }
+.loading .logo { animation: logo-glow 2.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.45; } }
+@keyframes logo-glow { 50% { text-shadow: 0 0 38px rgba(233, 180, 76, 0.75); letter-spacing: 0.34em; } }
+.stage.world { animation: world-in 0.9s ease-out both; }
+@keyframes world-in { from { opacity: 0; } }
+.awaken, .daycard { transition: opacity 0.7s ease, filter 0.7s ease; }
+.awaken.leaving { opacity: 0; filter: blur(6px); pointer-events: none; }
+
+/* ---------- Velo de transición: puertas, sueño, paso de las horas ---------- */
+.veil { position: absolute; inset: 0; z-index: 80; pointer-events: none; display: grid; place-items: center; color: #f3e3bd; font-family: var(--serif); text-align: center; }
+.veil .veil-text { position: relative; z-index: 1; opacity: 0; transition: opacity 0.35s ease 0.15s; padding: 0 28px; }
+.veil .veil-text b { display: block; font-size: 1.7em; font-variant: small-caps; letter-spacing: 0.14em; }
+.veil .veil-text small { display: block; margin-top: 6px; font-style: italic; opacity: 0.85; font-size: 1em; }
+.veil.shut .veil-text { opacity: 1; }
+/* Iris: un círculo que se cierra sobre un punto (la puerta, tú) y vuelve a abrirse. */
+.veil.iris::before { content: ''; position: absolute; inset: 0; background: #0b0806; -webkit-mask-image: radial-gradient(circle at var(--ix, 50%) var(--iy, 50%), transparent var(--r, 140%), #000 calc(var(--r, 140%) + 2%)); mask-image: radial-gradient(circle at var(--ix, 50%) var(--iy, 50%), transparent var(--r, 140%), #000 calc(var(--r, 140%) + 2%)); transition: --r 0.42s cubic-bezier(0.6, 0, 0.4, 1); }
+@property --r { syntax: '<percentage>'; inherits: true; initial-value: 140%; }
+.veil.iris.shut::before { --r: 0%; }
+/* Fundido: a negro (dormir) o a pergamino oscuro (pasan las horas). */
+.veil.fade::before { content: ''; position: absolute; inset: 0; background: #0b0806; opacity: 0; transition: opacity 0.5s ease; }
+.veil.fade.shut::before { opacity: 1; }
+.veil.fade.soft::before { background: radial-gradient(ellipse at 50% 45%, #2c2118, #0e0a07); }
+.veil.fade.soft.shut::before { opacity: 0.94; }
+.veil .veil-ico { display: block; font-size: 2.2em; margin-bottom: 8px; animation: veil-ico 1.4s ease-in-out infinite; }
+@keyframes veil-ico { 50% { transform: translateY(-5px) rotate(6deg); } }
+.veil .stars { position: absolute; inset: 0; opacity: 0; transition: opacity 0.6s ease 0.3s; background-image: radial-gradient(1.5px 1.5px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 70% 20%, #fff, transparent), radial-gradient(1.5px 1.5px at 85% 60%, #ffe9b8, transparent), radial-gradient(1px 1px at 35% 70%, #fff, transparent), radial-gradient(1px 1px at 55% 45%, #cfe0ff, transparent), radial-gradient(1.5px 1.5px at 12% 82%, #fff, transparent); }
+.veil.shut .stars { opacity: 0.8; animation: twinkle 2.2s ease-in-out infinite; }
+@keyframes twinkle { 50% { opacity: 0.35; } }
+
+/* ---------- Golpes: la pantalla acusa el daño ---------- */
+.hurt-flash { position: absolute; inset: 0; z-index: 55; pointer-events: none; background: radial-gradient(ellipse at 50% 50%, rgba(160, 20, 10, 0) 38%, rgba(160, 20, 10, 0.62) 100%); animation: hurt 0.7s ease-out both; }
+.hurt-flash.dodge { background: radial-gradient(ellipse at 50% 50%, rgba(255, 255, 255, 0) 45%, rgba(235, 240, 255, 0.4) 100%); animation-duration: 0.45s; }
+@keyframes hurt { 0% { opacity: 0; } 12% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---------- Lo que cambia entre tú y los demás ---------- */
+.bond { position: absolute; left: 50%; top: calc(74px + var(--safe-top)); z-index: 58; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: min(340px, 88vw); padding: 8px 14px 8px 8px; border-radius: 40px; background: rgba(24, 17, 11, 0.9); border: 1px solid rgba(201, 160, 82, 0.5); color: #f3e8cf; font-family: var(--serif); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); pointer-events: none; animation: bond-life 4.2s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.bond canvas { width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--gold); flex: none; }
+.bond b { display: block; font-size: 0.98em; line-height: 1.2; }
+.bond small { display: block; font-style: italic; opacity: 0.85; font-size: 0.82em; line-height: 1.25; }
+.bond .bond-ico { font-size: 1.35em; animation: bond-ico 0.8s cubic-bezier(0.34, 1.7, 0.64, 1) 0.25s both; }
+.bond.good { border-color: rgba(140, 200, 150, 0.7); }
+.bond.bad { border-color: rgba(214, 96, 70, 0.75); }
+.bond.big { top: 24%; padding: 12px 20px 12px 12px; border-width: 2px; box-shadow: 0 0 0 4px rgba(201, 160, 82, 0.18), 0 10px 30px rgba(0, 0, 0, 0.6); animation-duration: 5.4s; }
+.bond.big canvas { width: 64px; height: 64px; }
+.bond.big b { font-size: 1.15em; }
+.bond.big.good { box-shadow: 0 0 0 4px rgba(140, 200, 150, 0.2), 0 0 44px rgba(140, 200, 150, 0.25), 0 10px 30px rgba(0, 0, 0, 0.6); }
+.bond.big.bad { box-shadow: 0 0 0 4px rgba(214, 96, 70, 0.22), 0 0 44px rgba(214, 96, 70, 0.28), 0 10px 30px rgba(0, 0, 0, 0.6); }
+@keyframes bond-life {
+  0% { opacity: 0; transform: translate(-50%, -14px) scale(0.9); }
+  8% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  90% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -10px) scale(0.97); }
+}
+@keyframes bond-ico { from { transform: scale(0.2) rotate(-25deg); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- Viñeta de pelea ---------- */
+.modal canvas.fight { display: block; width: calc(100% + 36px); margin: 0 -18px 12px; aspect-ratio: 360 / 170; height: auto; border-radius: 22px 22px 0 0; border-bottom: 2px solid var(--gold); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); background: #1a130d; }
+.modal.with-fight { padding-top: 0; }
+.fight-body { transition: opacity 0.4s ease; }
+.fight-body.waiting { opacity: 0; pointer-events: none; height: 0; overflow: hidden; }
+
+/* ---------- Diario, fichas y pestañas ---------- */
+.diary-body > * { animation: page-in 0.3s ease-out both; }
+.diary-body.map-body > * { animation: none; }
+@keyframes page-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.card { animation: card-in 0.3s ease-out both; }
+@keyframes card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.sheet.leaving { animation: sheet-out 0.2s ease-in both; }
+
+/* ---------- Sin animaciones ---------- */
+body[data-motion='reduced'] .overlay, body[data-motion='reduced'] .modal, body[data-motion='reduced'] .overlay.swap .modal > *, body[data-motion='reduced'] .dlg-head .portrait,
+body[data-motion='reduced'] .dlg-choices.ready .btn, body[data-motion='reduced'] .prompt-label, body[data-motion='reduced'] .prompt-actions .btn, body[data-motion='reduced'] .menu > *,
+body[data-motion='reduced'] .hud .chip, body[data-motion='reduced'] .diary-body > *, body[data-motion='reduced'] .card, body[data-motion='reduced'] .stage.world,
+body[data-motion='reduced'] .loading .tag, body[data-motion='reduced'] .loading .logo, body[data-motion='reduced'] .bond .bond-ico { animation: none !important; }
+body[data-motion='reduced'] .veil.iris::before, body[data-motion='reduced'] .veil.fade::before { transition-duration: 0.01s; }

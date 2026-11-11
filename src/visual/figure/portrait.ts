@@ -8,7 +8,7 @@ import type { Expr } from './types';
  * arriba con luz de estudio cálida, fondo con el color de su tierra y la
  * expresión de lo que siente. Respira y parpadea mientras se habla.
  */
-export function drawPortrait(canvas: HTMLCanvasElement, ap: Appearance, expr: Expr, t = 0, bg = '#3a2e26', talking = false): void {
+export function drawPortrait(canvas: HTMLCanvasElement, ap: Appearance, expr: Expr, t = 0, bg = '#3a2e26', talking = false, mouth?: boolean): void {
   const g = canvas.getContext('2d')!;
   const W = canvas.width;
   const H = canvas.height;
@@ -27,7 +27,7 @@ export function drawPortrait(canvas: HTMLCanvasElement, ap: Appearance, expr: Ex
   const k = (H * 0.4) / B.head;
   const headCenter = B.H - B.head * 0.5;
   g.setTransform(k, 0, 0, k, W / 2, H * 0.4 + headCenter * k);
-  drawFigure(g, ap, { facing: 'front', flip: false, phase: 0, action: talking ? 'talk' : 'idle', t, expr, lod: 0 }, 0, 0, { res: k });
+  drawFigure(g, ap, { facing: 'front', flip: false, phase: 0, action: talking ? 'talk' : 'idle', t, expr, lod: 0, mouth }, 0, 0, { res: k });
   g.setTransform(1, 0, 0, 1, 0, 0);
   // Luz de borde y viñeta.
   const v = g.createRadialGradient(W / 2, H * 0.45, W * 0.3, W / 2, H * 0.5, W * 0.75);

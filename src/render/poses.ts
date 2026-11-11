@@ -22,6 +22,8 @@ export interface PoseHost {
   playerLook: unknown;
   playerLookKey: string;
   converseId: string | null;
+  speaking: boolean;
+  playerReact: { action: Action; expr: Expr; until: number } | null;
   ents: Map<string, Ent>;
   facing: { x: number; y: number };
   playerAnim: number;
@@ -112,7 +114,8 @@ export function entPose(s: PoseHost, id: string, e: Ent, f: Folk | undefined, se
     facing = Math.abs(e.dy) > Math.abs(e.dx) * 1.3 ? (e.dy > 0 ? 'front' : 'back') : 'side';
     action = react?.action === 'run' ? 'run' : 'walk';
   } else if (id === s.converseId) {
-    action = Math.floor(sec / 1.8) % 3 === 2 ? 'nod' : 'talk';
+    // Habla mientras suena su voz; el resto del tiempo escucha y asiente de vez en cuando.
+    action = s.speaking ? 'talk' : Math.floor(sec / 1.8) % 3 === 2 ? 'nod' : 'listen';
   } else if (react?.action) action = react.action;
   else {
     action = actionOf(e.act);
@@ -159,8 +162,10 @@ export function playerPose(s: PoseHost, sec: number, wet: boolean, cold: boolean
   if (conv && !s.playerMoving) (fx = conv.x - me.x), (fy = conv.y - me.y);
   const side = Math.abs(fx) > 0.45 || Math.abs(fx) > Math.abs(fy) * 0.8;
   const facing: Facing = side ? 'side' : fy < 0 ? 'back' : 'front';
-  const action: Action = s.playerMoving ? (s.playerRun ? 'run' : 'walk') : conv ? 'listen' : 'idle';
-  return { facing, flip: fx < 0, phase: s.playerAnim, action, t: sec, expr: 'neutral', lod: 0, hood: wet || cold, heavy: cold, wet };
+  const action: Action = s.playerMoving ? (s.playerRun ? 'run' : 'walk') : conv ? (!s.speaking && Math.floor(sec / 2.2) % 3 === 1 ? 'nod' : 'listen') : 'idle';
+  // Lo que le acaba de pasar manda sobre lo que estaba haciendo: un golpe, un salto para esquivar, plantar cara.
+  const react = s.playerReact && s.playerReact.until > performance.now() ? s.playerReact : null;
+  return { facing: react && react.action !== 'fight' ? 'side' : facing, flip: fx < 0, phase: s.playerAnim, action: react && !s.playerMoving ? react.action : action, t: sec, expr: react?.expr ?? (conv ? 'confiado' : 'neutral'), lod: 0, hood: wet || cold, heavy: cold, wet };
 }
 
 /** Postura de quien camina por un camino (soldados, refugiados, arrieros). */

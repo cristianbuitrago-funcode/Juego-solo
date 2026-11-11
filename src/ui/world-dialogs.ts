@@ -35,6 +35,9 @@ import { roadPath } from '../world/roadnet';
 import { giveTo, observeFolk, talkToFolk } from '../world/talk';
 import type { App } from './app';
 import { h, vibrate } from './dom';
+import { sayChoice, speakerOf, typeDialogue, type Speaker, type SpeechHandle } from './speech';
+import { voiceFor } from '../audio/voice';
+import { timeText, veil } from './stagefx';
 import { openAction } from './screens/composer';
 import { marketSuspicion, politicalChoices, townAffairs, warDialog } from './politics';
 import { homeChoices, lifeChoices, recordsChoice } from './generations';
@@ -54,6 +57,25 @@ interface Choice {
   exit?: boolean;
 }
 
+/** Quién habla desde cada retrato (su voz y su boca). */
+const SPEAKERS = new WeakMap<HTMLCanvasElement, Speaker>();
+
+/**
+ * Da vida a un cuadro de diálogo ya montado: el texto se escribe al ritmo de
+ * quien habla, con su voz, y las opciones entran al terminar. Tocar el cuadro
+ * lo completa de golpe.
+ */
+function enliven(app: App, anchor: HTMLElement, ps: HTMLElement[], choices: HTMLElement | null, portrait?: HTMLCanvasElement): SpeechHandle {
+  const box = (anchor.closest('.modal') as HTMLElement | null) ?? anchor;
+  const speaker = portrait ? SPEAKERS.get(portrait) ?? null : null;
+  if (speaker) speaker.onTalk = (v) => app.scene && (app.scene.speaking = v);
+  const speech = typeDialogue(box, ps, choices, speaker, app.settings.textSpeed, app.settings.reduceMotion);
+  box.addEventListener('click', (e) => {
+    if (!speech.done && !(e.target as HTMLElement).closest('button')) speech.skip();
+  });
+  return speech;
+}
+
 /** Caja de diálogo al estilo de los juegos de rol. */
 export function dialogue(app: App, title: string, subtitle: string, lines: string[], choices: Choice[], portrait?: HTMLCanvasElement): () => void {
   let close = () => {};
@@ -61,12 +83,21 @@ export function dialogue(app: App, title: string, subtitle: string, lines: strin
   const room = !portrait && interiorCtx ? interiorCanvas(app, interiorCtx.kind, interiorCtx.regionId) : null;
   const isExit = (c: Choice) => c.exit ?? /^(Salir|Pensarlo|Seguir sin|Marcharse|Irte|Despedirte|Despedirse|Nada|Dejarlo|Volver|Cerrar|Ahora no|No,? gracias|Otro día|Mejor no)/.test(c.label);
   const hasExit = choices.some(isExit);
+  const ps = lines.map((l) => h('p', { class: l.startsWith('«') || l.startsWith('—') ? 'quote' : '' }, l));
+  const pick = (c: Choice) => {
+    audio.sfx(isExit(c) ? 'cerrar' : 'elegir');
+    if (app.w) sayChoice(app.w, c.label);
+    close();
+    c.run();
+  };
+  const list = h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: isExit(c) ? 'btn exit' : `btn ${c.primary ? 'teal' : ''}`, onclick: () => pick(c) }, c.label, c.hint ? h('small', null, c.hint) : null)));
   close = app.modal(() => [
     room,
     h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, title), subtitle ? h('div', { class: 'tiny' }, subtitle) : null)),
-    ...lines.map((l) => h('p', { class: l.startsWith('«') || l.startsWith('—') ? 'quote' : '' }, l)),
-    h('div', { class: 'dlg-choices' }, ...choices.map((c) => h('button', { class: isExit(c) ? 'btn exit' : `btn ${c.primary ? 'teal' : ''}`, onclick: () => (close(), c.run()) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+    ...ps,
+    list,
   ], { cls: `dialog ${hasExit ? 'has-exit' : ''} ${room ? 'with-room' : ''}` });
+  enliven(app, list, ps, list, portrait);
   return close;
 }
 
@@ -145,11 +176,16 @@ export function showFragment(app: App, ev: FragmentEvent): void {
 
 /** Muestra el resultado de algo que hiciste: lo que pasa, el tiempo que lleva y lo que aprendes. */
 function outcome(app: App, title: string, o: Outcome, then?: () => void): void {
-  if (o.minutes) app.passTime(o.minutes);
-  app.notes(o.notes);
-  if (o.fragment) return showFragment(app, o.fragment);
-  if (o.lines.length) dialogue(app, title, '', o.lines, [{ label: 'Seguir', run: () => (then ? then() : app.refresh()), primary: true }]);
-  else app.refresh();
+  const show = () => {
+    if (o.minutes) app.passTime(o.minutes);
+    app.notes(o.notes);
+    if (o.fragment) return showFragment(app, o.fragment);
+    if (o.lines.length) dialogue(app, title, '', o.lines, [{ label: 'Seguir', run: () => (then ? then() : app.refresh()), primary: true }]);
+    else app.refresh();
+  };
+  // Lo que lleva su tiempo se nota: la luz cambia mientras la escena se funde un momento.
+  if ((o.minutes ?? 0) >= 30) veil(app, { kind: 'soft', ico: '⏳', title: timeText(o.minutes!), hold: 650 }, show);
+  else show();
 }
 
 /**
@@ -173,12 +209,17 @@ export function runPrologue(app: App, s: PScene | null): void {
     if (s.id === 'hut' && id === 'dormir') return app.sleep('raso');
     runPrologue(app, prologueChoose(w, s.id, id));
   };
+  const ps = s.lines.map((l, i) => h('p', { class: `${l.startsWith('«') || l.startsWith('—') ? 'quote' : ''} ${s.flash ? 'flash-line' : ''}`, style: s.flash ? `animation-delay:${i * 0.9}s` : '' }, l));
+  const list = h('div', { class: 'dlg-choices' }, ...s.choices.map((c, i) => h('button', { class: `btn ${i === 0 ? 'teal' : ''}`, onclick: () => (audio.sfx('elegir'), sayChoice(w, c.label), pick(c.id)) }, c.label, c.hint ? h('small', null, c.hint) : null)));
   close = app.modal(() => [
     h('div', { class: `dlg-head ${portrait ? 'with-portrait' : ''}` }, portrait ?? null, h('div', null, h('h2', null, s.title), s.sub ? h('div', { class: 'tiny' }, s.sub) : null)),
     art,
-    ...s.lines.map((l, i) => h('p', { class: `${l.startsWith('«') || l.startsWith('—') ? 'quote' : ''} ${s.flash ? 'flash-line' : ''}`, style: s.flash ? `animation-delay:${i * 0.9}s` : '' }, l)),
-    h('div', { class: 'dlg-choices' }, ...s.choices.map((c, i) => h('button', { class: `btn ${i === 0 ? 'teal' : ''}`, onclick: () => pick(c.id) }, c.label, c.hint ? h('small', null, c.hint) : null))),
+    ...ps,
+    list,
   ], { cls: `dialog ${s.flash ? 'fragment-modal flash-modal' : ''} ${s.letter ? 'letter-modal' : ''}` });
+  // Los recuerdos tienen su propia entrada (borrosa, línea a línea); lo demás se dice en voz alta.
+  if (s.folk) app.scene?.converse(s.folk);
+  if (!s.flash) enliven(app, list, ps, list, portrait);
 }
 
 /** Si el prólogo tiene algo que decir aquí, lo dice; si no, sigue lo normal. */
@@ -211,7 +252,10 @@ function offerChoice(app: App, regionId: number): Choice[] {
   ];
 }
 
-/** Retrato del vecino con la expresión que le provoca lo que ha vivido. Parpadea mientras el diálogo está abierto. */
+/**
+ * Retrato del vecino con la expresión que le provoca lo que ha vivido. Respira y
+ * parpadea mientras el diálogo está abierto y mueve la boca cuando habla, al ritmo de su voz.
+ */
 function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefined {
   const f = folkOf(w, folkId);
   if (!f) return undefined;
@@ -221,14 +265,21 @@ function portraitOf(w: WorldState, folkId: string): HTMLCanvasElement | undefine
   c.width = c.height = Math.round(88 * Math.min(3, Math.max(2, window.devicePixelRatio || 1)));
   const ap = appearanceOf(w, f);
   const expr = moodOf(w, f);
+  const speaker = speakerOf(voiceFor({ id: f.id, name: f.name, role: f.role, age: f.age, fem: ap.fem, charId: f.charId }));
+  SPEAKERS.set(c, speaker);
   const t0 = performance.now();
   let last = 0;
+  let wasOpen: boolean | undefined;
   const tick = (now: number) => {
-    if (now - last > 80) {
+    const open = speaker.talking ? now < speaker.mouthUntil : undefined;
+    // Hablando se pinta a cada cambio de boca; callado, basta con el parpadeo y la respiración.
+    if (now - last > (speaker.talking ? 45 : 80) || open !== wasOpen) {
       last = now;
-      drawPortrait(c, ap, expr, (now - t0) / 1000);
+      wasOpen = open;
+      drawPortrait(c, ap, expr, (now - t0) / 1000, undefined, speaker.talking, open);
     }
     if (c.isConnected || now - t0 < 500) requestAnimationFrame(tick);
+    else speaker.onTalk?.(false);
   };
   drawPortrait(c, ap, expr, 0);
   requestAnimationFrame(tick);
@@ -280,7 +331,8 @@ export function arrive(app: App, t: Target): void {
     case 'folk':
       return talk(app, t.id);
     case 'building':
-      return building(app, t.regionId, t.building);
+      // Si se puede pasar, se pasa de verdad: se cruza la puerta y la escena se cierra tras ella.
+      return entersBuilding(w, t.regionId, t.building) ? app.goInside(() => building(app, t.regionId, t.building)) : building(app, t.regionId, t.building);
     case 'post':
       return borderPost(app, t.index);
     case 'place': {
@@ -297,7 +349,7 @@ export function arrive(app: App, t: Target): void {
       if (visit(app, 'cruce', t.regionId)) return;
       return travel(app, t.regionId);
     case 'item':
-      if (t.id === 'cabana') return hut(app);
+      if (t.id === 'cabana') return app.goInside(() => hut(app));
       prologueAt(app, { kind: 'item', id: t.id });
       return;
     case 'convoy':
@@ -306,6 +358,26 @@ export function arrive(app: App, t: Target): void {
       return settlementDialog(app, t.id);
     case 'poi':
       return poiDialog(app, t.id);
+  }
+}
+
+/** ¿Se entra de verdad (hay una sala que ver) o solo se mira desde la puerta? */
+function entersBuilding(w: WorldState, regionId: number, kind: string): boolean {
+  const id = ensureLife(w).identity;
+  const home = w.regions[regionId].isHome;
+  const stand = id?.standing[regionId] ?? 0;
+  switch (kind) {
+    case 'posada':
+    case 'templo':
+      return true;
+    case 'hogar':
+      return home && (!!id?.housed || id?.mode !== 'forastero');
+    case 'salon':
+      return home ? id?.mode !== 'forastero' || stand >= 3 : stand >= 3;
+    case 'almacen':
+      return home;
+    default:
+      return false;
   }
 }
 

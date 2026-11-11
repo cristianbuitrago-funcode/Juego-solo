@@ -287,6 +287,34 @@ export function rigOf(pose: Pose, B: Body, seed: number): Rig {
       r.head.tilt = -0.1;
       break;
     }
+    case 'hurt': {
+      // El golpe echa el cuerpo atrás; los brazos se cierran sobre el pecho y las rodillas ceden.
+      const sh = S(t * 34) * 0.5;
+      r.lean = -0.24;
+      r.x = sh * 0.7;
+      r.y = 1.1;
+      r.shrug = 0.5;
+      r.legs[0] = { a: 0.24, b: -0.4, lift: 0 };
+      r.legs[1] = { a: -0.3, b: -0.34, lift: 0 };
+      r.arms[0] = { a: 0.9, b: 2.1, lift: 0.5, fist: true };
+      r.arms[1] = { a: 0.75, b: 2.25, lift: 0.5, fist: true };
+      r.head.tilt = 0.16 + sh * 0.05;
+      r.head.nod = -0.12;
+      r.mouthOpen = true;
+      break;
+    }
+    case 'dodge': {
+      // Salto agachado a un lado: el peso bajo, un brazo fuera para no caer.
+      r.lean = 0.32;
+      r.y = 2.4;
+      r.x = side ? -1.6 : 0;
+      r.legs[0] = { a: -0.7, b: 0.9, lift: 0.2 };
+      r.legs[1] = { a: 0.75, b: -0.95, lift: 0 };
+      r.arms[0] = { a: -0.9, b: 0.5, lift: 0.3 };
+      r.arms[1] = { a: 1.25, b: 0.7, lift: 0.3 };
+      r.head.nod = 0.1;
+      break;
+    }
     case 'fight': {
       const c = (t * 2.2 + seed * 0.1) % 1;
       const hit = c < 0.2 ? c / 0.2 : 1 - (c - 0.2) / 0.8;

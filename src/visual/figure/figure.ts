@@ -285,7 +285,7 @@ function compose(g: CanvasRenderingContext2D, ap: Appearance, B: Body, pose: Pos
   const tCape = hasCape ? part(ap, B, 'cape', f, W, (gg) => paintCape(gg, ap, B, f, wet)) : null;
   const tCapeF = hasCape && f !== 'back' ? part(ap, B, 'capeF', f, W, (gg) => paintCapeFront(gg, ap, B, f, wet)) : null;
   const blink = R.blink;
-  const talk = R.mouthOpen;
+  const talk = pose.mouth ?? R.mouthOpen;
   const tHead = part(ap, B, 'head', f, `${expr}:${blink ? 1 : 0}${talk ? 1 : 0}:${hood ? 1 : 0}:${lod}:${W}`, (gg) => paintHead(gg, ap, B, f, face, { blink, talk, hood, lod, wet }));
   const tHairB = long && !hood ? part(ap, B, 'hairB', f, W, (gg) => paintHairBack(gg, ap, B, f, wet)) : null;
   const tItem = item ? tex(`item:${item}:${B.H.toFixed(1)}`, 44, 50, 22, 26, (gg) => paintItem(gg, item, B)) : null;

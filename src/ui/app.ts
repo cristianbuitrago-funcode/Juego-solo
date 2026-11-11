@@ -40,6 +40,9 @@ import { renderResearch } from './screens/research';
 import { renderFamily } from './screens/family';
 import { approachDialog, arrive, dialogue, focusButtons, showFragment } from './world-dialogs';
 import { successionScreen } from './generations';
+import { BondWatch } from '../world/bonds';
+import { hurtFlash, showBonds, veil } from './stagefx';
+import { TILE } from '../world/types';
 
 export type View = 'mapa' | 'mundo' | 'cronica' | 'hipotesis' | 'investigar' | 'decisiones' | 'objetivos' | 'familia' | 'ajustes';
 
@@ -74,11 +77,18 @@ export class App {
   private unread = 0;
   private spawnTimer = 0;
   focus: Target | null = null;
+  /** Cómo te miraba cada vecino la última vez que se comprobó (para enseñar lo que cambia). */
+  private bonds = new BondWatch();
+  /** Velo que cubre la escena mientras se está dentro de un edificio. */
+  private indoorVeil: HTMLElement | null = null;
+  private held = 0;
+  private hudLast: Record<string, number> = {};
+  private promptTimer = 0;
 
   constructor(public root: HTMLElement) {
     wireWorld();
     applySettings(this.settings);
-    audio.setVolumes(this.settings.music, this.settings.sfx);
+    audio.setVolumes(this.settings.music, this.settings.sfx, this.settings.voice);
     window.addEventListener('pointerdown', () => audio.unlock(), { capture: true });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
@@ -115,8 +125,13 @@ export class App {
 
   /** Pantalla de carga mientras el mundo se genera (terreno, pueblos, caminos). */
   private loading(then: () => void): void {
-    clear(this.root).append(h('div', { class: 'menu' }, h('h1', { class: 'logo', style: 'font-size:40px' }, 'ECOS'), h('p', { class: 'tag' }, 'El mundo despierta…')));
-    window.setTimeout(then, 40);
+    // El menú se va antes de que el mundo empiece a generarse (eso bloquea unos instantes).
+    const menu = this.root.querySelector('.menu');
+    menu?.classList.add('leaving');
+    window.setTimeout(() => {
+      clear(this.root).append(h('div', { class: 'menu loading' }, h('h1', { class: 'logo', style: 'font-size:40px' }, 'ECOS'), h('p', { class: 'tag' }, 'El mundo despierta…')));
+      window.setTimeout(then, 420);
+    }, menu && !this.settings.reduceMotion ? 330 : 0);
   }
 
   start(w: WorldState): void {
@@ -152,6 +167,11 @@ export class App {
       h('button', { class: 'quick-btn', 'aria-label': 'Acciones', onclick: () => this.quickActions() }, '✋'),
     );
     this.scene.speed = () => speedFactor(ensureLife(w).identity);
+    this.scene.onStep = (run) => audio.sfx('paso', run ? 1 : 0.55);
+    this.indoorVeil = null;
+    this.held = 0;
+    this.hudLast = {};
+    this.bonds.sync(w);
     this.renderHud();
     audio.setMood(w.mood);
     saveGame(w, 'auto');
@@ -167,7 +187,7 @@ export class App {
   saveSettings(): void {
     saveSettings(this.settings);
     applySettings(this.settings);
-    audio.setVolumes(this.settings.music, this.settings.sfx);
+    audio.setVolumes(this.settings.music, this.settings.sfx, this.settings.voice);
     if (this.scene) (this.scene.reduceMotion = this.settings.reduceMotion), this.scene.setQuality(this.settings.quality);
     if (this.map) this.map.reduceMotion = this.settings.reduceMotion;
   }
@@ -201,6 +221,13 @@ export class App {
 
   /** Dormir hasta el próximo amanecer: en casa, en la posada, en el templo o al raso. */
   sleep(where: 'casa' | 'posada' | 'templo' | 'raso' = 'casa'): void {
+    // La noche pasa a oscuras: los ojos se cierran, salen las estrellas y se abre el día siguiente.
+    audio.sfx('sueno');
+    const sub = { casa: 'El fuego se apaga despacio.', posada: 'Una cama de verdad, y el rumor de la sala abajo.', templo: 'Un banco frío y una manta prestada.', raso: 'El suelo es duro. Las estrellas, muchas.' }[where];
+    veil(this, { kind: 'fade', stars: true, ico: '🌙', title: 'Duermes', sub, hold: 1300 }, () => this.sleepNow(where));
+  }
+
+  private sleepNow(where: 'casa' | 'posada' | 'templo' | 'raso'): void {
     const w = this.w!;
     const life = ensureLife(w);
     const next = w.day * DAY_MINUTES + 30;
@@ -231,7 +258,7 @@ export class App {
       h('h2', null, `Día ${day}`),
       ...lines.map((l) => h('p', null, l)),
       waking ? h('p', { class: 'tiny' }, waking) : null,
-      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.renderHud(); then(); } }, 'Despertar'),
+      h('button', { class: 'btn primary', onclick: () => { this.fadeOut(el); this.pause(false); this.renderHud(); then(); } }, 'Despertar'),
     );
     this.stage.append(el);
   }
@@ -291,9 +318,15 @@ export class App {
         ? [h('p', null, { rio: 'Tienes la ropa empapada y huele a río. Te duelen las costillas, como si te hubiera arrastrado la corriente.', emboscada: 'Te duele un costado. Hay sangre seca en la manga, y no toda es tuya.', tormenta: 'Tienes los dedos entumecidos y escarcha en el pelo, como si hubieras pasado la noche en la nieve.' }[id.past.accident ?? 'rio']), h('p', null, 'Tu capa es de buen paño, bordada en el cuello. Demasiado buena para un caminante.')]
         : []),
       h('p', null, 'Nada. Solo un colgante frío contra el pecho y, a lo lejos, humo de chimeneas.'),
-      h('button', { class: 'btn primary', onclick: () => { el.remove(); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.', false, true); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
+      h('button', { class: 'btn primary', onclick: () => { this.fadeOut(el); this.pause(false); this.whisper('Hay humo hacia allí. Quizá un pueblo.', false, true); this.banner('Descubre', 'dónde estás'); this.renderHud(); } }, 'Levantarte'),
     );
     this.stage.append(el);
+  }
+
+  /** Una pantalla entera (el despertar, la tarjeta del día) se desvanece en vez de cortarse. */
+  private fadeOut(el: HTMLElement): void {
+    el.classList.add('leaving');
+    window.setTimeout(() => el.remove(), this.settings.reduceMotion ? 0 : 720);
   }
 
   /** Acciones rápidas del cuerpo: comer de la mochila, buscar comida, descansar, mirar el colgante. */
@@ -308,9 +341,9 @@ export class App {
     const v = reg >= 0 ? l.villages[reg] : null;
     const inVillage = !!v && Math.hypot(v.cx - me.x, v.cy - me.y) < v.plazaR + 22;
     const choices: { label: string; run: () => void; hint?: string; primary?: boolean }[] = [];
-    if (life.player.inventory.comida > 0) choices.push({ label: `🍞 Comer de la mochila (${life.player.inventory.comida})`, primary: id.needs.hunger > 0.4, run: () => { life.player.inventory.comida--; eat(id); this.toast('Comes despacio. Te sienta bien.'); this.refresh(); } });
-    if (!inVillage) choices.push({ label: '🧺 Buscar comida por aquí', hint: '1 hora', run: () => { const o = forage(w, me.x, me.y); this.passTime(o.minutes); this.notes(o.notes); this.toast(o.lines[0]); this.refresh(); } });
-    choices.push({ label: '⏳ Descansar un rato', hint: '2 horas', run: () => { this.sleeping = true; this.passTime(120); this.sleeping = false; rest(id, false); this.toast('Te sientas a recuperar el aliento.'); this.refresh(); } });
+    if (life.player.inventory.comida > 0) choices.push({ label: `🍞 Comer de la mochila (${life.player.inventory.comida})`, primary: id.needs.hunger > 0.4, run: () => { life.player.inventory.comida--; eat(id); this.scene?.emote('@player', 'agrado', 0.4); this.toast('Comes despacio. Te sienta bien.'); this.refresh(); } });
+    if (!inVillage) choices.push({ label: '🧺 Buscar comida por aquí', hint: '1 hora', run: () => veil(this, { kind: 'soft', ico: '🧺', title: 'Buscas por los alrededores', hold: 700 }, () => { const o = forage(w, me.x, me.y); this.passTime(o.minutes); this.notes(o.notes); this.toast(o.lines[0]); this.refresh(); }) });
+    choices.push({ label: '⏳ Descansar un rato', hint: '2 horas', run: () => veil(this, { kind: 'soft', ico: '⏳', title: 'Dos horas después', hold: 700 }, () => { this.sleeping = true; this.passTime(120); this.sleeping = false; rest(id, false); this.toast('Te sientas a recuperar el aliento.'); this.refresh(); }) });
     if (hourOf(life.clock) >= 20 || hourOf(life.clock) < 5 || id.needs.fatigue > 0.7) choices.push({ label: '🌙 Dormir al raso', hint: 'Gratis, pero se descansa mal', run: () => this.sleep('raso') });
     const pe = life.society ? playerEco(w) : null;
     if (pe && cargoCount(pe) > 0) choices.push({ label: `📦 Tu carga: ${Object.entries(pe.cargo).filter(([, n]) => (n ?? 0) >= 0.5).map(([g, n]) => `${Math.round(n!)} ${GOOD[g as Good].name}`).join(', ')}`, run: () => this.refresh() });
@@ -344,6 +377,8 @@ export class App {
     this.banner(`Día ${w.day}`, `${seasonOf(w.day)} del año ${yearOf(w.day)}`);
     saveGame(w, 'auto');
     this.scene?.setWorld(w);
+    // Lo que el pueblo ha rumiado esta noche sobre ti se nota por la mañana.
+    window.setTimeout(() => this.afterDialogs(), 1800);
     if (report.ended) window.setTimeout(() => showEnd(this), 300);
     if (ensureLife(w).player.pendingDeath) window.setTimeout(() => successionScreen(this), 600);
     this.renderHud();
@@ -503,13 +538,37 @@ export class App {
         this.unread ? h('button', { class: 'chip news', onclick: () => ((this.unread = 0), this.setView('cronica')) }, '📜', String(this.unread)) : null,
       ),
     );
+    // Lo que sube o baja da un pequeño salto: se ve qué ha cambiado sin leer la cifra.
+    const now: Record<string, number> = { Monedas: needs ? Math.floor(needs.coins) : 0, 'Comida · hierbas': Math.floor(inv.comida) * 1000 + Math.floor(inv.hierbas), 'Provisiones del pueblo': Math.round(w.player.reserves), 'Tu carga': life.society ? Math.round(cargoCount(playerEco(w))) : 0 };
+    for (const [title, v] of Object.entries(now)) {
+      const was = this.hudLast[title];
+      if (was !== undefined && was !== v) {
+        this.hud.querySelector(`.chip[title="${title}"]`)?.classList.add('bump', ...(v < was ? ['down'] : []));
+        if (title === 'Monedas' && v > was) audio.sfx('moneda');
+      }
+    }
+    this.hudLast = now;
   }
 
   private setFocus(t: Target | null): void {
     this.focus = t;
     if (!this.prompt) return;
+    window.clearTimeout(this.promptTimer);
+    this.prompt.classList.remove('leaving');
+    if (!t || !this.w) {
+      // Los botones se retiran en vez de desaparecer.
+      if (!this.prompt.firstChild || this.settings.reduceMotion) return void clear(this.prompt);
+      this.prompt.classList.add('leaving');
+      const p = this.prompt;
+      this.promptTimer = window.setTimeout(() => (clear(p), p.classList.remove('leaving')), 170);
+      return;
+    }
+    // Mismo sitio, mismos botones: no vuelven a entrar cada vez que se refresca.
+    const key = `${t.kind}:${t.label}`;
+    const same = this.prompt.dataset.key === key && !!this.prompt.firstChild;
+    this.prompt.dataset.key = key;
     clear(this.prompt);
-    if (!t || !this.w) return;
+    this.prompt.classList.toggle('still', same);
     this.prompt.append(h('div', { class: 'prompt-label' }, t.label), h('div', { class: 'prompt-actions' }, ...focusButtons(this, t)));
   }
 
@@ -519,6 +578,7 @@ export class App {
     if (far) el.dataset.far = '1';
     this.whisperBox.append(el);
     if (sound) audio.sfx('peticion');
+    else audio.sfx('whisper');
     while (this.whisperBox.children.length > 3) this.whisperBox.firstChild?.remove();
     window.setTimeout(() => el.classList.add('out'), 4500);
     window.setTimeout(() => el.remove(), 5500);
@@ -530,6 +590,10 @@ export class App {
   private wildNotice(kind: 'lobo' | 'oso', what: WildEvent, info?: WildInfo): void {
     const w = this.w;
     if (!w) return;
+    // El golpe suena y se ve siempre, aunque el aviso escrito no se repita.
+    if (what === 'zarpazo' || what === 'mordisco') (audio.sfx('grunido'), audio.sfx('golpe', what === 'zarpazo' ? 1 : 0.7), hurtFlash(this));
+    else if (what === 'esquiva') (audio.sfx('esquiva'), hurtFlash(this, true));
+    else if (what === 'carga') audio.sfx('grunido');
     const key = `${kind}:${what}`;
     const now = performance.now();
     const said = `${key}:${info?.regionId ?? ''}`;
@@ -726,37 +790,130 @@ export class App {
     if (this.scene) this.scene.paused = on || !!this.diary || this.modals.length > 0;
   }
 
+  /** Cuadros que se están yendo (su animación de salida aún no ha terminado). */
+  private closing: HTMLElement[] = [];
+  private closers = new Map<HTMLElement, () => void>();
+
   modal(build: (close: () => void) => (Node | null)[], opts: { onClose?: () => void; cls?: string } = {}): () => void {
     const box = h('div', { class: `modal ${opts.cls ?? ''}`, role: 'dialog' });
     const overlay = h('div', { class: 'overlay' }, box);
+    // Si se abre en el mismo gesto en que se cerró otro (una conversación que sigue), el cuadro
+    // no baja y vuelve a subir: cambia de contenido en el sitio.
+    if (this.closing.length) {
+      for (const o of this.closing.splice(0)) o.remove();
+      overlay.classList.add('swap');
+    }
+    let closed = false;
     const close = () => {
-      overlay.remove();
+      if (closed) return;
+      closed = true;
+      this.closers.delete(overlay);
       this.modals = this.modals.filter((m) => m !== overlay);
+      // Salida: el cuadro baja y el velo se aclara; se retira al terminar.
+      overlay.classList.add('closing');
+      this.closing.push(overlay);
+      window.setTimeout(() => {
+        overlay.remove();
+        this.closing = this.closing.filter((o) => o !== overlay);
+      }, this.settings.reduceMotion ? 0 : 190);
       this.pause(false);
       opts.onClose?.();
+      // Si no se abre nada más en este gesto, la conversación (y la visita) han terminado.
+      window.setTimeout(() => !this.modals.length && this.afterDialogs(), 0);
     };
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) close();
+      if (e.target !== overlay) return;
+      // Mientras alguien habla, tocar fuera completa el texto; después, cierra.
+      if (box.classList.contains('typing')) box.click();
+      else close();
     });
-    box.append(h('button', { class: 'icon-btn close-x', 'aria-label': 'Cerrar', onclick: close }, '✕'), ...(build(close).filter(Boolean) as Node[]));
+    box.append(h('button', { class: 'icon-btn close-x', 'aria-label': 'Cerrar', onclick: () => (audio.sfx('cerrar'), close()) }, '✕'), ...(build(close).filter(Boolean) as Node[]));
     (this.stage ?? this.root).append(overlay);
     // El rótulo de llegada no debe quedar asomando detrás del panel.
     this.stage?.querySelectorAll('.banner').forEach((b) => b.remove());
     this.modals.push(overlay);
+    this.closers.set(overlay, close);
+    if (!overlay.classList.contains('swap')) audio.sfx('abrir');
     this.pause(true);
     return close;
   }
 
+  /** Se ha cerrado el último cuadro: se sale del edificio en el que se estuviera y se ve lo que ha cambiado. */
+  afterDialogs(): void {
+    if (this.scene) this.scene.speaking = false;
+    if (this.held > 0 || this.modals.length || !this.w) return;
+    this.goOutside();
+    const d = this.bonds.diff(this.w);
+    showBonds(this, d.folk, d.town);
+  }
+
+  /** Mientras dura una transición, cerrar un cuadro no da la escena por terminada. */
+  holdDialogs(n: number): void {
+    this.held = Math.max(0, this.held + n);
+    if (!this.held) window.setTimeout(() => this.afterDialogs(), 0);
+  }
+
+  /** Dónde está el protagonista en la pantalla (para centrar en él un iris). */
+  private playerOnScreen(): { x: number; y: number } {
+    const me = ensureLife(this.w!).player;
+    return this.scene!.toScreen(me.x * TILE, me.y * TILE - 16);
+  }
+
+  /**
+   * Entrar en un edificio: el protagonista cruza la puerta, la escena se cierra en un
+   * círculo sobre ella y `run` abre lo de dentro. Al cerrarse el último cuadro, se sale.
+   */
+  goInside(run: () => void): void {
+    if (this.indoorVeil || !this.stage || !this.scene || this.settings.reduceMotion) return run();
+    const at = this.playerOnScreen();
+    const v = h('div', { class: 'veil iris indoor', style: `--ix:${((at.x / this.stage.clientWidth) * 100).toFixed(1)}%;--iy:${((at.y / this.stage.clientHeight) * 100).toFixed(1)}%` });
+    v.style.pointerEvents = 'auto';
+    this.stage.append(v);
+    this.indoorVeil = v;
+    this.scene.enterDoor();
+    audio.sfx('puerta');
+    vibrate(10);
+    this.held++;
+    window.setTimeout(() => v.classList.add('shut'), 230);
+    window.setTimeout(() => {
+      this.held = Math.max(0, this.held - 1);
+      run();
+      // Si dentro no había nada que tratar (un recuerdo, un aviso), se sale sin más.
+      window.setTimeout(() => this.afterDialogs(), 0);
+    }, 560);
+  }
+
+  private goOutside(): void {
+    const v = this.indoorVeil;
+    if (!v) return;
+    this.indoorVeil = null;
+    const at = this.playerOnScreen();
+    v.style.setProperty('--ix', `${((at.x / this.stage!.clientWidth) * 100).toFixed(1)}%`);
+    v.style.setProperty('--iy', `${((at.y / this.stage!.clientHeight) * 100).toFixed(1)}%`);
+    v.style.pointerEvents = 'none';
+    v.classList.remove('shut');
+    this.scene?.leaveDoor();
+    audio.sfx('salir');
+    window.setTimeout(() => v.remove(), 480);
+  }
+
   toast(msg: string, err = false): void {
     const t = h('div', { class: `toast ${err ? 'err' : ''}` }, msg);
+    // Uno a la vez: el anterior se va al llegar el nuevo.
+    (this.stage ?? this.root).querySelectorAll(':scope > .toast').forEach((o) => o.remove());
     (this.stage ?? this.root).append(t);
     if (err) audio.sfx('error');
     window.setTimeout(() => t.remove(), 2800);
   }
 
   closeAll(): void {
-    for (const m of this.modals) m.remove();
+    for (const m of [...this.modals, ...this.closing]) m.remove();
     this.modals = [];
+    this.closing = [];
+    this.closers.clear();
+    this.indoorVeil?.remove();
+    this.indoorVeil = null;
+    this.held = 0;
     this.diary?.remove();
     this.diary = null;
     this.map?.destroy();
@@ -770,8 +927,9 @@ export class App {
   /** Botón «atrás» de Android. */
   back(): boolean {
     if (this.modals.length) {
-      this.modals.pop()!.remove();
-      this.pause(false);
+      const top = this.modals[this.modals.length - 1];
+      audio.sfx('cerrar');
+      (this.closers.get(top) ?? (() => top.remove()))();
       return true;
     }
     if (this.sheet) {

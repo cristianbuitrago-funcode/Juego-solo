@@ -29,6 +29,8 @@ export type Action =
   | 'fight'
   | 'argue'
   | 'rest'
+  | 'hurt' // encaja un golpe: el cuerpo se va atrás y los brazos se cierran
+  | 'dodge' // se aparta de un salto, agachado
   | 'patrol';
 
 export interface Pose {
@@ -44,5 +46,6 @@ export interface Pose {
   umbrella?: boolean; // paraguas encerado (lluvia, gente acomodada)
   wet?: boolean; // ropa mojada (más oscura y brillante)
   speed?: number; // 0..1 velocidad real (mezcla de reposo y marcha)
+  mouth?: boolean; // boca abierta o cerrada mandada desde fuera (la voz del diálogo marca el ritmo)
   drink?: boolean; // sentado con una jarra que se lleva a la boca de vez en cuando
 }

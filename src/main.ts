@@ -1,5 +1,6 @@
 import './styles.css';
 import './theme.css';
+import './motion.css';
 import { App } from './ui/app';
 import { watchIcons } from './ui/icons';
 

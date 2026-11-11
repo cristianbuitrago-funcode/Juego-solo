@@ -4,6 +4,8 @@ import { storage } from '../core/storage';
 export interface Settings {
   music: number; // 0..1
   sfx: number; // 0..1
+  voice: number; // 0..1 volumen de las voces de los personajes
+  textSpeed: 'pausada' | 'normal' | 'rapida' | 'instantanea'; // ritmo al que se escribe lo que dicen
   textSize: 'normal' | 'grande';
   reduceMotion: boolean;
   haptics: boolean;
@@ -12,7 +14,7 @@ export interface Settings {
 }
 
 const KEY = 'ecos_ajustes_v1';
-const DEFAULTS: Settings = { music: 0.6, sfx: 0.7, textSize: 'normal', reduceMotion: false, haptics: true, tutorial: true, quality: 'auto' };
+const DEFAULTS: Settings = { music: 0.6, sfx: 0.7, voice: 0.8, textSpeed: 'normal', textSize: 'normal', reduceMotion: false, haptics: true, tutorial: true, quality: 'auto' };
 
 export function loadSettings(): Settings {
   try {
@@ -29,5 +31,6 @@ export function saveSettings(s: Settings): void {
 export function applySettings(s: Settings): void {
   document.documentElement.dataset.text = s.textSize;
   document.body.dataset.motion = s.reduceMotion ? 'reduced' : 'full';
+  document.body.dataset.textspeed = s.textSpeed;
   document.body.dataset.haptics = s.haptics ? 'on' : 'off';
 }
