@@ -148,7 +148,8 @@ src/
 │   ├── generations.ts     «Tu historia continúa», testamento, familia, enseñar, línea temporal
 │   ├── map/               Mapa del mundo (en el diario)
 │   └── screens/           crónica, hipótesis, investigación, consejo, linaje, menú, ayuda…
-├── audio/audio.ts         Música ambiental generativa (Web Audio) según el estado del mundo
+├── audio/audio.ts         Música ambiental generativa (Web Audio), efectos y síntesis de voz
+├── audio/voice.ts         La voz de cada personaje (perfiles, voces fijadas a mano, entonación)
 ├── styles.css
 └── main.ts
 android/                   Proyecto nativo Android (Capacitor)
@@ -280,6 +281,16 @@ Para Play también harán falta: icono de 512×512, gráfico destacado de 1024×
 - El diario crece con la vida: al principio solo mapa, «Quién soy» y crónica; la investigación, las hipótesis, el consejo y los objetivos aparecen cuando el personaje tiene voz para usarlos.
 - Crónica personal («Tu historia»): «A los 27 años, despertó junto a un camino…». Los herederos tienen su propio carácter y pueden honrar o rechazar el legado.
 - Las partidas guardadas antes de este cambio siguen como estaban: el protagonista gobierna.
+
+**Versión 7 — todo se mueve, todo suena.** Nada aparece ni desaparece de golpe, y la gente habla con voz propia:
+
+- **Voces.** Cada persona tiene su voz, sintetizada sílaba a sílaba mientras habla (sin grabaciones): el tono sale de su edad y su género, el timbre de su oficio, y una variación propia la distingue de su vecino. La entonación sigue la frase: las preguntas suben, las exclamaciones golpean, los finales caen. Para fijar la voz de alguien a mano, añade una entrada a `VOICE_OVERRIDES` en `src/audio/voice.ts` (por nombre, por identificador o por oficio: `'Nori': 'nasal'`, `'rol:lider': { pitch: 96, timbre: 'grave' }`); las voces tipo están en `VOICE_PRESETS`.
+- **Bocas que se mueven.** Lo que alguien dice se escribe letra a letra al ritmo de su voz; el retrato y la figura del mundo abren la boca con cada sílaba, gesticulan mientras hablan y escuchan cuando callan. Lo narrado se escribe deprisa y en silencio. Tocar el cuadro completa el texto; el ritmo (pausado, normal, rápido, instantáneo) y el volumen de las voces están en Configuración.
+- **Lo que cambia entre tú y los demás se ve, tanto como pese.** Un detalle es un gesto pequeño sobre la cabeza de quien te mira (una sonrisa, un garabato de fastidio); algo que recordará, un gesto y una línea discreta con su cara; lo que no va a olvidar, un cartel con sonido. La historia cuenta: con quien has vivido mucho todo pesa más, y lo que contradice lo que esa persona pensaba de ti (un favor a quien te guardaba rencor, una traición a quien confiaba) se nota el doble. Cuando cambia medio pueblo a la vez, la noticia es el pueblo. Código: `src/world/bonds.ts`, `src/render/emotes.ts`.
+- **Entradas y salidas.** Los cuadros suben y bajan (y, si la conversación sigue, cambian de contenido sin irse), las opciones entran una a una, los avisos y los botones de contexto aparecen y se retiran, las cifras del HUD saltan cuando cambian. Entrar en un edificio es cruzar la puerta: el protagonista camina hacia ella, la escena se cierra en un círculo y se abre la sala; al salir, al revés. Dormir funde a negro bajo las estrellas; el trabajo que lleva horas, a penumbra («Dos horas después»).
+- **Peleas.** Entrenar con la guardia y luchar en una batalla se ven de perfil, golpe a golpe: quien ataca entra con el peso, quien recibe para, esquiva o encaja; saltan chispas, tiembla el cuadro y suena cada impacto (la viñeta representa lo que el mundo ya ha resuelto: `src/ui/fight.ts`). Los vecinos que se pelean en la calle lo hacen de verdad, frente a frente. El zarpazo de un oso o el mordisco de un lobo sacuden la cámara, tiñen la pantalla y tiran al protagonista hacia atrás; si lo esquiva, se le ve saltar a un lado.
+- **Sonido.** Pisadas al ritmo de la zancada, puertas, monedas, golpes, gruñidos, y un sonido para cada cosa que se abre, se elige o se cierra.
+- Todo respeta «Reducir animaciones».
 
 **Fase 1 — el prólogo jugable.** Los primeros 10–20 minutos de una partida nueva, sin misión principal ni tutorial (el mundo enseña):
 

@@ -38,6 +38,7 @@ import { h, vibrate } from './dom';
 import { sayChoice, speakerOf, typeDialogue, type Speaker, type SpeechHandle } from './speech';
 import { voiceFor } from '../audio/voice';
 import { timeText, veil } from './stagefx';
+import { fightDialog } from './fight';
 import { openAction } from './screens/composer';
 import { marketSuspicion, politicalChoices, townAffairs, warDialog } from './politics';
 import { homeChoices, lifeChoices, recordsChoice } from './generations';
@@ -188,6 +189,24 @@ function outcome(app: App, title: string, o: Outcome, then?: () => void): void {
   else show();
 }
 
+/** Trabajar con alguien. Entrenar con la guardia se ve: unos asaltos de palo antes de contar cómo ha ido. */
+function doJob(app: App, folkId: string): void {
+  const w = app.w!;
+  const f = folkOf(w, folkId);
+  const job = f ? jobFor(w, f) : null;
+  if (!f || !job) return;
+  const id = ensureLife(w).identity!;
+  const before = id.worked[f.id];
+  const o = work(w, folkId);
+  const title = job.label.slice(2);
+  // (si no llegó a entrenar —ya lo hizo hoy, está agotado—, no hay pelea que enseñar)
+  if (job.skill !== 'combate' || id.worked[f.id] === before) return outcome(app, title, o);
+  if (o.minutes) app.passTime(o.minutes);
+  app.notes(o.notes);
+  const skill = levelOf(id, 'combate');
+  fightDialog(app, title, { foe: f, kind: 'palos', hurt: skill < 1, win: skill >= 2 }, o.lines, () => (o.fragment ? showFragment(app, o.fragment) : app.refresh()));
+}
+
 /**
  * Escenas del prólogo: una conversación o un momento que se encadena según
  * lo que respondas. Los recuerdos aparecen borrosos; la carta enseña el emblema.
@@ -297,7 +316,7 @@ export function focusButtons(app: App, t: Target): HTMLElement[] {
       const f = folkOf(w, t.id);
       const out = [b('💬 Hablar', () => talk(app, t.id), true), b('👁 Observar', () => observe(app, t.id)), b('🚶 Seguir', () => (app.scene?.followFolk(t.id), app.toast(`Sigues a ${f?.name}. Mueve el joystick para dejar de seguirle.`)))];
       const job = f ? jobFor(w, f) : null;
-      if (job && ensureLife(w).identity?.mode === 'forastero') out.splice(1, 0, b(job.label.split(' ')[0] + ' Trabajar', () => outcome(app, job.label.slice(2), work(w, t.id))));
+      if (job && ensureLife(w).identity?.mode === 'forastero') out.splice(1, 0, b(job.label.split(' ')[0] + ' Trabajar', () => doJob(app, t.id)));
       if (f?.role === 'lider' && !w.regions[f.regionId].isHome && hasAuthority(w, 'mediar')) out.splice(1, 0, b('⚖ Decidir', () => leaderDecisions(app, f.regionId)));
       return out;
     }
@@ -410,7 +429,7 @@ function talk(app: App, folkId: string): void {
   if (f.role === 'lider' && !r.isHome && hasAuthority(w, 'mediar')) choices.push({ label: '⚖ Tratar asuntos de gobierno', run: () => leaderDecisions(app, f.regionId), primary: true });
   if (f.role === 'lider') choices.push(...offerChoice(app, f.regionId));
   const job = jobFor(w, f);
-  if (job && id.mode === 'forastero') choices.push({ label: job.label, hint: `${Math.round(job.minutes / 60)} h · ${job.pay.coins ? 'algo de dinero' : job.pay.comida ? 'algo de comida' : 'aprendes'}`, run: () => outcome(app, job.label.slice(2), work(w, folkId)), primary: !choices.length });
+  if (job && id.mode === 'forastero') choices.push({ label: job.label, hint: `${Math.round(job.minutes / 60)} h · ${job.pay.coins ? 'algo de dinero' : job.pay.comida ? 'algo de comida' : 'aprendes'}`, run: () => doJob(app, folkId), primary: !choices.length });
   if (id.mode === 'forastero') choices.push({ label: '❓ Preguntar por ti', run: () => outcome(app, f.name, askAboutMe(w, folkId)) });
   if (f.role === 'comerciante') choices.push({ label: `🍞 Comprarle comida (${priceOf(w, f.regionId, 1)} 🪙)`, run: () => outcome(app, f.name, buyFood(w, f.regionId)) });
   if (f.role === 'comerciante' && id.mode === 'forastero') choices.push({ label: '⚖ Comerciar', hint: 'Comprar, vender, preguntar precios, encargos', run: () => marketDialog(app, f.regionId, f.id) });

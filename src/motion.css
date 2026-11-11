@@ -174,3 +174,6 @@ body[data-motion='reduced'] .dlg-choices.ready .btn, body[data-motion='reduced']
 body[data-motion='reduced'] .hud .chip, body[data-motion='reduced'] .diary-body > *, body[data-motion='reduced'] .card, body[data-motion='reduced'] .stage.world,
 body[data-motion='reduced'] .loading .tag, body[data-motion='reduced'] .loading .logo, body[data-motion='reduced'] .bond .bond-ico { animation: none !important; }
 body[data-motion='reduced'] .veil.iris::before, body[data-motion='reduced'] .veil.fade::before { transition-duration: 0.01s; }
+
+/* La tarjeta del día queda bajo el velo del sueño: se descubre al abrirse los ojos. */
+.daycard { z-index: 79; }

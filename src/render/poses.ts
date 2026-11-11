@@ -119,7 +119,11 @@ export function entPose(s: PoseHost, id: string, e: Ent, f: Folk | undefined, se
   } else if (react?.action) action = react.action;
   else {
     action = actionOf(e.act);
-    if (e.partner) {
+    if (e.partner && (action === 'fight' || action === 'argue')) {
+      // Frente a frente y de perfil: los golpes y los gritos van al otro, no al aire.
+      const o = s.ents.get(e.partner);
+      if (o) (facing = 'side'), (e.flip = o.x < e.x);
+    } else if (e.partner) {
       // Dos que charlan: uno habla y gesticula, el otro escucha y asiente.
       const turn = Math.floor(sec / 2.8 + (id < e.partner ? 0 : 1)) % 2 === 0;
       // (cruzarse de brazos, no señalar: el brazo estirado le apuntaba a la cara al otro)

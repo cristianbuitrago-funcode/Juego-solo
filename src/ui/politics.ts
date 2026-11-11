@@ -14,6 +14,7 @@ import { INFLUENCE, influenceLevel, influenceLines } from '../world/influence';
 import { legacyLines } from '../world/legacy';
 import { GOV, LAWS, LAW_IDS, ORG_RANK, polOf, TREATY, type LawId, type Org, type Proposal, type TreatyKind } from '../world/polstate';
 import type { App } from './app';
+import { fightDialog } from './fight';
 import { h } from './dom';
 import { section, empty } from './screens/common';
 import { dialogue } from './world-dialogs';
@@ -373,7 +374,7 @@ export function warDialog(app: App, regionId: number): void {
   const pe = playerEco(w);
   const hasSupply = Object.keys(pe.cargo).some((g) => GOODS.includes(g as Good) && (['trigo', 'verdura', 'fruta', 'carne', 'pescado', 'armas'] as string[]).includes(g));
   dialogue(app, `Guerra: ${w.regions[war.a].name} contra ${w.regions[war.b].name}`, war.playerSide !== undefined ? `Luchas por ${w.regions[war.playerSide].name}` : 'No has tomado partido', describeWar(w, war), [
-    { label: `⚔ Luchar por ${w.regions[side].name}`, hint: 'Arriesgas la piel. Te lo recordarán los dos bandos.', run: () => { const res = enlist(w, war, side); say(app, 'La batalla', res.lines, res.notes); } },
+    { label: `⚔ Luchar por ${w.regions[side].name}`, hint: 'Arriesgas la piel. Te lo recordarán los dos bandos.', run: () => { const res = enlist(w, war, side); app.notes(res.notes); fightDialog(app, 'La batalla', { foe: { regionId: enemy }, kind: 'acero', hurt: res.lines.some((l) => l.includes('corte')), win: war.battles[war.battles.length - 1]?.player === 'victoria' }, res.lines, () => app.refresh()); } },
     ...(hasSupply ? [
       { label: '🍞 Regalar tu carga al ejército', run: () => { const res = supplyArmy(w, war, side, false); say(app, 'Suministros', res.lines, res.notes); } },
       { label: '🪙 Vender tu carga al ejército', hint: 'A precio de guerra.', run: () => { const res = supplyArmy(w, war, side, true); say(app, 'Suministros', res.lines, res.notes); } },

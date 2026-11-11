@@ -53,7 +53,10 @@ export function actionOf(activity: string): Action {
   if (/campo|siembra|cosecha|remedios|ayuda a su/.test(activity)) return 'work';
   if (/redes|pesca/.test(activity)) return 'fish';
   if (/cola|cuenta sus|vacío|no ha abierto/.test(activity)) return 'cross';
-  if (/charla|discute|pelea|historias|tratos|recibe|pide pan|celebra|sirve/.test(activity)) return 'talk';
+  // Quien se pelea, se pelea de verdad (guardia alta y golpes); quien discute, gesticula con rabia.
+  if (/pelea/.test(activity)) return 'fight';
+  if (/discute/.test(activity)) return 'argue';
+  if (/charla|historias|tratos|recibe|pide pan|celebra|sirve/.test(activity)) return 'talk';
   if (/puesto/.test(activity)) return 'point';
   if (/vigila|ronda|patrulla|vaga/.test(activity)) return 'look';
   if (/sol|banco/.test(activity)) return 'sit';

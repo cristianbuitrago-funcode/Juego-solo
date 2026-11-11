@@ -196,7 +196,7 @@ function itemFor(ap: Appearance, pose: Pose): Appearance['outfit']['item'] | 'pa
       // la altura del hombro, ya no delante de la cara) se quedan en la mano.
       return own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha' ? own : undefined;
     case 'fight':
-      return own && WEAPONS.has(own) && own !== 'arco' ? own : undefined;
+      return own && ((WEAPONS.has(own) && own !== 'arco') || own === 'baston') ? own : undefined;
     case 'run':
       // Corriendo no se lleva una cesta delante del pecho: solo armas o un bastón.
       return own && (WEAPONS.has(own) || own === 'lanza' || own === 'cayado' || own === 'baston' || own === 'antorcha') ? own : undefined;
